@@ -1,0 +1,15 @@
+{
+  "name": "slowed-reverb-extension",
+  "version": "1.0.0",
+  "description": "Apply real-time slowed and reverb audio effects to any HTML5 media element.",
+  "private": true,
+  "scripts": {
+    "build:firefox": "node scripts/build-firefox.js",
+    "lint": "npx --yes eslint@9 .",
+    "lint:firefox": "npm run build:firefox && npx --yes web-ext@10 lint --source-dir=dist/firefox --no-config-discovery"
+  },
+  "engines": {
+    "node": ">=18.18"
+  },
+  "license": "SEE LICENSE IN README.md"
+}

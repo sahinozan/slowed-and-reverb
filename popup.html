@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slowed &amp; Reverb</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="booting">
+  <div class="container">
+    <div class="scroll-area">
+      <header>
+        <div class="logo">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="16" cy="16" r="12" stroke="currentColor" stroke-width="2"/>
+            <circle cx="16" cy="16" r="8" stroke="currentColor" stroke-width="1.5" opacity="0.7"/>
+            <circle cx="16" cy="16" r="4" stroke="currentColor" stroke-width="1" opacity="0.5"/>
+          </svg>
+        </div>
+        <h1>Slowed &amp; Reverb</h1>
+
+        <div class="header-power">
+          <span id="power-status" class="power-status">Off</span>
+          <label class="switch">
+            <input type="checkbox" id="power-toggle">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <div class="header-actions">
+          <button type="button" class="theme-picker-btn" id="theme-picker-btn" title="Themes" aria-expanded="false" aria-controls="theme-panel">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c3.31 0 6-2.69 6-6 0-4.96-4.48-9-10-9z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              <circle cx="7" cy="12" r="1.15" fill="currentColor" opacity="0.85"/>
+              <circle cx="9.2" cy="8" r="1.15" fill="currentColor" opacity="0.65"/>
+              <circle cx="14" cy="7" r="1.15" fill="currentColor" opacity="0.5"/>
+              <circle cx="17" cy="10.5" r="1.15" fill="currentColor" opacity="0.35"/>
+            </svg>
+          </button>
+          <a class="github-link" href="https://github.com" target="_blank" rel="noopener noreferrer" title="View on GitHub">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+              <path fill-rule="evenodd" clip-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+            </svg>
+          </a>
+        </div>
+
+        <section id="theme-panel" class="theme-panel" hidden>
+          <div class="theme-panel-label">Theme</div>
+          <div class="theme-grid" id="theme-grid"></div>
+        </section>
+      </header>
+
+      <div id="blocked-banner" class="blocked-banner" hidden>
+        <span class="blocked-banner-icon">⚠</span>
+        <span id="blocked-banner-text"></span>
+      </div>
+
+      <div id="current-preset-bar" class="current-preset-bar" hidden>
+        <span id="current-preset-label" class="current-preset-label"></span>
+      </div>
+
+      <section class="presets-tabs-section">
+        <div class="tabs">
+          <button type="button" class="tab-btn active" data-tab="presets">Presets</button>
+          <button type="button" class="tab-btn" data-tab="custom">My Presets</button>
+        </div>
+
+        <div class="tab-panel" id="panel-presets">
+          <div class="presets">
+            <button type="button" class="preset-btn" data-preset="slowed">Slowed + Reverb</button>
+            <button type="button" class="preset-btn" data-preset="nightcore">Nightcore</button>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="panel-custom" hidden>
+          <div class="save-preset-row">
+            <input type="text" id="preset-name-input" placeholder="Preset name" maxlength="24">
+            <button type="button" id="save-preset-btn" class="action-btn small">Save Current</button>
+          </div>
+
+          <div id="custom-presets-list" class="custom-presets-list"></div>
+        </div>
+      </section>
+
+      <section class="controls">
+        <div class="effect-tabs">
+          <button type="button" class="effect-tab-btn active" data-effect-tab="basic">Basic</button>
+          <button type="button" class="effect-tab-btn" data-effect-tab="advanced">
+            Advanced
+            <span id="advanced-badge" class="tab-badge" hidden></span>
+          </button>
+        </div>
+
+        <div class="effect-tab-panel" id="effect-panel-basic">
+          <div class="control-group">
+            <div class="control-header">
+              <span class="control-icon">⇄</span>
+              <label for="speed-slider">Speed <span id="speed-value" class="value-inline">(1.00x)</span></label>
+            </div>
+            <input type="range" id="speed-slider" min="0.5" max="1.5" step="0.05" value="1.0">
+          </div>
+
+          <div class="control-group">
+            <div class="control-header">
+              <span class="control-icon">〰</span>
+              <label for="reverb-slider">Reverb <span id="reverb-value" class="value-inline">(0%)</span></label>
+            </div>
+            <input type="range" id="reverb-slider" min="0" max="100" step="5" value="0">
+          </div>
+
+          <div class="control-group eq-group">
+            <div class="eq-labels">
+              <div class="eq-label-col">
+                <span class="eq-label-name">Low</span>
+                <span class="eq-label-value" id="eq-low-value">0dB</span>
+              </div>
+              <div class="eq-label-col">
+                <span class="eq-label-name">Mid</span>
+                <span class="eq-label-value" id="eq-mid-value">0dB</span>
+              </div>
+              <div class="eq-label-col">
+                <span class="eq-label-name">High</span>
+                <span class="eq-label-value" id="eq-high-value">0dB</span>
+              </div>
+            </div>
+            <svg id="eq-curve" class="eq-curve" viewBox="0 0 300 84" preserveAspectRatio="none">
+              <line class="eq-zero-line" x1="0" y1="42" x2="300" y2="42"></line>
+              <path id="eq-curve-path" class="eq-curve-path" d=""></path>
+              <circle id="eq-handle-low" class="eq-handle" data-band="low" cx="40" cy="42" r="8"
+                tabindex="0" role="slider" aria-label="Low" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"></circle>
+              <circle id="eq-handle-mid" class="eq-handle" data-band="mid" cx="150" cy="42" r="8"
+                tabindex="0" role="slider" aria-label="Mid" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"></circle>
+              <circle id="eq-handle-high" class="eq-handle" data-band="high" cx="260" cy="42" r="8"
+                tabindex="0" role="slider" aria-label="High" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"></circle>
+            </svg>
+          </div>
+        </div>
+
+        <div class="effect-tab-panel" id="effect-panel-advanced" hidden>
+          <div class="control-group">
+            <div class="control-header">
+              <span class="control-icon control-icon-lg">↕</span>
+              <label for="keep-pitch-toggle">Keep Original Pitch</label>
+              <label class="switch">
+                <input type="checkbox" id="keep-pitch-toggle">
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div id="pitch-warning-banner" class="pitch-warning-banner" hidden>
+              <span class="pitch-warning-banner-icon">⚠</span>
+              <span>Caution: may sound robotic below 1.0x.</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <div class="control-group">
+              <div class="control-header">
+                <span class="control-icon">⇉</span>
+                <label for="echo-slider">Echo <span id="echo-value" class="value-inline">(0%)</span></label>
+              </div>
+              <input type="range" id="echo-slider" min="0" max="100" step="5" value="0">
+            </div>
+
+            <div class="control-group">
+              <div class="control-header">
+                <span class="control-icon">⇔</span>
+                <label for="pan-slider">Pan <span id="pan-value" class="value-inline">(Center)</span></label>
+              </div>
+              <input type="range" id="pan-slider" min="-100" max="100" step="5" value="0">
+            </div>
+          </div>
+
+          <div class="control-row">
+            <div class="control-group">
+              <div class="control-header">
+                <span class="control-icon">⟷</span>
+                <label for="width-slider">Width <span id="width-value" class="value-inline">(100%)</span></label>
+              </div>
+              <input type="range" id="width-slider" min="0" max="200" step="5" value="100">
+            </div>
+
+            <div class="control-group">
+              <div class="control-header">
+                <span class="control-icon">♨</span>
+                <label for="saturation-slider">Saturation <span id="saturation-value" class="value-inline">(0%)</span></label>
+              </div>
+              <input type="range" id="saturation-slider" min="0" max="100" step="5" value="0">
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer id="app-footer">
+        <button type="button" id="reset-btn" class="action-btn">Reset Defaults</button>
+      </footer>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Slowed & Reverb",
+  "version": "1.0.0",
+  "description": "Apply real-time slowed and reverb audio effects to any HTML5 media element. Privacy-focused, zero telemetry, fully local processing.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "assets/icon16-off.png",
+      "48": "assets/icon48-off.png",
+      "128": "assets/icon128-off.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "toggle-effect": {
+      "description": "Toggle last preset"
+    },
+    "toggle-slowed-reverb": {
+      "description": "Toggle Slowed + Reverb preset"
+    },
+    "toggle-nightcore": {
+      "description": "Toggle Nightcore preset"
+    }
+  },
+  "icons": {
+    "16": "assets/icon16.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  }
+}
