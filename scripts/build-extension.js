@@ -5,7 +5,7 @@ const path = require('path');
 
 const TARGETS = new Set(['chromium', 'firefox']);
 const SOURCE_FILES = ['background.js', 'content.js', 'popup.js', 'popup.html', 'popup.css'];
-const GECKO_ID = 'slowed-reverb@example.com';
+const GECKO_ID = 'slowed-reverb@sahinozan';
 const GECKO_MIN_VERSION = '140.0';
 const GECKO_ANDROID_MIN_VERSION = '142.0';
 
@@ -40,7 +40,6 @@ if (target === 'firefox') {
   manifest.background = { scripts: ['background.js'] };
   manifest.browser_specific_settings = {
     gecko: {
-      // Replace this placeholder with one permanent add-on ID before AMO submission.
       id: GECKO_ID,
       strict_min_version: GECKO_MIN_VERSION,
       data_collection_permissions: { required: ['none'] }

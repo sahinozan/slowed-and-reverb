@@ -57,6 +57,9 @@ describe('store package contracts', () => {
     assert.equal(packageJson.engines.node, '>=24.19.0');
     assert.equal(packageJson.packageManager, 'npm@11.19.0');
     assert.equal(fs.readFileSync(path.join(root, '.nvmrc'), 'utf8').trim(), '24.19.0');
+    const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+    assert.match(readme, /ESLint 10/);
+    assert.match(readme, /Node >= 24\.19/);
     assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
     assert.equal('host_permissions' in manifest, false);
     assert.equal('content_scripts' in manifest, false);
@@ -112,7 +115,7 @@ describe('store package contracts', () => {
     assert.deepEqual(firefox.browser_specific_settings.gecko.data_collection_permissions, {
       required: ['none']
     });
-    assert.match(firefox.browser_specific_settings.gecko.id, /^[^@]+@[^@]+$/);
+    assert.equal(firefox.browser_specific_settings.gecko.id, 'slowed-reverb@sahinozan');
     assert.equal(firefox.browser_specific_settings.gecko.strict_min_version, '140.0');
     assert.equal(firefox.browser_specific_settings.gecko_android.strict_min_version, '142.0');
     assert.equal(firefox.version, chromium.version);
