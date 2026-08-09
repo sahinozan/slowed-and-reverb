@@ -80,7 +80,7 @@ cosmetic and stored globally, not per tab.
 
 ```sh
 npm ci                    # install exactly what package-lock.json records
-npm run lint              # ESLint 9, flat config
+npm run lint              # ESLint 10, flat config
 npm test                  # run service worker, content, popup, and package tests
 npm run test:watch        # rerun tests while developing
 npm run build:chromium    # emit dist/chromium/
@@ -96,7 +96,7 @@ directories under `dist/`; `npm run package` creates one upload ZIP per store in
 configuration and add-on metadata during the build. Its data-collection
 declaration supports Firefox desktop 140+ and Firefox Android 142+.
 
-Needs Node >= 22.13 and npm 11.19. Development tools are exact-versioned in
+Needs Node >= 24.19 and npm 11.19. Development tools are exact-versioned in
 `package.json` and `package-lock.json`; use `npm ci` for normal setup rather
 than fetching tools with `npx`. The project `.npmrc` disables dependency install
 scripts, rejects Git and remote-tarball dependencies, and excludes releases less
