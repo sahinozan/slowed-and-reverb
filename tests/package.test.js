@@ -54,9 +54,9 @@ describe('store package contracts', () => {
     assert.equal(manifest.manifest_version, 3);
     assert.equal(manifest.version, packageJson.version);
     assert.ok(manifest.description.length <= 132);
-    assert.equal(packageJson.engines.node, '>=22.13.0');
+    assert.equal(packageJson.engines.node, '>=24.19.0');
     assert.equal(packageJson.packageManager, 'npm@11.19.0');
-    assert.equal(fs.readFileSync(path.join(root, '.nvmrc'), 'utf8').trim(), '22.13.0');
+    assert.equal(fs.readFileSync(path.join(root, '.nvmrc'), 'utf8').trim(), '24.19.0');
     assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
     assert.equal('host_permissions' in manifest, false);
     assert.equal('content_scripts' in manifest, false);
@@ -154,7 +154,7 @@ describe('store package contracts', () => {
     const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');
     assert.doesNotMatch(workflow, /uses:\s+actions\/(?:checkout|setup-node)@v\d/);
     assert.match(workflow, /persist-credentials:\s+false/);
-    assert.match(workflow, /node-version:\s+22\.13\.0/);
+    assert.match(workflow, /node-version:\s+24\.19\.0/);
     assert.match(workflow, /npm@11\.19\.0/);
     assert.equal(fs.existsSync(path.join(root, '.github/dependabot.yml')), true);
   });
