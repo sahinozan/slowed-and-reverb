@@ -164,6 +164,21 @@ describe('content script audio processing', () => {
     close(harness);
   });
 
+  test('reports ordinary Web Audio conflicts as unsupported rather than DRM', async () => {
+    const error = new Error('media source already connected');
+    error.name = 'InvalidStateError';
+    const harness = await createContentHarness({ mediaSourceError: error });
+
+    const response = harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+
+    assert.equal(response.success, false);
+    assert.equal(response.blockReason, 'unsupported');
+    assert.equal(harness.dispatch({ type: 'GET_STATE' }).blockReason, 'unsupported');
+    assert.equal(harness.warnings.length, 1);
+
+    close(harness);
+  });
+
   test('ignores duplicate injections into the same document', async () => {
     const harness = await createContentHarness();
     assert.equal(harness.runtimeMessage.listeners.length, 1);

@@ -86,11 +86,13 @@
   let effectEnabled = false;
   let drmDetected = false;
   let liveStreamDetected = false;
+  let processingUnavailable = false;
 
   function blockReason() {
     if (drmDetected || isDrmHost) return 'drm';
     if (isTwitchClip) return 'broken';
     if (isUnreachableHost) return 'unreachable';
+    if (processingUnavailable) return 'unsupported';
     return null;
   }
 
@@ -315,9 +317,7 @@
 
       return pipeline;
     } catch (error) {
-      if (error.name === 'InvalidStateError' || error.name === 'NotSupportedError') {
-        drmDetected = true;
-      }
+      processingUnavailable = true;
       console.warn('Slowed & Reverb: failed to create audio pipeline', error);
       return null;
     }
@@ -386,6 +386,7 @@
     cleanRemovedPipelines();
     drmDetected = false;
     liveStreamDetected = false;
+    processingUnavailable = false;
 
     for (const media of document.querySelectorAll('video, audio')) {
       if (!effectEnabled || pipelines.has(media) || media.readyState >= HAVE_CURRENT_DATA) {
@@ -401,6 +402,11 @@
           { once: true }
         );
       }
+    }
+
+    if (activePipelines.size > 0) {
+      drmDetected = false;
+      processingUnavailable = false;
     }
   }
 
@@ -430,7 +436,7 @@
         type: 'CONTENT_STATE_CHANGED',
         enabled: effectEnabled,
         settings: currentSettings,
-        url: location.href
+        origin: location.origin
       })
       .catch(() => {});
   }
@@ -440,7 +446,13 @@
       currentSettings = message.settings;
       effectEnabled = Boolean(message.enabled);
       processMediaElements();
-      sendResponse({ success: true });
+      const reason = blockReason();
+      if (reason) effectEnabled = false;
+      sendResponse({
+        success: reason === null,
+        blocked: reason !== null,
+        blockReason: reason
+      });
     } else if (message.type === 'GET_STATE') {
       const reason = blockReason();
       sendResponse({
@@ -463,7 +475,7 @@
   }
 
   api.runtime
-    .sendMessage({ type: 'GET_TAB_STATE', url: location.href })
+    .sendMessage({ type: 'GET_TAB_STATE', url: location.origin })
     .catch(() => null)
     .then((remembered) => {
       const restored = Boolean(remembered?.enabled);

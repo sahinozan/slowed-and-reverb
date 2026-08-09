@@ -50,6 +50,7 @@ class FakeAudioNode {
 
 class FakeAudioContext {
   static instances = [];
+  static mediaSourceError = null;
 
   constructor() {
     this.sampleRate = 20;
@@ -84,6 +85,7 @@ class FakeAudioContext {
   }
 
   createMediaElementSource(media) {
+    if (FakeAudioContext.mediaSourceError) throw FakeAudioContext.mediaSourceError;
     const node = new FakeAudioNode('source');
     node.media = media;
     this.sources.push(node);
@@ -139,6 +141,7 @@ class FakeAudioContext {
 
 async function createContentHarness(options = {}) {
   FakeAudioContext.instances = [];
+  FakeAudioContext.mediaSourceError = options.mediaSourceError ?? null;
   const html = options.withMedia === false ? '<body></body>' : '<body><audio id="media"></audio></body>';
   const dom = new JSDOM(`<!doctype html>${html}`, {
     url: options.url ?? 'https://example.com/watch',
@@ -147,10 +150,12 @@ async function createContentHarness(options = {}) {
   const { window } = dom;
   const runtimeMessage = createEvent();
   const runtimeMessages = [];
+  const warnings = [];
 
   Object.defineProperty(window.document, 'readyState', { configurable: true, value: 'complete' });
   window.AudioContext = FakeAudioContext;
   window.webkitAudioContext = FakeAudioContext;
+  window.console.warn = (...args) => warnings.push(args);
 
   if (options.withoutBody) window.document.body.remove();
 
@@ -200,6 +205,7 @@ async function createContentHarness(options = {}) {
     runtimeMessage,
     runtimeMessages,
     source,
+    warnings,
     getContext: () => FakeAudioContext.instances[0],
     window
   };

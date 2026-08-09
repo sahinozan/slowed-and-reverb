@@ -22,7 +22,7 @@
         <div class="header-power">
           <span id="power-status" class="power-status">Off</span>
           <label class="switch">
-            <input type="checkbox" id="power-toggle">
+            <input type="checkbox" id="power-toggle" aria-label="Toggle audio effects">
             <span class="switch-slider"></span>
           </label>
         </div>
@@ -60,19 +60,21 @@
       </div>
 
       <section class="presets-tabs-section">
-        <div class="tabs">
-          <button type="button" class="tab-btn active" data-tab="presets">Presets</button>
-          <button type="button" class="tab-btn" data-tab="custom">My Presets</button>
+        <div class="tabs" role="tablist" aria-label="Preset sections">
+          <button type="button" id="tab-presets" class="tab-btn active" data-tab="presets"
+            role="tab" aria-selected="true" aria-controls="panel-presets">Presets</button>
+          <button type="button" id="tab-custom" class="tab-btn" data-tab="custom"
+            role="tab" aria-selected="false" aria-controls="panel-custom" tabindex="-1">My Presets</button>
         </div>
 
-        <div class="tab-panel" id="panel-presets">
+        <div class="tab-panel" id="panel-presets" role="tabpanel" aria-labelledby="tab-presets">
           <div class="presets">
             <button type="button" class="preset-btn" data-preset="slowed">Slowed + Reverb</button>
             <button type="button" class="preset-btn" data-preset="nightcore">Nightcore</button>
           </div>
         </div>
 
-        <div class="tab-panel" id="panel-custom" hidden>
+        <div class="tab-panel" id="panel-custom" role="tabpanel" aria-labelledby="tab-custom" hidden>
           <div class="save-preset-row">
             <input type="text" id="preset-name-input" placeholder="Preset name" maxlength="24">
             <button type="button" id="save-preset-btn" class="action-btn small">Save Current</button>
@@ -83,15 +85,17 @@
       </section>
 
       <section class="controls">
-        <div class="effect-tabs">
-          <button type="button" class="effect-tab-btn active" data-effect-tab="basic">Basic</button>
-          <button type="button" class="effect-tab-btn" data-effect-tab="advanced">
+        <div class="effect-tabs" role="tablist" aria-label="Effect controls">
+          <button type="button" id="effect-tab-basic" class="effect-tab-btn active" data-effect-tab="basic"
+            role="tab" aria-selected="true" aria-controls="effect-panel-basic">Basic</button>
+          <button type="button" id="effect-tab-advanced" class="effect-tab-btn" data-effect-tab="advanced"
+            role="tab" aria-selected="false" aria-controls="effect-panel-advanced" tabindex="-1">
             Advanced
             <span id="advanced-badge" class="tab-badge" hidden></span>
           </button>
         </div>
 
-        <div class="effect-tab-panel" id="effect-panel-basic">
+        <div class="effect-tab-panel" id="effect-panel-basic" role="tabpanel" aria-labelledby="effect-tab-basic">
           <div class="control-group">
             <div class="control-header">
               <span class="control-icon">⇄</span>
@@ -136,7 +140,8 @@
           </div>
         </div>
 
-        <div class="effect-tab-panel" id="effect-panel-advanced" hidden>
+        <div class="effect-tab-panel" id="effect-panel-advanced" role="tabpanel"
+          aria-labelledby="effect-tab-advanced" hidden>
           <div class="control-group">
             <div class="control-header">
               <span class="control-icon control-icon-lg">↕</span>

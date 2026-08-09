@@ -364,6 +364,11 @@ input[type="range"]:disabled {
   height: 0;
 }
 
+.switch input:focus-visible + .switch-slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .switch-slider {
   position: absolute;
   cursor: pointer;
@@ -768,6 +773,17 @@ input[type="range"] {
   appearance: none;
   cursor: pointer;
   position: relative;
+}
+
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 5px;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 input[type="range"]::-webkit-slider-track {

@@ -55,8 +55,8 @@ describe('background service worker', () => {
       tabId: 7,
       message: { type: 'UPDATE_AUDIO', settings: SLOWED, enabled: true }
     });
-    assert.deepEqual(harness.session.data.tabState[7], {
-      url: 'https://example.com/watch/1',
+    assert.deepEqual(harness.session.data['tabState:7'], {
+      origin: 'https://example.com',
       enabled: true,
       settings: SLOWED
     });
@@ -82,9 +82,7 @@ describe('background service worker', () => {
     const custom = { ...DEFAULT_SETTINGS, speed: 0.65, echo: 35 };
     const harness = setup({
       session: {
-        tabState: {
-          7: { url: 'https://example.com/previous', enabled: false, settings: custom }
-        }
+        'tabState:7': { origin: 'https://example.com', enabled: false, settings: custom }
       },
       onTabMessage(_tabId, message) {
         return message.type === 'GET_STATE'
@@ -99,9 +97,7 @@ describe('background service worker', () => {
     const crossOrigin = setup({
       activeTab: { id: 7, url: 'https://other.example/watch' },
       session: {
-        tabState: {
-          7: { url: 'https://example.com/previous', enabled: false, settings: custom }
-        }
+        'tabState:7': { origin: 'https://example.com', enabled: false, settings: custom }
       },
       onTabMessage(_tabId, message) {
         return message.type === 'GET_STATE'
@@ -137,24 +133,28 @@ describe('background service worker', () => {
         type: 'CONTENT_STATE_CHANGED',
         enabled: true,
         settings,
-        url: 'https://example.com/watch/2'
+        origin: 'https://example.com'
       },
-      { tab: { id: 7 } }
+      { tab: { id: 7, url: 'https://example.com/watch/2?private=value' } }
     );
     await flushPromises();
 
-    assert.deepEqual(harness.session.data.tabState[7].settings, settings);
+    assert.deepEqual(harness.session.data['tabState:7'], {
+      origin: 'https://example.com',
+      enabled: true,
+      settings
+    });
     assert.match(harness.calls.icons.at(-1).path[16], /icon16\.png$/);
 
     const recalled = await dispatchRuntimeMessage(
       harness.events.runtimeMessage,
       { type: 'GET_TAB_STATE', url: 'https://example.com/another' },
-      { tab: { id: 7 } }
+      { tab: { id: 7, url: 'https://example.com/another' } }
     );
     assert.deepEqual(recalled.settings, settings);
 
     await harness.events.tabRemoved.emit(7);
-    assert.equal(harness.session.data.tabState[7], undefined);
+    assert.equal(harness.session.data['tabState:7'], undefined);
   });
 
   test('updates the icon across tab loading and activation', async () => {
@@ -176,5 +176,57 @@ describe('background service worker', () => {
 
     await harness.events.tabActivated.emit({ tabId: 7 });
     assert.match(harness.calls.icons.at(-1).path[16], /icon16\.png$/);
+  });
+
+  test('does not record activation when applying to the page fails', async () => {
+    const harness = setup({
+      onTabMessage(_tabId, message) {
+        if (message.type === 'GET_STATE') {
+          return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false };
+        }
+        return null;
+      }
+    });
+
+    await harness.events.command.emit('toggle-slowed-reverb');
+
+    assert.equal(harness.local.writes.length, 0);
+    assert.equal(harness.session.data['tabState:7'], undefined);
+    assert.match(harness.calls.icons.at(-1).path[16], /icon16-off\.png$/);
+  });
+
+  test('serializes rapid applies and preserves the newest settings', async () => {
+    const harness = setup({
+      async onTabMessage(_tabId, message) {
+        if (message.type !== 'UPDATE_AUDIO') return { enabled: false, settings: DEFAULT_SETTINGS };
+        if (message.settings.reverb === 10) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return { success: true };
+      }
+    });
+    const first = { ...DEFAULT_SETTINGS, reverb: 10 };
+    const second = { ...DEFAULT_SETTINGS, reverb: 80 };
+
+    await Promise.all([
+      harness.api.runtime.sendMessage({
+        type: 'APPLY_TO_TAB',
+        tabId: 7,
+        url: 'https://example.com/one',
+        settings: first,
+        enabled: true
+      }),
+      harness.api.runtime.sendMessage({
+        type: 'APPLY_TO_TAB',
+        tabId: 7,
+        url: 'https://example.com/two',
+        settings: second,
+        enabled: true
+      })
+    ]);
+
+    assert.equal(updates(harness.calls).at(-1).message.settings.reverb, 80);
+    assert.equal(harness.local.data.reverb, 80);
+    assert.equal(harness.session.data['tabState:7'].settings.reverb, 80);
   });
 });

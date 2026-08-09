@@ -4,7 +4,7 @@ const fs = require('fs');
 const { JSDOM } = require('jsdom');
 
 const { createBrowserApi, flushPromises } = require('./browser-api');
-const { root } = require('./load-script');
+const { loadScript, root } = require('./load-script');
 
 async function createPopupHarness(options = {}) {
   const html = fs.readFileSync(`${root}/popup.html`, 'utf8');
@@ -18,9 +18,11 @@ async function createPopupHarness(options = {}) {
     activeTab: options.activeTab ?? { id: 9, url: 'https://example.com/watch' },
     local: options.local,
     session: options.session,
-    onTabMessage(_tabId, message) {
+    executeScriptError: options.executeScriptError,
+    onTabMessage(tabId, message) {
+      if (options.onTabMessage) return options.onTabMessage(tabId, message);
       if (message.type === 'GET_STATE') return options.contentState ?? null;
-      return { success: true };
+      return options.applyResult ?? { success: true };
     }
   });
 
@@ -30,6 +32,7 @@ async function createPopupHarness(options = {}) {
     return 1;
   };
 
+  loadScript('background.js', { chrome: harness.api });
   const source = fs.readFileSync(`${root}/popup.js`, 'utf8');
   window.eval(source);
   for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
