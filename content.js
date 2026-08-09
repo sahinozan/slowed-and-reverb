@@ -1,4 +1,5 @@
 (() => {
+  // Popup, shortcuts, and navigation recovery may all inject into the same document.
   if (window.__slowedReverbInjected) return;
   window.__slowedReverbInjected = true;
 
@@ -137,6 +138,7 @@
     const left = context.createGain();
     const right = context.createGain();
 
+    // Mid/side matrix: mid=(L+R)/2, side=(L-R)/2, then scale and recombine.
     input.connect(splitter);
     splitter.connect(createGain(context, 0.5), 0).connect(mid);
     splitter.connect(createGain(context, 0.5), 1).connect(mid);
@@ -163,6 +165,7 @@
       return null;
     }
 
+    // Attaching Web Audio permanently silences Twitch's tainted cross-origin clips.
     if (isTwitchClip) return null;
 
     if (!audioContext) {
@@ -231,6 +234,7 @@
       const pipeline = { eqLow, eqMid, eqHigh, dry, wet, echo, saturation, width, pan };
       pipelines.set(media, pipeline);
 
+      // Reused media elements often reset playbackRate when a new track starts.
       media.addEventListener('play', () => applySettings(media));
 
       return pipeline;
@@ -245,6 +249,7 @@
 
   function isLiveMedia(media) {
     if (media.readyState >= HAVE_METADATA && !Number.isFinite(media.duration)) return true;
+    // YouTube DVR streams report a finite duration; this class marks the live head.
     return (
       location.hostname.endsWith('youtube.com') &&
       document.querySelector('.ytp-live-badge-is-livehead') !== null
@@ -360,9 +365,11 @@
 
       startProcessingMedia();
 
+      // Reporting "off" here would overwrite the remembered state for the next reload.
       if (restored) notifyStateChanged();
     });
 
+  // YouTube changes routes without replacing the document or reinjecting this script.
   document.addEventListener('yt-navigate-finish', () => {
     processMediaElements();
     notifyStateChanged();
@@ -371,6 +378,7 @@
   document.addEventListener(
     'click',
     () => {
+      // Browsers may require a page gesture before a suspended AudioContext can resume.
       if (audioContext?.state === 'suspended') audioContext.resume();
     },
     { once: true }

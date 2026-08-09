@@ -50,6 +50,7 @@
   box-sizing: border-box;
 }
 
+/* Author display rules otherwise override the browser's built-in hidden rule. */
 [hidden] {
   display: none !important;
 }
@@ -76,6 +77,7 @@ body {
   box-shadow: 0 0 10px hsl(var(--accent-hsl) / 0.45);
 }
 
+/* Gecko popups have rounded panel chrome; Chromium popups are square. */
 @supports (-moz-appearance: none) {
   .container {
     border-radius: 6px;
@@ -84,6 +86,7 @@ body {
 
 .scroll-area {
   padding: 16px 18px 10px 18px;
+  /* JS measures the styled scrollbar; the negative margin hides its reserved gutter. */
   scrollbar-gutter: stable;
   margin-right: calc(-1 * var(--scrollbar-w, 0px));
   overflow-x: hidden;
@@ -560,6 +563,7 @@ input[type="range"]:disabled {
 }
 
 .custom-presets-list.has-scrollbar {
+  /* Keep Chromium's scrollbar clear of the preset action buttons. */
   margin-right: -14px;
 }
 
@@ -570,6 +574,8 @@ input[type="range"]:disabled {
 
 @supports (-moz-appearance: none) {
   .custom-presets-list.has-scrollbar {
+    /* Firefox's taller control metrics need a smaller overflow cap. */
+    max-height: 78px;
     margin-right: -8px;
     padding-right: 7px;
   }
@@ -659,6 +665,7 @@ input[type="range"]:disabled {
   color: var(--fg);
 }
 
+/* These equal-specificity overrides must remain after the base edit/delete rules. */
 .confirm-preset-btn {
   background: hsl(var(--accent-hsl) / 0.3);
   border-color: var(--accent);
@@ -740,6 +747,7 @@ input[type="range"]:disabled {
 }
 
 .control-header .switch {
+  /* The generic label rule above must not stretch this fixed-width switch. */
   flex: none;
 }
 
@@ -843,6 +851,7 @@ input[type="range"]::-moz-range-thumb:hover {
 }
 
 .eq-curve {
+  /* Keep the SVG viewBox ratio aligned with this size so handles stay circular. */
   width: 100%;
   height: 85px;
   touch-action: none;

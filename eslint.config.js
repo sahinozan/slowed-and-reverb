@@ -47,5 +47,31 @@ module.exports = [
       'prefer-const': 'error',
       'no-var': 'error'
     }
+  },
+  {
+    files: ['tests/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'commonjs',
+      globals: {
+        require: 'readonly',
+        module: 'writable',
+        __dirname: 'readonly',
+        clearTimeout: 'readonly',
+        console: 'readonly',
+        process: 'readonly',
+        setImmediate: 'readonly',
+        setTimeout: 'readonly',
+        structuredClone: 'readonly',
+        URL: 'readonly'
+      }
+    },
+    rules: {
+      'no-unused-vars': 'warn',
+      'no-undef': 'error',
+      eqeqeq: 'error',
+      'prefer-const': 'error',
+      'no-var': 'error'
+    }
   }
 ];

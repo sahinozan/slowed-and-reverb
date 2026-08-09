@@ -5,8 +5,16 @@
   "private": true,
   "scripts": {
     "build:firefox": "node scripts/build-firefox.js",
-    "lint": "npx --yes eslint@9 .",
-    "lint:firefox": "npm run build:firefox && npx --yes web-ext@10 lint --source-dir=dist/firefox --no-config-discovery"
+    "check": "npm run lint && npm test && npm run lint:firefox",
+    "lint": "eslint .",
+    "lint:firefox": "npm run build:firefox && web-ext lint --source-dir=dist/firefox --no-config-discovery",
+    "test": "node --test --test-concurrency=1",
+    "test:watch": "node --test --test-concurrency=1 --watch"
+  },
+  "devDependencies": {
+    "eslint": "9.39.5",
+    "jsdom": "26.1.0",
+    "web-ext": "10.6.0"
   },
   "engines": {
     "node": ">=18.18"

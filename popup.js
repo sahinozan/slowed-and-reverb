@@ -70,6 +70,7 @@ function settingsMatch(a, b) {
 
 function sameSite(a, b) {
   try {
+    // Keep this origin-scoped recall rule in sync with background.js.
     return new URL(a).origin === new URL(b).origin;
   } catch {
     return false;
@@ -175,6 +176,7 @@ function buildThemePicker() {
 
 function publishScrollbarWidth() {
   const probe = document.createElement('div');
+  // Reuse the real class because scrollbar styling can change its measured width.
   probe.className = 'scroll-area';
   probe.style.cssText =
     'position:absolute;top:0;left:0;visibility:hidden;' +
@@ -211,7 +213,7 @@ const SLIDERS = [
     key: 'speed',
     parse: Number.parseFloat,
     format: (value) => `(${value.toFixed(2)}x)`,
-    liveLabel: '(unavailable — live)',
+    liveLabel: '(unavailable while live)',
     pinnedWhenLive: true
   },
   { key: 'reverb', parse: toInt, format: percent },
@@ -306,6 +308,7 @@ function updateAdvancedBadge() {
 }
 
 async function saveAndApplySettings(enabled) {
+  // Enforce blocking here because every preset and control funnels through this path.
   const active = blocked ? false : enabled;
   const settings = getCurrentSettings();
 
@@ -443,6 +446,7 @@ function setPowerUI(enabled) {
 }
 
 function settlePowerUI() {
+  // Two frames guarantee the initial state paints before transitions are re-enabled.
   requestAnimationFrame(() =>
     requestAnimationFrame(() => document.body.classList.remove('booting'))
   );
@@ -462,6 +466,7 @@ function setLiveState(live) {
   liveBlocked = live;
 
   if (live) {
+    // Pin values as well as disabling controls so presets cannot save unusable speed.
     for (const slider of SLIDERS) {
       if (slider.pinnedWhenLive) slider.input.value = DEFAULT_SETTINGS[slider.key];
     }
@@ -692,6 +697,7 @@ function renderCustomPresets() {
     empty.textContent = 'No saved presets yet.';
     els.customPresetsList.appendChild(empty);
   } else if (editing) {
+    // Hide other rows while editing; applying one would discard unsaved changes.
     els.customPresetsList.appendChild(buildEditingRow(editing));
   } else {
     els.customPresetsList.append(...customPresets.map(buildPresetRow));
@@ -791,6 +797,7 @@ async function syncWithActiveTab() {
     return;
   }
 
+  // A tab with no prior state starts with the extension's primary preset enabled.
   applySettingsToUI(PRESETS.slowed);
   await saveAndApplySettings(true);
 }

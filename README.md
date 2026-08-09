@@ -2,33 +2,16 @@
 
 A browser extension that applies real-time slowed, reverb, and related audio
 effects to any HTML5 `<video>`/`<audio>` element. Fully local processing, zero
-telemetry, zero dependencies.
+telemetry, and zero runtime dependencies.
 
-## Install
+## Get the extension
 
-**Chromium (Chrome, Brave, Edge)**
-
-1. Open `chrome://extensions`
-2. Enable **Developer mode**
-3. **Load unpacked** → select this folder
-
-**Firefox**
-
-```sh
-npm run build:firefox     # or: node scripts/build-firefox.js
-```
-
-Then open `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** →
-pick `dist/firefox/manifest.json`.
-
-Firefox needs a separate build because its MV3 uses `background.scripts` where
-Chromium uses `background.service_worker`; the two keys are mutually exclusive.
-See [ARCHITECTURE.md](ARCHITECTURE.md#firefox-build).
+Chrome Web Store and Firefox Add-ons links will be added here after publication.
 
 ## Use
 
 Click the toolbar icon on any page with media. On a tab the extension has never
-touched, opening the popup applies **Slowed + Reverb** straight away — that is the
+touched, opening the popup applies **Slowed + Reverb** straight away. That is the
 point of installing it. Everything else is one click from there.
 
 ### Controls
@@ -51,7 +34,7 @@ point of installing it. Everything else is one click from there.
 | Width | 0 – 200% | Mid/side; 0 is mono, 100 untouched |
 | Saturation | 0 – 100% | Tape/vinyl-style soft clip |
 
-A limiter is always on and has no control — it only engages at extreme settings
+A limiter is always on and has no control. It only engages at extreme settings
 that would otherwise clip.
 
 ### Presets
@@ -63,10 +46,10 @@ rename and any slider changes and ↺ discards them. Custom presets live only in
 
 ### Keyboard shortcuts
 
-Three commands are declared with **no default keys** — assign them yourself at
+Three commands are declared with **no default keys**. Assign them yourself at
 `chrome://extensions/shortcuts`:
 
-- **Toggle last preset** — turns the effect off, or back on with this tab's last
+- **Toggle last preset:** turns the effect off, or back on with this tab's last
   settings (falling back to Slowed + Reverb).
 - **Toggle Slowed + Reverb**
 - **Toggle Nightcore**
@@ -93,21 +76,32 @@ cosmetic and stored globally, not per tab.
 ## Development
 
 ```sh
+npm ci                    # install exactly what package-lock.json records
 npm run lint              # ESLint 9, flat config
+npm test                  # run service worker, content, popup, and package tests
+npm run test:watch        # rerun tests while developing
 npm run build:firefox     # emit dist/firefox/
 npm run lint:firefox      # build, then validate with web-ext
+npm run check             # run every required local and store-package check
 ```
 
-Needs Node >= 18.18. No `npm install` step and no `node_modules` — the scripts
-fetch their tooling through `npx` on demand, so the repo stays dependency-free.
+The root manifest targets Chromium. The Firefox build emits `dist/firefox/`
+with Firefox's MV3 background configuration and add-on metadata.
 
-There is no test runner. See
-[ARCHITECTURE.md](ARCHITECTURE.md#verifying-changes) for how popup changes were
-verified (headless Firefox against stubbed `chrome.*` APIs).
+Needs Node >= 18.18. Development tools are exact-versioned in `package.json` and
+`package-lock.json`; use `npm ci` for normal setup rather than fetching tools
+with `npx`. The project `.npmrc` disables dependency install scripts, rejects
+Git and remote-tarball dependencies, and excludes releases less than seven days
+old when resolving dependency updates. Review lockfile changes and run
+`npm audit` before committing any intentional dependency update.
 
-**[ARCHITECTURE.md](ARCHITECTURE.md) is required reading before changing
-anything.** The source carries no comments; the reasoning — most of it empirical,
-established by testing against real sites — lives there.
+The test suite runs the real extension scripts against deterministic browser,
+DOM, and Web Audio mocks. It covers tab state and shortcuts, audio graph values,
+blocked and live-media behavior, popup controls and presets, manifest contracts,
+and the Firefox build. GitHub Actions runs `npm run check` for every push and pull
+request. A final manual smoke test in current Chromium and Firefox is still
+recommended before a store release because browser and media-site behavior cannot
+be reproduced completely in a unit-test environment.
 
 ## Privacy
 

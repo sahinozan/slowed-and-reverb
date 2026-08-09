@@ -42,6 +42,7 @@ function settingsMatch(a, b) {
 
 function sameSite(a, b) {
   try {
+    // Recall follows a tab across routes on one site, never across origins.
     return new URL(a).origin === new URL(b).origin;
   } catch {
     return false;
@@ -147,6 +148,7 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'GET_TAB_STATE') {
+    // Content scripts cannot access storage.session or discover their own tab id.
     recallTabState(tabId, message.url).then(sendResponse);
     return true;
   }
@@ -167,6 +169,7 @@ api.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
   if (changeInfo.status !== 'complete' || !RESTORABLE_URL.test(tab.url ?? '')) return;
 
+  // Injection asks this worker for remembered state and restores it inside the page.
   const state = await getTabState(tabId);
   await setTabIcon(tabId, Boolean(state?.enabled));
 });

@@ -3,7 +3,9 @@ const path = require('path');
 
 const SOURCE_FILES = ['background.js', 'content.js', 'popup.js', 'popup.html', 'popup.css'];
 const DEV_ONLY_ASSETS = /\.(sh|svg)$/;
+// Replace this placeholder with an id under a domain you control before AMO submission.
 const GECKO_ID = 'slowed-reverb@example.com';
+// Firefox introduced data_collection_permissions in version 142.
 const GECKO_MIN_VERSION = '142.0';
 
 const root = path.join(__dirname, '..');
@@ -23,6 +25,7 @@ fs.cpSync(path.join(root, 'assets'), path.join(outDir, 'assets'), {
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
 
+// Firefox MV3 uses background.scripts; Chromium requires background.service_worker.
 manifest.background = { scripts: ['background.js'] };
 manifest.browser_specific_settings = {
   gecko: {
