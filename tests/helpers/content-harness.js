@@ -40,10 +40,17 @@ class FakeAudioNode {
     this.connections.push({ target, ports });
     return target;
   }
+
+  disconnect(target) {
+    this.connections = target
+      ? this.connections.filter((connection) => connection.target !== target)
+      : [];
+  }
 }
 
 class FakeAudioContext {
   static instances = [];
+  static mediaSourceError = null;
 
   constructor() {
     this.sampleRate = 20;
@@ -55,6 +62,7 @@ class FakeAudioContext {
     this.compressors = [];
     this.panners = [];
     this.waveShapers = [];
+    this.buffers = [];
     FakeAudioContext.instances.push(this);
   }
 
@@ -64,7 +72,7 @@ class FakeAudioContext {
 
   createBuffer(channels, length, sampleRate) {
     const data = Array.from({ length: channels }, () => new Float32Array(length));
-    return {
+    const buffer = {
       numberOfChannels: channels,
       length,
       sampleRate,
@@ -72,9 +80,12 @@ class FakeAudioContext {
         return data[channel];
       }
     };
+    this.buffers.push(buffer);
+    return buffer;
   }
 
   createMediaElementSource(media) {
+    if (FakeAudioContext.mediaSourceError) throw FakeAudioContext.mediaSourceError;
     const node = new FakeAudioNode('source');
     node.media = media;
     this.sources.push(node);
@@ -130,6 +141,7 @@ class FakeAudioContext {
 
 async function createContentHarness(options = {}) {
   FakeAudioContext.instances = [];
+  FakeAudioContext.mediaSourceError = options.mediaSourceError ?? null;
   const html = options.withMedia === false ? '<body></body>' : '<body><audio id="media"></audio></body>';
   const dom = new JSDOM(`<!doctype html>${html}`, {
     url: options.url ?? 'https://example.com/watch',
@@ -138,10 +150,14 @@ async function createContentHarness(options = {}) {
   const { window } = dom;
   const runtimeMessage = createEvent();
   const runtimeMessages = [];
+  const warnings = [];
 
   Object.defineProperty(window.document, 'readyState', { configurable: true, value: 'complete' });
   window.AudioContext = FakeAudioContext;
   window.webkitAudioContext = FakeAudioContext;
+  window.console.warn = (...args) => warnings.push(args);
+
+  if (options.withoutBody) window.document.body.remove();
 
   const media = window.document.getElementById('media');
   if (media) {
@@ -180,13 +196,16 @@ async function createContentHarness(options = {}) {
   }
 
   return {
-    context: FakeAudioContext.instances[0],
+    get context() {
+      return FakeAudioContext.instances[0];
+    },
     dispatch,
     dom,
     media,
     runtimeMessage,
     runtimeMessages,
     source,
+    warnings,
     getContext: () => FakeAudioContext.instances[0],
     window
   };

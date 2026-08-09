@@ -1,23 +1,32 @@
 {
   "name": "slowed-reverb-extension",
   "version": "1.0.0",
-  "description": "Apply real-time slowed and reverb audio effects to any HTML5 media element.",
+  "description": "Apply real-time slowed, reverb, and related audio effects to HTML5 media on supported pages.",
   "private": true,
   "scripts": {
-    "build:firefox": "node scripts/build-firefox.js",
+    "build:chromium": "node scripts/build-extension.js chromium",
+    "build:firefox": "node scripts/build-extension.js firefox",
     "check": "npm run lint && npm test && npm run lint:firefox",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "lint:firefox": "npm run build:firefox && web-ext lint --source-dir=dist/firefox --no-config-discovery",
+    "package": "npm run package:chromium && npm run package:firefox",
+    "package:chromium": "npm run build:chromium && web-ext build --source-dir=dist/chromium --artifacts-dir=dist/packages --filename=slowed-reverb-chromium.zip --overwrite-dest --no-config-discovery",
+    "package:firefox": "npm run build:firefox && web-ext build --source-dir=dist/firefox --artifacts-dir=dist/packages --filename=slowed-reverb-firefox.zip --overwrite-dest --no-config-discovery",
     "test": "node --test --test-concurrency=1",
     "test:watch": "node --test --test-concurrency=1 --watch"
   },
   "devDependencies": {
+    "adm-zip": "0.6.0",
     "eslint": "9.39.5",
     "jsdom": "26.1.0",
     "web-ext": "10.6.0"
   },
   "engines": {
-    "node": ">=18.18"
+    "node": ">=22.13.0"
+  },
+  "packageManager": "npm@11.19.0",
+  "overrides": {
+    "js-yaml": "4.3.1"
   },
   "license": "SEE LICENSE IN README.md"
 }

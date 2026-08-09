@@ -29,7 +29,8 @@ const ICONS = {
 const BLOCKED_TEXT = {
   drm: "This page's audio looks copy-protected (DRM), so effects can't be applied here.",
   broken: "This breaks audio playback completely, so it's disabled here.",
-  unreachable: "This site's player keeps its audio out of the page, so effects can't reach it."
+  unreachable: "This site's player keeps its audio out of the page, so effects can't reach it.",
+  unsupported: "Browser-protected pages and this type of player can't be changed here."
 };
 
 const THEMES = [
@@ -42,7 +43,6 @@ const DEFAULT_THEME = 'pink';
 
 const THEME_KEY = 'uiTheme';
 const CUSTOM_PRESETS_KEY = 'customPresets';
-const TAB_STATE_KEY = 'tabState';
 
 const PRESET_NAME_MAX_LENGTH = 24;
 
@@ -68,29 +68,10 @@ function settingsMatch(a, b) {
   });
 }
 
-function sameSite(a, b) {
-  try {
-    // Keep this origin-scoped recall rule in sync with background.js.
-    return new URL(a).origin === new URL(b).origin;
-  } catch {
-    return false;
-  }
-}
-
-async function readTabStates() {
-  const stored = await api.storage.session.get(TAB_STATE_KEY);
-  return stored[TAB_STATE_KEY] ?? {};
-}
-
-async function rememberTabState(tabId, url, enabled, settings) {
-  const tabState = await readTabStates();
-  tabState[tabId] = { url, enabled, settings };
-  await api.storage.session.set({ [TAB_STATE_KEY]: tabState });
-}
-
 async function recallTabState(tabId, url) {
-  const entry = (await readTabStates())[tabId];
-  return entry && sameSite(entry.url, url) ? entry : null;
+  return api.runtime
+    .sendMessage({ type: 'GET_TAB_STATE', tabId, url })
+    .catch(() => null);
 }
 
 async function getActiveTab() {
@@ -101,7 +82,10 @@ async function getActiveTab() {
 async function ensureContentScript(tabId) {
   try {
     await api.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function setTabIcon(tabId, enabled) {
@@ -260,6 +244,8 @@ let customPresets = [];
 let activePresetId = null;
 let blocked = false;
 let liveBlocked = false;
+let applyRevision = 0;
+let presetWriteQueue = Promise.resolve();
 
 function getCurrentSettings() {
   const settings = { keepPitch: els.keepPitch.checked };
@@ -311,21 +297,26 @@ async function saveAndApplySettings(enabled) {
   // Enforce blocking here because every preset and control funnels through this path.
   const active = blocked ? false : enabled;
   const settings = getCurrentSettings();
+  const revision = ++applyRevision;
 
-  api.storage.local.set(settings);
   setPowerUI(active);
 
   const tab = await getActiveTab();
-  if (!tab?.id) return;
+  if (tab?.id === undefined) return null;
 
-  await ensureContentScript(tab.id);
-  await rememberTabState(tab.id, tab.url, active, settings);
+  const result = await api.runtime
+    .sendMessage({ type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled: active })
+    .catch(() => ({ success: false, blocked: true, blockReason: 'unsupported' }));
 
-  api.tabs
-    .sendMessage(tab.id, { type: 'UPDATE_AUDIO', settings, enabled: active })
-    .catch(() => {});
+  if (revision !== applyRevision) return result;
 
-  setTabIcon(tab.id, active);
+  if (!result?.success) {
+    setBlocked(true, result?.blockReason ?? 'unsupported');
+    setPowerUI(false);
+    setTabIcon(tab.id, false);
+  }
+
+  return result;
 }
 
 function dbToY(db) {
@@ -455,11 +446,29 @@ function settlePowerUI() {
 function setActiveTab(buttons, panels, activeKey) {
   for (const button of buttons) {
     const key = button.dataset.tab ?? button.dataset.effectTab;
-    button.classList.toggle('active', key === activeKey);
+    const active = key === activeKey;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
   }
   for (const [key, panel] of Object.entries(panels)) {
     panel.hidden = key !== activeKey;
   }
+}
+
+function moveTabFocus(event, buttons) {
+  const current = buttons.indexOf(event.currentTarget);
+  let next = null;
+
+  if (event.key === 'Home') next = 0;
+  if (event.key === 'End') next = buttons.length - 1;
+  if (event.key === 'ArrowLeft') next = (current - 1 + buttons.length) % buttons.length;
+  if (event.key === 'ArrowRight') next = (current + 1) % buttons.length;
+  if (next === null) return;
+
+  event.preventDefault();
+  buttons[next].focus();
+  buttons[next].click();
 }
 
 function setLiveState(live) {
@@ -534,7 +543,11 @@ function updateCurrentPresetBar() {
 }
 
 function persistCustomPresets() {
-  return api.storage.local.set({ [CUSTOM_PRESETS_KEY]: customPresets });
+  const snapshot = customPresets.map((preset) => ({ ...preset }));
+  presetWriteQueue = presetWriteQueue
+    .catch(() => {})
+    .then(() => api.storage.local.set({ [CUSTOM_PRESETS_KEY]: snapshot }));
+  return presetWriteQueue;
 }
 
 async function loadCustomPresets() {
@@ -739,6 +752,7 @@ function bindControls() {
       if (activePresetId) setActivePreset(null);
       if (button.dataset.tab === 'custom') updateCustomPresetsScrollGap();
     });
+    button.addEventListener('keydown', (event) => moveTabFocus(event, tabButtons));
   }
 
   for (const button of effectTabButtons) {
@@ -746,6 +760,7 @@ function bindControls() {
       setActiveTab(effectTabButtons, effectTabPanels, button.dataset.effectTab);
       els.footer.classList.toggle('no-divider', button.dataset.effectTab === 'advanced');
     });
+    button.addEventListener('keydown', (event) => moveTabFocus(event, effectTabButtons));
   }
 
   els.savePresetBtn.addEventListener('click', saveCustomPreset);
@@ -756,14 +771,22 @@ function bindControls() {
 
 async function syncWithActiveTab() {
   const tab = await getActiveTab();
-  if (!tab?.id) return;
+  if (tab?.id === undefined) return;
 
-  await ensureContentScript(tab.id);
+  if (!(await ensureContentScript(tab.id))) {
+    setBlocked(true, 'unsupported');
+    setPowerUI(false);
+    setTabIcon(tab.id, false);
+    return;
+  }
 
   let state;
   try {
     state = await api.tabs.sendMessage(tab.id, { type: 'GET_STATE' });
   } catch {
+    setBlocked(true, 'unsupported');
+    setPowerUI(false);
+    setTabIcon(tab.id, false);
     return;
   }
 

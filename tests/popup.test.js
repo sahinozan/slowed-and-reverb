@@ -39,7 +39,7 @@ describe('popup behavior', () => {
     assert.equal(harness.window.document.getElementById('reverb-slider').value, '40');
     assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
     assert.equal(audioUpdates(harness).at(-1).message.settings.speed, 0.8);
-    assert.equal(harness.session.data.tabState[9].enabled, true);
+    assert.equal(harness.session.data['tabState:9'].enabled, true);
 
     close(harness);
   });
@@ -121,6 +121,7 @@ describe('popup behavior', () => {
 
     document.getElementById('preset-name-input').value = 'Late Night';
     document.getElementById('save-preset-btn').click();
+    await flushPromises();
 
     assert.equal(harness.local.data.customPresets.length, 1);
     assert.equal(harness.local.data.customPresets[0].name, 'Late Night');
@@ -134,9 +135,11 @@ describe('popup behavior', () => {
     const nameInput = document.querySelector('.custom-preset-name-input');
     nameInput.value = 'After Hours';
     document.querySelector('.confirm-preset-btn').click();
+    await flushPromises();
     assert.equal(harness.local.data.customPresets[0].name, 'After Hours');
 
     document.querySelector('.delete-preset-btn').click();
+    await flushPromises();
     assert.deepEqual(harness.local.data.customPresets, []);
     assert.match(document.querySelector('.custom-presets-empty').textContent, /No saved presets/);
 
@@ -176,6 +179,81 @@ describe('popup behavior', () => {
     assert.equal(handle.getAttribute('aria-valuenow'), '12');
     assert.equal(harness.window.document.getElementById('eq-high-value').textContent, '+12dB');
     assert.equal(audioUpdates(harness).at(-1).message.settings.eqHigh, 12);
+
+    close(harness);
+  });
+
+  test('exposes named controls and keyboard-operable tabs', async () => {
+    const harness = await createPopupHarness({
+      contentState: { enabled: true, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+    });
+    const document = harness.window.document;
+    const presetsTab = document.getElementById('tab-presets');
+    const customTab = document.getElementById('tab-custom');
+
+    assert.equal(document.getElementById('power-toggle').getAttribute('aria-label'), 'Toggle audio effects');
+    assert.equal(presetsTab.getAttribute('aria-selected'), 'true');
+    customTab.dispatchEvent(
+      new harness.window.KeyboardEvent('keydown', {
+        key: 'ArrowLeft',
+        bubbles: true,
+        cancelable: true
+      })
+    );
+    assert.equal(presetsTab.getAttribute('aria-selected'), 'true');
+
+    presetsTab.dispatchEvent(
+      new harness.window.KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        bubbles: true,
+        cancelable: true
+      })
+    );
+    assert.equal(customTab.getAttribute('aria-selected'), 'true');
+    assert.equal(document.getElementById('panel-custom').hidden, false);
+    assert.equal(presetsTab.tabIndex, -1);
+    assert.equal(customTab.tabIndex, 0);
+
+    close(harness);
+  });
+
+  test('shows an unsupported-page state when injection is rejected', async () => {
+    const harness = await createPopupHarness({ executeScriptError: new Error('restricted page') });
+    const document = harness.window.document;
+
+    assert.equal(document.getElementById('blocked-banner').hidden, false);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /Browser-protected/);
+    assert.equal(document.getElementById('power-toggle').checked, false);
+    assert.equal(document.getElementById('power-toggle').disabled, true);
+    assert.equal(audioUpdates(harness).length, 0);
+
+    close(harness);
+  });
+
+  test('keeps the newest value after rapid slider changes', async () => {
+    const harness = await createPopupHarness({
+      contentState: { enabled: true, settings: DEFAULT_SETTINGS, blocked: false, live: false },
+      async onTabMessage(_tabId, message) {
+        if (message.type === 'GET_STATE') {
+          return { enabled: true, settings: DEFAULT_SETTINGS, blocked: false, live: false };
+        }
+        if (message.settings.reverb === 10) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return { success: true };
+      }
+    });
+    const slider = harness.window.document.getElementById('reverb-slider');
+
+    slider.value = '10';
+    slider.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+    slider.value = '80';
+    slider.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.equal(audioUpdates(harness).at(-1).message.settings.reverb, 80);
+    assert.equal(harness.local.data.reverb, 80);
+    assert.equal(harness.session.data['tabState:9'].settings.reverb, 80);
 
     close(harness);
   });
