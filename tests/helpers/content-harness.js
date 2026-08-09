@@ -40,6 +40,12 @@ class FakeAudioNode {
     this.connections.push({ target, ports });
     return target;
   }
+
+  disconnect(target) {
+    this.connections = target
+      ? this.connections.filter((connection) => connection.target !== target)
+      : [];
+  }
 }
 
 class FakeAudioContext {
@@ -55,6 +61,7 @@ class FakeAudioContext {
     this.compressors = [];
     this.panners = [];
     this.waveShapers = [];
+    this.buffers = [];
     FakeAudioContext.instances.push(this);
   }
 
@@ -64,7 +71,7 @@ class FakeAudioContext {
 
   createBuffer(channels, length, sampleRate) {
     const data = Array.from({ length: channels }, () => new Float32Array(length));
-    return {
+    const buffer = {
       numberOfChannels: channels,
       length,
       sampleRate,
@@ -72,6 +79,8 @@ class FakeAudioContext {
         return data[channel];
       }
     };
+    this.buffers.push(buffer);
+    return buffer;
   }
 
   createMediaElementSource(media) {
@@ -143,6 +152,8 @@ async function createContentHarness(options = {}) {
   window.AudioContext = FakeAudioContext;
   window.webkitAudioContext = FakeAudioContext;
 
+  if (options.withoutBody) window.document.body.remove();
+
   const media = window.document.getElementById('media');
   if (media) {
     Object.defineProperties(media, {
@@ -180,7 +191,9 @@ async function createContentHarness(options = {}) {
   }
 
   return {
-    context: FakeAudioContext.instances[0],
+    get context() {
+      return FakeAudioContext.instances[0];
+    },
     dispatch,
     dom,
     media,

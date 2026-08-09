@@ -67,6 +67,7 @@
   const HAVE_METADATA = 1;
   const HAVE_CURRENT_DATA = 2;
   const MEDIA_SETTLE_MS = 100;
+  const MAX_ACTIVE_PIPELINES = 32;
 
   const isDrmHost = DRM_HOSTS.has(location.hostname);
   const isUnreachableHost = UNREACHABLE_HOSTS.has(location.hostname);
@@ -74,7 +75,12 @@
     location.hostname === 'www.twitch.tv' && /^\/[^/]+\/clip\//.test(location.pathname);
 
   let audioContext = null;
+  let impulseResponse = null;
+  let saturationCurve = null;
   const pipelines = new WeakMap();
+  const activePipelines = new Map();
+  const pendingMetadata = new WeakSet();
+  let mediaProcessTimer = null;
 
   let currentSettings = { ...NEUTRAL_SETTINGS };
   let effectEnabled = false;
@@ -112,6 +118,11 @@
     }
 
     return curve;
+  }
+
+  function resumeAudioContext() {
+    if (audioContext?.state !== 'suspended') return;
+    audioContext.resume().catch(() => {});
   }
 
   function createGain(context, value = 1) {
@@ -159,41 +170,80 @@
     return merger;
   }
 
+  function setPipelineEnabled(pipeline, enabled) {
+    pipeline.bypass.gain.value = enabled ? 0 : 1;
+    pipeline.processed.gain.value = enabled ? 1 : 0;
+  }
+
+  function connectPipeline(media, pipeline) {
+    if (pipeline.connected) return true;
+    if (activePipelines.size >= MAX_ACTIVE_PIPELINES) return false;
+
+    pipeline.source.connect(pipeline.stereoInput);
+    pipeline.source.connect(pipeline.bypass);
+    pipeline.bypass.connect(audioContext.destination);
+    pipeline.processed.connect(audioContext.destination);
+    media.addEventListener('play', pipeline.playListener);
+    pipeline.connected = true;
+    activePipelines.set(media, pipeline);
+    return true;
+  }
+
+  function disconnectPipeline(media, pipeline) {
+    if (!pipeline.connected) return;
+
+    pipeline.source.disconnect();
+    pipeline.bypass.disconnect();
+    pipeline.processed.disconnect();
+    media.removeEventListener('play', pipeline.playListener);
+    pipeline.connected = false;
+    activePipelines.delete(media);
+  }
+
+  function cleanRemovedPipelines() {
+    for (const [media, pipeline] of activePipelines) {
+      if (!media.isConnected) disconnectPipeline(media, pipeline);
+    }
+  }
+
   function createPipeline(media) {
+    if (isDrmHost || isTwitchClip || isUnreachableHost) return null;
+
     if (media.mediaKeys) {
       drmDetected = true;
       return null;
     }
 
-    // Attaching Web Audio permanently silences Twitch's tainted cross-origin clips.
-    if (isTwitchClip) return null;
+    if (activePipelines.size >= MAX_ACTIVE_PIPELINES) return null;
 
     if (!audioContext) {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
     }
-    if (audioContext.state === 'suspended') {
-      audioContext.resume();
-    }
+    resumeAudioContext();
 
     const context = audioContext;
 
     try {
-      if (!media.crossOrigin) media.crossOrigin = 'anonymous';
-
       const source = context.createMediaElementSource(media);
+      const stereoInput = context.createGain();
+      stereoInput.channelCount = 2;
+      stereoInput.channelCountMode = 'explicit';
+      stereoInput.channelInterpretation = 'speakers';
 
       const eqLow = createFilter(context, 'lowshelf', EQ_LOW_FREQUENCY);
       const eqMid = createFilter(context, 'peaking', EQ_MID_FREQUENCY, EQ_MID_Q);
       const eqHigh = createFilter(context, 'highshelf', EQ_HIGH_FREQUENCY);
 
       const convolver = context.createConvolver();
-      convolver.buffer = createImpulseResponse(context, REVERB_DURATION, REVERB_DECAY);
+      impulseResponse ??= createImpulseResponse(context, REVERB_DURATION, REVERB_DECAY);
+      convolver.buffer = impulseResponse;
 
       const delay = context.createDelay(1.0);
       delay.delayTime.value = ECHO_DELAY_SECONDS;
 
       const saturator = context.createWaveShaper();
-      saturator.curve = createSaturationCurve(SATURATION_DRIVE);
+      saturationCurve ??= createSaturationCurve(SATURATION_DRIVE);
+      saturator.curve = saturationCurve;
       saturator.oversample = '4x';
 
       const limiter = context.createDynamicsCompressor();
@@ -212,8 +262,12 @@
       const saturation = createGain(context, 0);
       const width = createGain(context, 1);
       const mixed = createGain(context, 1);
+      const bypass = createGain(context, 0);
+      const processed = createGain(context, 1);
 
-      source.connect(eqLow);
+      source.connect(stereoInput);
+      source.connect(bypass).connect(context.destination);
+      stereoInput.connect(eqLow);
       eqLow.connect(eqMid);
       eqMid.connect(eqHigh);
 
@@ -229,13 +283,35 @@
       connectStereoWidth(context, mixed, width)
         .connect(pan)
         .connect(limiter)
+        .connect(processed)
         .connect(context.destination);
 
-      const pipeline = { eqLow, eqMid, eqHigh, dry, wet, echo, saturation, width, pan };
+      const pipeline = {
+        source,
+        stereoInput,
+        eqLow,
+        eqMid,
+        eqHigh,
+        dry,
+        wet,
+        echo,
+        saturation,
+        width,
+        pan,
+        bypass,
+        processed,
+        connected: true,
+        playListener: null
+      };
+      pipeline.playListener = () => {
+        resumeAudioContext();
+        applySettings(media);
+      };
       pipelines.set(media, pipeline);
+      activePipelines.set(media, pipeline);
 
       // Reused media elements often reset playbackRate when a new track starts.
-      media.addEventListener('play', () => applySettings(media));
+      media.addEventListener('play', pipeline.playListener);
 
       return pipeline;
     } catch (error) {
@@ -259,14 +335,33 @@
   function applySettings(media) {
     if (!media) return;
 
-    const pipeline = pipelines.get(media) ?? createPipeline(media);
-    if (!pipeline) return;
+    let pipeline = pipelines.get(media);
 
-    const settings = effectEnabled ? currentSettings : NEUTRAL_SETTINGS;
+    if (!effectEnabled) {
+      media.playbackRate = NEUTRAL_SETTINGS.speed;
+      media.preservesPitch = NEUTRAL_SETTINGS.keepPitch;
+      media.mozPreservesPitch = NEUTRAL_SETTINGS.keepPitch;
+      media.webkitPreservesPitch = NEUTRAL_SETTINGS.keepPitch;
+
+      if (pipeline && connectPipeline(media, pipeline)) setPipelineEnabled(pipeline, false);
+      return;
+    }
+
+    pipeline ??= createPipeline(media);
+    if (!pipeline) return;
+    if (!connectPipeline(media, pipeline)) return;
+    setPipelineEnabled(pipeline, true);
+
+    const settings = currentSettings;
     const live = isLiveMedia(media);
     liveStreamDetected = liveStreamDetected || live;
 
-    if (!live) {
+    if (live) {
+      media.playbackRate = NEUTRAL_SETTINGS.speed;
+      media.preservesPitch = NEUTRAL_SETTINGS.keepPitch;
+      media.mozPreservesPitch = NEUTRAL_SETTINGS.keepPitch;
+      media.webkitPreservesPitch = NEUTRAL_SETTINGS.keepPitch;
+    } else {
       media.playbackRate = settings.speed;
       media.preservesPitch = settings.keepPitch;
       media.mozPreservesPitch = settings.keepPitch;
@@ -288,14 +383,23 @@
   }
 
   function processMediaElements() {
+    cleanRemovedPipelines();
     drmDetected = false;
     liveStreamDetected = false;
 
     for (const media of document.querySelectorAll('video, audio')) {
-      if (pipelines.has(media) || media.readyState >= HAVE_CURRENT_DATA) {
+      if (!effectEnabled || pipelines.has(media) || media.readyState >= HAVE_CURRENT_DATA) {
         applySettings(media);
-      } else {
-        media.addEventListener('loadedmetadata', () => applySettings(media), { once: true });
+      } else if (!pendingMetadata.has(media)) {
+        pendingMetadata.add(media);
+        media.addEventListener(
+          'loadedmetadata',
+          () => {
+            pendingMetadata.delete(media);
+            if (media.isConnected) applySettings(media);
+          },
+          { once: true }
+        );
       }
     }
   }
@@ -307,13 +411,18 @@
   }
 
   const observer = new MutationObserver((mutations) => {
-    const added = mutations.some((mutation) =>
-      Array.prototype.some.call(mutation.addedNodes, containsMedia)
+    const mediaChanged = mutations.some(
+      (mutation) =>
+        Array.prototype.some.call(mutation.addedNodes, containsMedia) ||
+        Array.prototype.some.call(mutation.removedNodes, containsMedia)
     );
-    if (added) setTimeout(processMediaElements, MEDIA_SETTLE_MS);
+    if (!mediaChanged) return;
+
+    window.clearTimeout(mediaProcessTimer);
+    mediaProcessTimer = window.setTimeout(processMediaElements, MEDIA_SETTLE_MS);
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 
   function notifyStateChanged() {
     api.runtime
@@ -375,12 +484,6 @@
     notifyStateChanged();
   });
 
-  document.addEventListener(
-    'click',
-    () => {
-      // Browsers may require a page gesture before a suspended AudioContext can resume.
-      if (audioContext?.state === 'suspended') audioContext.resume();
-    },
-    { once: true }
-  );
+  // Browsers may require a later page gesture before a suspended AudioContext can resume.
+  document.addEventListener('click', resumeAudioContext);
 })();

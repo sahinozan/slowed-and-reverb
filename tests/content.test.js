@@ -27,6 +27,8 @@ describe('content script audio processing', () => {
   test('builds the audio graph and applies every setting', async () => {
     const harness = await createContentHarness();
 
+    assert.equal(harness.context, undefined);
+
     assert.equal(
       harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true }).success,
       true
@@ -34,9 +36,12 @@ describe('content script audio processing', () => {
 
     const { context, media } = harness;
     assert.equal(context.sources.length, 1);
-    assert.equal(media.crossOrigin, 'anonymous');
+    assert.equal(media.crossOrigin, null);
     assert.equal(media.playbackRate, 0.7);
     assert.equal(media.preservesPitch, true);
+    assert.equal(context.gains[0].channelCount, 2);
+    assert.equal(context.gains[0].channelCountMode, 'explicit');
+    assert.equal(context.gains[0].channelInterpretation, 'speakers');
     assert.deepEqual(
       context.filters.map(({ type, frequency, Q, gain }) => ({
         type,
@@ -50,11 +55,11 @@ describe('content script audio processing', () => {
         { type: 'highshelf', frequency: 4000, q: 0, gain: 4 }
       ]
     );
-    assert.equal(context.gains[0].gain.value, 0.85);
-    assert.equal(context.gains[1].gain.value, 0.35);
-    assert.equal(context.gains[2].gain.value, 0.2);
-    assert.equal(context.gains[3].gain.value, 0.18);
-    assert.equal(context.gains[4].gain.value, 1.5);
+    assert.equal(context.gains[1].gain.value, 0.85);
+    assert.equal(context.gains[2].gain.value, 0.35);
+    assert.equal(context.gains[3].gain.value, 0.2);
+    assert.equal(context.gains[4].gain.value, 0.18);
+    assert.equal(context.gains[5].gain.value, 1.5);
     assert.equal(context.panners[0].pan.value, -0.25);
     assert.equal(context.waveShapers[0].curve.length, 1024);
     assert.deepEqual(
@@ -75,8 +80,10 @@ describe('content script audio processing', () => {
 
     assert.equal(harness.media.playbackRate, 1);
     assert.equal(harness.media.preservesPitch, false);
-    assert.deepEqual(harness.context.filters.map((node) => node.gain.value), [0, 0, 0]);
-    assert.deepEqual(harness.context.gains.slice(0, 5).map((node) => node.gain.value), [1, 0, 0, 0, 1]);
+    const outputGains = harness.context.gains.filter((node) =>
+      node.connections.some((connection) => connection.target === harness.context.destination)
+    );
+    assert.deepEqual(outputGains.map((node) => node.gain.value), [1, 0]);
 
     close(harness);
   });
@@ -108,10 +115,10 @@ describe('content script audio processing', () => {
     const state = harness.dispatch({ type: 'GET_STATE' });
 
     assert.equal(harness.media.playbackRate, 1);
-    assert.equal(harness.media.preservesPitch, undefined);
+    assert.equal(harness.media.preservesPitch, false);
     assert.equal(state.live, true);
     assert.equal(state.enabled, true);
-    assert.equal(harness.context.gains[1].gain.value, 0.35);
+    assert.equal(harness.context.gains[2].gain.value, 0.35);
 
     close(harness);
   });
@@ -132,6 +139,18 @@ describe('content script audio processing', () => {
     }
   });
 
+  test('does not attach blocked media to Web Audio', async () => {
+    for (const url of ['https://open.spotify.com/track/1', 'https://soundcloud.com/a/b']) {
+      const harness = await createContentHarness({ url });
+
+      harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+
+      assert.equal(harness.context, undefined);
+      assert.equal(harness.media.crossOrigin, null);
+      close(harness);
+    }
+  });
+
   test('detects media protected with MediaKeys without creating a graph', async () => {
     const harness = await createContentHarness({ mediaKeys: {} });
 
@@ -148,6 +167,7 @@ describe('content script audio processing', () => {
   test('ignores duplicate injections into the same document', async () => {
     const harness = await createContentHarness();
     assert.equal(harness.runtimeMessage.listeners.length, 1);
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
 
     harness.window.eval(harness.source);
     await flushPromises();
@@ -187,6 +207,72 @@ describe('content script audio processing', () => {
 
     assert.equal(harness.media.playbackRate, SETTINGS.speed);
     assert.equal(harness.context.sources.length, 1);
+
+    close(harness);
+  });
+
+  test('restores neutral speed when reused media becomes live', async () => {
+    const harness = await createContentHarness();
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+
+    Object.defineProperty(harness.media, 'duration', {
+      configurable: true,
+      value: Number.POSITIVE_INFINITY
+    });
+    harness.media.dispatchEvent(new harness.window.Event('play'));
+
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.media.preservesPitch, false);
+    assert.equal(harness.dispatch({ type: 'GET_STATE' }).live, true);
+
+    close(harness);
+  });
+
+  test('disconnects removed media and reuses its pipeline if reattached', async () => {
+    const harness = await createContentHarness();
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const source = harness.context.sources[0];
+    assert.ok(source.connections.length > 0);
+
+    harness.media.remove();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(source.connections.length, 0);
+
+    harness.window.document.body.appendChild(harness.media);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(harness.context.sources.length, 1);
+    assert.ok(source.connections.length > 0);
+
+    close(harness);
+  });
+
+  test('shares reverb data and caps active pipelines on media-heavy pages', async () => {
+    const harness = await createContentHarness({ withMedia: false });
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+
+    for (let index = 0; index < 40; index++) {
+      const media = harness.window.document.createElement('audio');
+      Object.defineProperties(media, {
+        duration: { configurable: true, value: 120 },
+        mediaKeys: { configurable: true, value: null },
+        readyState: { configurable: true, value: 2 }
+      });
+      harness.window.document.body.appendChild(media);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    assert.equal(harness.context.sources.length, 32);
+    assert.equal(harness.context.buffers.length, 1);
+
+    close(harness);
+  });
+
+  test('initializes safely before the document body exists', async () => {
+    const harness = await createContentHarness({ withMedia: false, withoutBody: true });
+
+    assert.equal(harness.runtimeMessage.listeners.length, 1);
+    assert.equal(harness.context, undefined);
 
     close(harness);
   });
