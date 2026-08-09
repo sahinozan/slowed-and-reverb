@@ -27,7 +27,7 @@ module.exports = [
       globals: browserGlobals
     },
     rules: {
-      'no-unused-vars': 'warn',
+      'no-unused-vars': 'error',
       'no-undef': 'error',
       'no-console': 'off',
       eqeqeq: 'error',
@@ -43,7 +43,7 @@ module.exports = [
       globals: { require: 'readonly', module: 'writable', __dirname: 'readonly', console: 'readonly' }
     },
     rules: {
-      'no-unused-vars': 'warn',
+      'no-unused-vars': 'error',
       'prefer-const': 'error',
       'no-var': 'error'
     }
@@ -67,7 +67,7 @@ module.exports = [
       }
     },
     rules: {
-      'no-unused-vars': 'warn',
+      'no-unused-vars': 'error',
       'no-undef': 'error',
       eqeqeq: 'error',
       'prefer-const': 'error',

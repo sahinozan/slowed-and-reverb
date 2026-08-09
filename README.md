@@ -1,8 +1,8 @@
 # Slowed & Reverb
 
 A browser extension that applies real-time slowed, reverb, and related audio
-effects to any HTML5 `<video>`/`<audio>` element. Fully local processing, zero
-telemetry, and zero runtime dependencies.
+effects to HTML5 `<video>`/`<audio>` elements it can reach on supported pages.
+Fully local processing, zero telemetry, and zero runtime dependencies.
 
 ## Get the extension
 
@@ -72,6 +72,9 @@ cosmetic and stored globally, not per tab.
   The popup says which of the three applies rather than guessing.
 - **Live streams ignore Speed.** The player's own latency correction fights it
   every tick. Reverb, EQ, and the rest still work.
+- **Embedded players may be unreachable.** Media inside iframes or shadow roots
+  is not currently processed. Frame support can require broader permissions,
+  and both cases need more complex lifecycle and state handling.
 
 ## Development
 
@@ -80,20 +83,25 @@ npm ci                    # install exactly what package-lock.json records
 npm run lint              # ESLint 9, flat config
 npm test                  # run service worker, content, popup, and package tests
 npm run test:watch        # rerun tests while developing
+npm run build:chromium    # emit dist/chromium/
 npm run build:firefox     # emit dist/firefox/
+npm run package           # build allowlisted ZIPs for both stores
 npm run lint:firefox      # build, then validate with web-ext
 npm run check             # run every required local and store-package check
 ```
 
-The root manifest targets Chromium. The Firefox build emits `dist/firefox/`
-with Firefox's MV3 background configuration and add-on metadata.
+The root manifest targets Chromium. Target builds emit clean, allowlisted
+directories under `dist/`; `npm run package` creates one upload ZIP per store in
+`dist/packages/`. The Firefox version receives Firefox's MV3 background
+configuration and add-on metadata during the build. Its data-collection
+declaration supports Firefox desktop 140+ and Firefox Android 142+.
 
-Needs Node >= 18.18. Development tools are exact-versioned in `package.json` and
-`package-lock.json`; use `npm ci` for normal setup rather than fetching tools
-with `npx`. The project `.npmrc` disables dependency install scripts, rejects
-Git and remote-tarball dependencies, and excludes releases less than seven days
-old when resolving dependency updates. Review lockfile changes and run
-`npm audit` before committing any intentional dependency update.
+Needs Node >= 22.13 and npm 11.19. Development tools are exact-versioned in
+`package.json` and `package-lock.json`; use `npm ci` for normal setup rather
+than fetching tools with `npx`. The project `.npmrc` disables dependency install
+scripts, rejects Git and remote-tarball dependencies, and excludes releases less
+than seven days old when resolving dependency updates. Review lockfile changes
+and run `npm audit` before committing any intentional dependency update.
 
 The test suite runs the real extension scripts against deterministic browser,
 DOM, and Web Audio mocks. It covers tab state and shortcuts, audio graph values,
