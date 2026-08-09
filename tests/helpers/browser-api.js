@@ -49,6 +49,10 @@ class StorageArea {
     this.writes.push(snapshot);
     Object.assign(this.data, snapshot);
   }
+
+  async remove(keys) {
+    for (const key of Array.isArray(keys) ? keys : [keys]) delete this.data[key];
+  }
 }
 
 function createBrowserApi(options = {}) {
@@ -79,7 +83,8 @@ function createBrowserApi(options = {}) {
       onMessage: events.runtimeMessage,
       async sendMessage(message) {
         calls.runtimeMessages.push(clone(message));
-        return options.onRuntimeMessage?.(message) ?? null;
+        if (options.onRuntimeMessage) return options.onRuntimeMessage(message);
+        return dispatchRuntimeMessage(events.runtimeMessage, message, options.runtimeSender);
       }
     },
     scripting: {
@@ -112,14 +117,26 @@ async function dispatchRuntimeMessage(event, message, sender = {}) {
   let responded = false;
 
   for (const listener of event.listeners) {
+    let finishResponse;
+    const responseReady = new Promise((resolve) => {
+      finishResponse = resolve;
+    });
     const result = listener(message, sender, (value) => {
       response = value;
       responded = true;
+      finishResponse();
     });
 
     if (result && typeof result.then === 'function') await result;
     if (result === true && !responded) {
-      for (let attempt = 0; attempt < 10 && !responded; attempt++) await flushPromises();
+      let responseTimeout;
+      await Promise.race([
+        responseReady,
+        new Promise((resolve) => {
+          responseTimeout = setTimeout(resolve, 500);
+        })
+      ]);
+      clearTimeout(responseTimeout);
     }
   }
 

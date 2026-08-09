@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Slowed & Reverb",
   "version": "1.0.0",
-  "description": "Apply real-time slowed and reverb audio effects to any HTML5 media element. Privacy-focused, zero telemetry, fully local processing.",
+  "description": "Apply real-time slowed, reverb, and related audio effects to HTML5 media on supported pages. Fully local with zero telemetry.",
   "permissions": [
     "activeTab",
     "scripting",
