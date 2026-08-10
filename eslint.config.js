@@ -36,11 +36,23 @@ module.exports = [
     }
   },
   {
-    files: ['scripts/**/*.js', 'eslint.config.js'],
+    files: ['scripts/**/*.js', 'e2e/**/*.js', 'eslint.config.js', 'playwright.config.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',
-      globals: { require: 'readonly', module: 'writable', __dirname: 'readonly', console: 'readonly' }
+      globals: {
+        require: 'readonly',
+        module: 'writable',
+        __dirname: 'readonly',
+        Buffer: 'readonly',
+        chrome: 'readonly',
+        console: 'readonly',
+        document: 'readonly',
+        process: 'readonly',
+        setTimeout: 'readonly',
+        URL: 'readonly',
+        window: 'readonly'
+      }
     },
     rules: {
       'no-unused-vars': 'error',
