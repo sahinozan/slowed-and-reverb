@@ -123,8 +123,8 @@ header {
   border-bottom: 1px solid hsl(var(--accent-hsl) / 0.35);
 }
 
+/* The mark carries its own gradient, so it does not follow the theme accent. */
 .logo {
-  color: #e8597f;
   display: flex;
   align-items: center;
   justify-content: center;

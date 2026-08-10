@@ -7,6 +7,7 @@
     "build:chromium": "node scripts/build-extension.js chromium",
     "build:firefox": "node scripts/build-extension.js firefox",
     "check": "npm run lint && npm test && npm run lint:firefox",
+    "icons": "node scripts/render-icons.js",
     "lint": "eslint . --max-warnings=0",
     "lint:firefox": "npm run build:firefox && web-ext lint --source-dir=dist/firefox --no-config-discovery",
     "package": "npm run package:chromium && npm run package:firefox",
