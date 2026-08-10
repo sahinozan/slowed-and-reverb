@@ -125,4 +125,7 @@ async function main() {
   console.log(changed ? 'Updated the popup header mark' : 'Popup header mark already current');
 }
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
