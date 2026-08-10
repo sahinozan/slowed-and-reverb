@@ -126,4 +126,5 @@ on pages you haven't touched.
 
 ## License
 
-Educational and personal use. Respect platform terms of service.
+Released under the [MIT License](LICENSE). Use of the extension remains subject
+to the terms of service of the websites on which it is used.
