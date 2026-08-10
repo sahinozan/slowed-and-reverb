@@ -13,8 +13,7 @@
     "package:chromium": "npm run build:chromium && web-ext build --source-dir=dist/chromium --artifacts-dir=dist/packages --filename=slowed-reverb-chromium.zip --overwrite-dest --no-config-discovery",
     "package:firefox": "npm run build:firefox && web-ext build --source-dir=dist/firefox --artifacts-dir=dist/packages --filename=slowed-reverb-firefox.zip --overwrite-dest --no-config-discovery",
     "test": "node --test --test-concurrency=1",
-    "pretest:e2e": "npm run build:chromium",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build:chromium && playwright test",
     "test:watch": "node --test --test-concurrency=1 --watch"
   },
   "devDependencies": {
