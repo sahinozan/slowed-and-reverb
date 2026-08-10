@@ -83,6 +83,8 @@ npm ci                    # install exactly what package-lock.json records
 npm run lint              # ESLint 10, flat config
 npm test                  # run service worker, content, popup, and package tests
 npm run test:watch        # rerun tests while developing
+npx playwright install --no-shell chromium # one-time local browser install
+npm run test:e2e          # real Chromium extension smoke test
 npm run build:chromium    # emit dist/chromium/
 npm run build:firefox     # emit dist/firefox/
 npm run package           # build allowlisted ZIPs for both stores
@@ -106,10 +108,14 @@ and run `npm audit` before committing any intentional dependency update.
 The test suite runs the real extension scripts against deterministic browser,
 DOM, and Web Audio mocks. It covers tab state and shortcuts, audio graph values,
 blocked and live-media behavior, popup controls and presets, manifest contracts,
-and the Firefox build. GitHub Actions runs `npm run check` for every push and pull
-request. A final manual smoke test in current Chromium and Firefox is still
-recommended before a store release because browser and media-site behavior cannot
-be reproduced completely in a unit-test environment.
+and the Firefox build. The Playwright smoke test loads the built Chromium extension
+into a real browser, renders its popup at production size, applies settings to a
+local audio fixture, checks popup dimensions, and saves a screenshot in the test
+report.
+GitHub Actions runs that smoke test on disposable Ubuntu and Windows machines in
+addition to `npm run check`. A final manual smoke test in current Chromium and
+Firefox is still recommended before a store release because browser and media-site
+behavior cannot be reproduced completely in an automated environment.
 
 ## Privacy
 

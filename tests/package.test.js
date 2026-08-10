@@ -156,14 +156,22 @@ describe('store package contracts', () => {
   test('keeps CI dependencies immutable and automatic updates enabled', () => {
     const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');
     assert.doesNotMatch(workflow, /uses:\s+actions\/(?:checkout|setup-node)@v\d/);
+    assert.doesNotMatch(workflow, /uses:\s+actions\/upload-artifact@v\d/);
     assert.match(workflow, /persist-credentials:\s+false/);
     assert.match(workflow, /node-version:\s+24\.19\.0/);
     assert.match(workflow, /npm@11\.19\.0/);
+    assert.match(workflow, /os:\s+\[ubuntu-latest, windows-latest\]/);
+    assert.match(workflow, /npm run test:e2e/);
     assert.equal(fs.existsSync(path.join(root, '.github/dependabot.yml')), true);
   });
 
   test('contains no prose em dashes in maintained or generated files', () => {
-    const ignoredDirectories = new Set(['.git', 'node_modules']);
+    const ignoredDirectories = new Set([
+      '.git',
+      'node_modules',
+      'playwright-report',
+      'test-results'
+    ]);
     const emDash = String.fromCodePoint(0x2014);
 
     function maintainedFiles(directory) {
