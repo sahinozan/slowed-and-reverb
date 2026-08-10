@@ -22,15 +22,14 @@ async function openPopupPage(extension, tabId) {
 }
 
 test('loads the real popup page and applies audio settings to the active tab', async ({
-  extension,
-  fixtureUrl
+  extension
 }, testInfo) => {
   const page = await extension.context.newPage();
-  await page.goto(fixtureUrl);
+  await page.goto(extension.fixtureUrl);
   await expect(page.locator('#player')).toHaveJSProperty('readyState', 4);
   await page.bringToFront();
 
-  const tab = await fixtureTab(extension.serviceWorker, fixtureUrl);
+  const tab = await fixtureTab(extension.serviceWorker, extension.fixtureUrl);
   const popup = await openPopupPage(extension, tab.id);
 
   await expect(popup.getByRole('heading', { name: 'Slowed & Reverb' })).toBeVisible();

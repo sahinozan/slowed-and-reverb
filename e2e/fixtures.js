@@ -78,6 +78,7 @@ async function startFixtureServer() {
     async close() {
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
       });
     }
   };
@@ -110,7 +111,7 @@ const test = base.extend({
     { scope: 'worker' }
   ],
   extension: [
-    async ({}, use) => {
+    async ({ fixtureUrl }, use) => {
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-e2e-'));
       const extensionDir = prepareTestExtension(tempRoot);
       let context;
@@ -130,7 +131,7 @@ const test = base.extend({
         if (!serviceWorker) serviceWorker = await context.waitForEvent('serviceworker');
         const extensionId = serviceWorker.url().split('/')[2];
 
-        await use({ context, extensionId, serviceWorker });
+        await use({ context, extensionId, fixtureUrl, serviceWorker });
       } finally {
         await context?.close();
         fs.rmSync(tempRoot, { recursive: true, force: true });
