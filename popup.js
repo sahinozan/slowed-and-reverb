@@ -17,6 +17,17 @@ const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS);
 const SPEED_EPSILON = 0.001;
 const SPOTIFY_HOST = 'open.spotify.com';
 const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';
+const IS_FIREFOX = Boolean(api.runtime.getManifest?.().browser_specific_settings?.gecko);
+const FIREFOX_YOUTUBE_PERMISSIONS = Object.freeze({
+  'www.youtube.com': {
+    name: 'YouTube',
+    origin: 'https://www.youtube.com/*'
+  },
+  'music.youtube.com': {
+    name: 'YouTube Music',
+    origin: 'https://music.youtube.com/*'
+  }
+});
 
 const PRESETS = Object.freeze({
   slowed: Object.freeze({ name: 'Slowed + Reverb', ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 }),
@@ -30,9 +41,11 @@ const ICONS = {
 
 const BLOCKED_TEXT = {
   drm: "This page's audio looks copy-protected (DRM), so effects can't be applied here.",
-  broken: "This breaks audio playback completely, so it's disabled here.",
-  unreachable: "This site's player keeps its audio out of the page, so effects can't reach it.",
-  unsupported: "Browser-protected pages and this type of player can't be changed here.",
+  unsupportedSite:
+    'This website is not officially supported yet. Try YouTube, YouTube Music, or Spotify.',
+  unsupported: "This page's player is not available to the extension.",
+  noPlayer: "Waiting for this site's supported audio player...",
+  loadingPlayer: 'The audio player is still loading. Effects will start when it is ready.',
   spotifyEffects:
     'Spotify speed is available, but this browser did not expose its audio to the filters.'
 };
@@ -186,6 +199,10 @@ const els = {
   spotifyPermissionText: el('spotify-permission-text'),
   spotifyPermissionBtn: el('spotify-permission-btn'),
   spotifyPermissionStatus: el('spotify-permission-status'),
+  youtubePermissionPanel: el('youtube-permission-panel'),
+  youtubePermissionTitle: el('youtube-permission-title'),
+  youtubePermissionBtn: el('youtube-permission-btn'),
+  youtubePermissionStatus: el('youtube-permission-status'),
   presetBar: el('current-preset-bar'),
   presetLabel: el('current-preset-label'),
   presetNameInput: el('preset-name-input'),
@@ -255,6 +272,7 @@ let liveBlocked = false;
 let applyRevision = 0;
 let presetWriteQueue = Promise.resolve();
 let spotifyPermissionTabId = null;
+let youtubePermission = null;
 
 function isSpotifyUrl(url) {
   try {
@@ -262,6 +280,42 @@ function isSpotifyUrl(url) {
   } catch {
     return false;
   }
+}
+
+function isYouTubeUrl(url) {
+  try {
+    const { hostname } = new URL(url);
+    return hostname in FIREFOX_YOUTUBE_PERMISSIONS;
+  } catch {
+    return false;
+  }
+}
+
+function getFirefoxYouTubePermission(url) {
+  if (!IS_FIREFOX) return null;
+  try {
+    return FIREFOX_YOUTUBE_PERMISSIONS[new URL(url).hostname] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function showProcessingStatus(state) {
+  if (state?.effectsUnavailable) {
+    els.blockedBannerText.textContent = BLOCKED_TEXT.spotifyEffects;
+    els.blockedBanner.hidden = false;
+    return;
+  }
+
+  if (state?.pending) {
+    els.blockedBannerText.textContent = state.playerDetected
+      ? BLOCKED_TEXT.loadingPlayer
+      : BLOCKED_TEXT.noPlayer;
+    els.blockedBanner.hidden = false;
+    return;
+  }
+
+  els.blockedBanner.hidden = true;
 }
 
 function showSpotifyPermissionPanel(mode) {
@@ -283,6 +337,43 @@ function showSpotifyPermissionPanel(mode) {
 function hideSpotifyPermissionPanel() {
   els.spotifyPermissionPanel.hidden = true;
   els.spotifyPermissionStatus.textContent = '';
+}
+
+function showYouTubePermissionPanel(permission) {
+  youtubePermission = permission;
+  els.youtubePermissionPanel.hidden = false;
+  els.youtubePermissionTitle.textContent = `Enable ${permission.name} support?`;
+  els.youtubePermissionBtn.textContent = `Allow on ${permission.name}`;
+  els.youtubePermissionStatus.textContent = '';
+}
+
+function hideYouTubePermissionPanel() {
+  youtubePermission = null;
+  els.youtubePermissionPanel.hidden = true;
+  els.youtubePermissionStatus.textContent = '';
+}
+
+async function handleYouTubePermissionAction() {
+  const permission = youtubePermission;
+  if (!permission) return;
+
+  els.youtubePermissionBtn.disabled = true;
+  try {
+    // Keep this as the first await so Firefox still considers the call part of
+    // the button's user action.
+    const granted = await api.permissions.request({ origins: [permission.origin] });
+    if (!granted) {
+      els.youtubePermissionStatus.textContent = 'Permission was not granted.';
+      return;
+    }
+
+    await syncWithActiveTab();
+  } catch {
+    els.youtubePermissionStatus.textContent =
+      `Permission request failed. You can also enable ${permission.name} in the browser extension settings.`;
+  } finally {
+    els.youtubePermissionBtn.disabled = false;
+  }
 }
 
 function watchForTabReload(tabId) {
@@ -428,6 +519,8 @@ async function saveAndApplySettings(enabled) {
     setBlocked(true, result?.blockReason ?? 'unsupported');
     setPowerUI(false);
     setTabIcon(tab.id, false);
+  } else {
+    showProcessingStatus(result);
   }
 
   return result;
@@ -850,6 +943,7 @@ function bindControls() {
 
   els.power.addEventListener('change', () => saveAndApplySettings(els.power.checked));
   els.spotifyPermissionBtn.addEventListener('click', handleSpotifyPermissionAction);
+  els.youtubePermissionBtn.addEventListener('click', handleYouTubePermissionAction);
 
   els.resetBtn.addEventListener('click', () => {
     applySettingsToUI(DEFAULT_SETTINGS);
@@ -891,7 +985,9 @@ async function syncWithActiveTab() {
   if (tab?.id === undefined) return;
 
   const spotify = isSpotifyUrl(tab.url);
+  const firefoxYouTubePermission = getFirefoxYouTubePermission(tab.url);
   if (spotify && !(await api.permissions.contains({ origins: [SPOTIFY_ORIGIN] }))) {
+    hideYouTubePermissionPanel();
     setBlocked(true, 'drm');
     els.blockedBanner.hidden = true;
     showSpotifyPermissionPanel('enable');
@@ -901,8 +997,29 @@ async function syncWithActiveTab() {
   }
 
   if (spotify) {
+    hideYouTubePermissionPanel();
     await api.runtime.sendMessage({ type: 'SYNC_SPOTIFY_REGISTRATION' });
+  } else if (!isYouTubeUrl(tab.url)) {
+    hideSpotifyPermissionPanel();
+    hideYouTubePermissionPanel();
+    setBlocked(true, 'unsupportedSite');
+    setPowerUI(false);
+    setTabIcon(tab.id, false);
+    return;
+  } else if (
+    firefoxYouTubePermission &&
+    !(await api.permissions.contains({ origins: [firefoxYouTubePermission.origin] }))
+  ) {
+    hideSpotifyPermissionPanel();
+    setBlocked(true, 'unsupported');
+    els.blockedBanner.hidden = true;
+    showYouTubePermissionPanel(firefoxYouTubePermission);
+    setPowerUI(false);
+    setTabIcon(tab.id, false);
+    return;
   } else if (!(await ensureContentScript(tab.id))) {
+    hideSpotifyPermissionPanel();
+    hideYouTubePermissionPanel();
     setBlocked(true, 'unsupported');
     setPowerUI(false);
     setTabIcon(tab.id, false);
@@ -932,10 +1049,8 @@ async function syncWithActiveTab() {
 
   setBlocked(false);
   hideSpotifyPermissionPanel();
-  if (state?.effectsUnavailable) {
-    els.blockedBannerText.textContent = BLOCKED_TEXT.spotifyEffects;
-    els.blockedBanner.hidden = false;
-  }
+  hideYouTubePermissionPanel();
+  showProcessingStatus(state);
   setLiveState(Boolean(state?.live));
 
   if (state?.enabled) {

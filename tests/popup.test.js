@@ -60,16 +60,148 @@ describe('popup behavior', () => {
 
   test('disables all effect controls and explains blocked pages', async () => {
     const harness = await createPopupHarness({
-      contentState: { enabled: false, blocked: true, blockReason: 'unreachable' }
+      contentState: { enabled: false, blocked: true, blockReason: 'unsupportedSite' }
     });
     const document = harness.window.document;
 
     assert.equal(document.getElementById('blocked-banner').hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /can't reach it/);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /not officially supported/);
     assert.equal(document.getElementById('power-toggle').disabled, true);
     assert.equal(document.getElementById('reverb-slider').disabled, true);
     assert.equal(document.getElementById('eq-handle-low').getAttribute('tabindex'), '-1');
     assert.equal(audioUpdates(harness).length, 0);
+
+    close(harness);
+  });
+
+  test('does not inject outside the exact release support list', async () => {
+    for (const url of ['https://www.twitch.tv/example', 'https://studio.youtube.com/']) {
+      const harness = await createPopupHarness({ activeTab: { id: 9, url } });
+      const document = harness.window.document;
+
+      assert.equal(harness.calls.executeScript.length, 0);
+      assert.equal(document.getElementById('power-toggle').checked, false);
+      assert.equal(document.getElementById('power-toggle').disabled, true);
+      assert.match(document.getElementById('blocked-banner-text').textContent, /YouTube/);
+
+      close(harness);
+    }
+  });
+
+  test('explains when a supported page is waiting for its player', async () => {
+    const harness = await createPopupHarness({
+      contentState: {
+        enabled: true,
+        settings: DEFAULT_SETTINGS,
+        blocked: false,
+        live: false,
+        playerDetected: false,
+        processingActive: false,
+        pending: true
+      }
+    });
+    const document = harness.window.document;
+
+    assert.equal(document.getElementById('power-toggle').checked, true);
+    assert.equal(document.getElementById('blocked-banner').hidden, false);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /Waiting/);
+
+    close(harness);
+  });
+
+  test('shows a pending status when the initial preset starts before the player', async () => {
+    const harness = await createPopupHarness({
+      contentState: { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false },
+      applyResult: {
+        success: true,
+        playerDetected: false,
+        processingActive: false,
+        pending: true
+      }
+    });
+    const document = harness.window.document;
+
+    assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
+    assert.equal(document.getElementById('blocked-banner').hidden, false);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /Waiting/);
+
+    close(harness);
+  });
+
+  test('requests exact optional YouTube access only in Firefox', async () => {
+    const firefoxManifest = { browser_specific_settings: { gecko: {} } };
+    const sites = [
+      {
+        url: 'https://www.youtube.com/watch?v=example',
+        name: 'YouTube',
+        origin: 'https://www.youtube.com/*'
+      },
+      {
+        url: 'https://music.youtube.com/watch?v=example',
+        name: 'YouTube Music',
+        origin: 'https://music.youtube.com/*'
+      }
+    ];
+
+    for (const site of sites) {
+      const harness = await createPopupHarness({
+        activeTab: { id: 9, url: site.url },
+        manifest: firefoxManifest,
+        contentState: { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+      });
+      const document = harness.window.document;
+
+      assert.equal(document.getElementById('youtube-permission-panel').hidden, false);
+      assert.equal(
+        document.getElementById('youtube-permission-btn').textContent.trim(),
+        `Allow on ${site.name}`
+      );
+      assert.equal(harness.calls.executeScript.length, 0);
+
+      const callStart = harness.calls.order.length;
+      document.getElementById('youtube-permission-btn').click();
+      for (let attempt = 0; attempt < 6; attempt++) await flushPromises();
+
+      assert.deepEqual(harness.calls.permissionRequests, [[site.origin]]);
+      assert.deepEqual(harness.calls.order.slice(callStart, callStart + 2), [
+        'permissions.request',
+        'tabs.query'
+      ]);
+      assert.equal(document.getElementById('youtube-permission-panel').hidden, true);
+      assert.equal(harness.calls.executeScript.length > 0, true);
+      assert.equal(document.getElementById('power-toggle').checked, true);
+
+      close(harness);
+    }
+  });
+
+  test('keeps optional YouTube access out of the Chromium popup flow', async () => {
+    const harness = await createPopupHarness({
+      contentState: { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+    });
+
+    assert.equal(harness.window.document.getElementById('youtube-permission-panel').hidden, true);
+    assert.equal(harness.calls.permissionRequests.length, 0);
+    assert.equal(harness.calls.executeScript.length > 0, true);
+
+    close(harness);
+  });
+
+  test('keeps Firefox YouTube disabled when optional access is denied', async () => {
+    const harness = await createPopupHarness({
+      activeTab: { id: 9, url: 'https://www.youtube.com/watch?v=example' },
+      manifest: { browser_specific_settings: { gecko: {} } },
+      permissionRequestResult: false
+    });
+    const document = harness.window.document;
+
+    document.getElementById('youtube-permission-btn').click();
+    for (let attempt = 0; attempt < 4; attempt++) await flushPromises();
+
+    assert.deepEqual(harness.calls.permissionRequests, [['https://www.youtube.com/*']]);
+    assert.equal(document.getElementById('youtube-permission-panel').hidden, false);
+    assert.match(document.getElementById('youtube-permission-status').textContent, /not granted/);
+    assert.equal(harness.calls.executeScript.length, 0);
 
     close(harness);
   });
@@ -284,7 +416,7 @@ describe('popup behavior', () => {
     const document = harness.window.document;
 
     assert.equal(document.getElementById('blocked-banner').hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /Browser-protected/);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /not available/);
     assert.equal(document.getElementById('power-toggle').checked, false);
     assert.equal(document.getElementById('power-toggle').disabled, true);
     assert.equal(audioUpdates(harness).length, 0);

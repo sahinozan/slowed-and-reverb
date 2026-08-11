@@ -22,6 +22,7 @@
   let engineReady = false;
   let playerDetected = false;
   let effectsUnavailable = false;
+  let processingActive = false;
   let stateRevision = 0;
 
   function applyToEngine() {
@@ -36,7 +37,9 @@
       blocked: false,
       live: false,
       playerDetected,
-      effectsUnavailable
+      effectsUnavailable,
+      processingActive,
+      pending: enabled && !processingActive && !effectsUnavailable
     };
   }
 
@@ -49,6 +52,17 @@
     } else if (event.data.type === 'STATUS') {
       playerDetected = Boolean(event.data.playerDetected);
       effectsUnavailable = Boolean(event.data.effectsUnavailable);
+      processingActive = Boolean(event.data.processingActive);
+      api.runtime
+        .sendMessage({
+          type: 'CONTENT_STATE_CHANGED',
+          enabled,
+          settings,
+          origin: location.origin,
+          playerDetected,
+          processingActive
+        })
+        .catch(() => {});
     }
   });
 
@@ -63,7 +77,9 @@
       sendResponse({
         success: true,
         enabled,
-        pending: !playerDetected,
+        playerDetected,
+        processingActive,
+        pending: enabled && !processingActive && !effectsUnavailable,
         effectsUnavailable
       });
     } else if (message.type === 'SPOTIFY_PERMISSION_REVOKED') {

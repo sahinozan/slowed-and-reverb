@@ -30,9 +30,11 @@ function setup(options = {}) {
   });
   const { window } = dom;
   const warnings = [];
+  const statusMessages = [];
   window.AudioContext = FakeAudioContext;
   window.webkitAudioContext = FakeAudioContext;
   window.console.warn = (...args) => warnings.push(args);
+  window.postMessage = (message) => statusMessages.push(message);
   window.eval(fs.readFileSync(`${root}/spotify-main.js`, 'utf8'));
 
   const media = window.document.createElement('audio');
@@ -52,7 +54,7 @@ function setup(options = {}) {
     );
   }
 
-  return { apply, dom, media, warnings, window };
+  return { apply, dom, media, statusMessages, warnings, window };
 }
 
 describe('Spotify main-world audio engine', () => {
@@ -74,6 +76,10 @@ describe('Spotify main-world audio engine', () => {
     assert.equal(context.gains[3].gain.value, 0.2);
     assert.equal(context.gains[4].gain.value, 0.18);
     assert.equal(context.panners[0].pan.value, -0.25);
+    assert.equal(
+      harness.statusMessages.filter(({ type }) => type === 'STATUS').at(-1).processingActive,
+      true
+    );
 
     harness.dom.window.close();
   });

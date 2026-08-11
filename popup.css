@@ -6,6 +6,9 @@
   --accent-l: 63%;
   --accent-hsl: var(--accent-h) var(--accent-s) var(--accent-l);
   --accent: hsl(var(--accent-hsl));
+  --logo-light: #ff9ab8;
+  --logo-middle: #e8597f;
+  --logo-dark: #b32a58;
   --radius: 6px;
   --warning: #ffb020;
   --frame: hsl(343 66% 11%);
@@ -17,6 +20,9 @@
   --accent-h: 150;
   --accent-s: 45%;
   --accent-l: 68%;
+  --logo-light: #bbf7d9;
+  --logo-middle: #82d9ad;
+  --logo-dark: #48ad7a;
   --radius: 8px;
   --warning: #ffb020;
   --frame: hsl(150 45% 12%);
@@ -28,6 +34,9 @@
   --accent-h: 259;
   --accent-s: 48%;
   --accent-l: 38%;
+  --logo-light: #7d56d2;
+  --logo-middle: #512d9f;
+  --logo-dark: #362163;
   --radius: 8px;
   --warning: #8a4a00;
   --frame: var(--fg);
@@ -39,6 +48,9 @@
   --accent-h: 205;
   --accent-s: 75%;
   --accent-l: 36%;
+  --logo-light: #25a8e4;
+  --logo-middle: #156dac;
+  --logo-dark: #143e71;
   --radius: 8px;
   --warning: #8a4a00;
   --frame: var(--fg);
@@ -123,7 +135,6 @@ header {
   border-bottom: 1px solid hsl(var(--accent-hsl) / 0.35);
 }
 
-/* The mark carries its own gradient, so it does not follow the theme accent. */
 .logo {
   display: flex;
   align-items: center;
@@ -133,6 +144,28 @@ header {
 .logo svg {
   width: 26px;
   height: 26px;
+}
+
+/* Popup logo colors are theme tokens here, beside the accent they complement.
+   The generated SVG only supplies the geometry and gradient-stop classes.
+   Toolbar PNGs stay pink, since the browser cannot know the popup theme. */
+.logo .sr-logo-stop-light {
+  stop-color: var(--logo-light);
+}
+
+.logo .sr-logo-stop-middle {
+  stop-color: var(--logo-middle);
+}
+
+.logo .sr-logo-stop-dark {
+  stop-color: var(--logo-dark);
+}
+
+/* Dark bars on a near-white panel need less highlight than light bars on a
+   dark one, or the top of the mark washes out. */
+:root[data-theme="paper"] .logo .sr-sheen,
+:root[data-theme="frost"] .logo .sr-sheen {
+  opacity: 0.65;
 }
 
 h1 {
@@ -260,7 +293,7 @@ h1 {
   background: hsl(var(--accent-hsl) / 0.08);
 }
 
-.spotify-permission-panel {
+.site-permission-panel {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -272,24 +305,24 @@ h1 {
   background: hsl(var(--accent-hsl) / 0.08);
 }
 
-.spotify-permission-title {
+.site-permission-title {
   color: var(--fg);
   font-size: 12px;
   font-weight: 700;
 }
 
-.spotify-permission-panel p,
-.spotify-permission-status {
+.site-permission-panel p,
+.site-permission-status {
   color: color-mix(in srgb, var(--fg) 72%, transparent);
   font-size: 10px;
   line-height: 1.45;
 }
 
-.spotify-permission-panel .action-btn {
+.site-permission-panel .action-btn {
   align-self: stretch;
 }
 
-.spotify-permission-status:empty {
+.site-permission-status:empty {
   display: none;
 }
 

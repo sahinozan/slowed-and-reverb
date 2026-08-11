@@ -18,33 +18,6 @@
     eqHigh: 0
   });
 
-  const DRM_HOSTS = new Set([
-    'open.spotify.com',
-    'music.apple.com',
-    'www.netflix.com',
-    'www.primevideo.com',
-    'primevideo.com',
-    'play.max.com',
-    'www.max.com',
-    'www.disneyplus.com',
-    'www.hulu.com',
-    'listen.tidal.com',
-    'music.amazon.com',
-    'www.deezer.com',
-    'www.pandora.com',
-    'www.audible.com',
-    'www.paramountplus.com',
-    'www.peacocktv.com',
-    'tv.apple.com',
-    'www.crunchyroll.com'
-  ]);
-
-  const UNREACHABLE_HOSTS = new Set([
-    'soundcloud.com',
-    'www.soundcloud.com',
-    'm.soundcloud.com'
-  ]);
-
   const EQ_LOW_FREQUENCY = 200;
   const EQ_MID_FREQUENCY = 1000;
   const EQ_MID_Q = 1;
@@ -65,14 +38,11 @@
   const LIMITER = { threshold: -3, knee: 3, ratio: 20, attack: 0.003, release: 0.25 };
 
   const HAVE_METADATA = 1;
-  const HAVE_CURRENT_DATA = 2;
   const MEDIA_SETTLE_MS = 100;
   const MAX_ACTIVE_PIPELINES = 32;
 
-  const isDrmHost = DRM_HOSTS.has(location.hostname);
-  const isUnreachableHost = UNREACHABLE_HOSTS.has(location.hostname);
-  const isTwitchClip =
-    location.hostname === 'www.twitch.tv' && /^\/[^/]+\/clip\//.test(location.pathname);
+  const isSupportedHost =
+    location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com';
 
   let audioContext = null;
   let impulseResponse = null;
@@ -87,11 +57,12 @@
   let drmDetected = false;
   let liveStreamDetected = false;
   let processingUnavailable = false;
+  let playerDetected = false;
+  let processingActive = false;
 
   function blockReason() {
-    if (drmDetected || isDrmHost) return 'drm';
-    if (isTwitchClip) return 'broken';
-    if (isUnreachableHost) return 'unreachable';
+    if (!isSupportedHost) return 'unsupportedSite';
+    if (drmDetected) return 'drm';
     if (processingUnavailable) return 'unsupported';
     return null;
   }
@@ -209,7 +180,7 @@
   }
 
   function createPipeline(media) {
-    if (isDrmHost || isTwitchClip || isUnreachableHost) return null;
+    if (!isSupportedHost) return null;
 
     if (media.mediaKeys) {
       drmDetected = true;
@@ -387,9 +358,14 @@
     drmDetected = false;
     liveStreamDetected = false;
     processingUnavailable = false;
+    const mediaElements = [...document.querySelectorAll('video, audio')];
+    playerDetected = mediaElements.length > 0;
 
-    for (const media of document.querySelectorAll('video, audio')) {
-      if (!effectEnabled || pipelines.has(media) || media.readyState >= HAVE_CURRENT_DATA) {
+    for (const media of mediaElements) {
+      // A replacement player may already have fired loadedmetadata by the time
+      // YouTube attaches it to the document. Attach as soon as metadata exists
+      // so we do not wait forever for an event that has already happened.
+      if (!effectEnabled || pipelines.has(media) || media.readyState >= HAVE_METADATA) {
         applySettings(media);
       } else if (!pendingMetadata.has(media)) {
         pendingMetadata.add(media);
@@ -397,7 +373,12 @@
           'loadedmetadata',
           () => {
             pendingMetadata.delete(media);
-            if (media.isConnected) applySettings(media);
+            if (media.isConnected) {
+              applySettings(media);
+              if (blockReason()) effectEnabled = false;
+              processingActive = effectEnabled && activePipelines.size > 0;
+              notifyStateChanged();
+            }
           },
           { once: true }
         );
@@ -408,6 +389,8 @@
       drmDetected = false;
       processingUnavailable = false;
     }
+    if (blockReason()) effectEnabled = false;
+    processingActive = effectEnabled && activePipelines.size > 0;
   }
 
   function containsMedia(node) {
@@ -425,7 +408,10 @@
     if (!mediaChanged) return;
 
     window.clearTimeout(mediaProcessTimer);
-    mediaProcessTimer = window.setTimeout(processMediaElements, MEDIA_SETTLE_MS);
+    mediaProcessTimer = window.setTimeout(() => {
+      processMediaElements();
+      if (effectEnabled) notifyStateChanged();
+    }, MEDIA_SETTLE_MS);
   });
 
   observer.observe(document.documentElement, { childList: true, subtree: true });
@@ -436,7 +422,9 @@
         type: 'CONTENT_STATE_CHANGED',
         enabled: effectEnabled,
         settings: currentSettings,
-        origin: location.origin
+        origin: location.origin,
+        playerDetected,
+        processingActive
       })
       .catch(() => {});
   }
@@ -451,7 +439,10 @@
       sendResponse({
         success: reason === null,
         blocked: reason !== null,
-        blockReason: reason
+        blockReason: reason,
+        playerDetected,
+        processingActive,
+        pending: reason === null && effectEnabled && !processingActive
       });
     } else if (message.type === 'GET_STATE') {
       const reason = blockReason();
@@ -460,8 +451,15 @@
         settings: currentSettings,
         blocked: reason !== null,
         blockReason: reason,
-        live: liveStreamDetected
+        live: liveStreamDetected,
+        playerDetected,
+        processingActive,
+        pending: reason === null && effectEnabled && !processingActive
       });
+    } else if (message.type === 'YOUTUBE_PERMISSION_REVOKED') {
+      effectEnabled = false;
+      processMediaElements();
+      sendResponse({ success: true, enabled: false });
     }
     return true;
   });

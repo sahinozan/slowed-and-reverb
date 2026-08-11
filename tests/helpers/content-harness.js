@@ -144,7 +144,7 @@ async function createContentHarness(options = {}) {
   FakeAudioContext.mediaSourceError = options.mediaSourceError ?? null;
   const html = options.withMedia === false ? '<body></body>' : '<body><audio id="media"></audio></body>';
   const dom = new JSDOM(`<!doctype html>${html}`, {
-    url: options.url ?? 'https://example.com/watch',
+    url: options.url ?? 'https://www.youtube.com/watch?v=example',
     runScripts: 'outside-only'
   });
   const { window } = dom;

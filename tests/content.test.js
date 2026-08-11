@@ -88,12 +88,30 @@ describe('content script audio processing', () => {
     close(harness);
   });
 
+  test('returns the graph to neutral when YouTube permission is revoked', async () => {
+    const harness = await createContentHarness();
+
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const response = harness.dispatch({ type: 'YOUTUBE_PERMISSION_REVOKED' });
+
+    assert.equal(response.success, true);
+    assert.equal(response.enabled, false);
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.dispatch({ type: 'GET_STATE' }).enabled, false);
+    const outputGains = harness.context.gains.filter((node) =>
+      node.connections.some((connection) => connection.target === harness.context.destination)
+    );
+    assert.deepEqual(outputGains.map((node) => node.gain.value), [1, 0]);
+
+    close(harness);
+  });
+
   test('restores remembered state after reinjection', async () => {
     const harness = await createContentHarness({
       remembered: {
         enabled: true,
         settings: SETTINGS,
-        url: 'https://example.com/previous'
+        url: 'https://www.youtube.com/watch?v=previous'
       }
     });
 
@@ -123,24 +141,28 @@ describe('content script audio processing', () => {
     close(harness);
   });
 
-  test('reports static platform restrictions with the correct reason', async () => {
-    const cases = [
-      ['https://open.spotify.com/track/1', 'drm'],
-      ['https://soundcloud.com/artist/song', 'unreachable'],
-      ['https://www.twitch.tv/user/clip/example', 'broken']
+  test('reports every site outside the release support list as unsupported', async () => {
+    const urls = [
+      'https://www.twitch.tv/example',
+      'https://clips.twitch.tv/ExampleClip',
+      'https://soundcloud.com/artist/song',
+      'https://music.apple.com/album/example',
+      'https://open.spotify.com/track/1',
+      'https://studio.youtube.com/',
+      'https://m.youtube.com/watch?v=example'
     ];
 
-    for (const [url, reason] of cases) {
+    for (const url of urls) {
       const harness = await createContentHarness({ url, withMedia: false });
       const state = harness.dispatch({ type: 'GET_STATE' });
       assert.equal(state.blocked, true);
-      assert.equal(state.blockReason, reason);
+      assert.equal(state.blockReason, 'unsupportedSite');
       close(harness);
     }
   });
 
-  test('does not attach blocked media to Web Audio', async () => {
-    for (const url of ['https://open.spotify.com/track/1', 'https://soundcloud.com/a/b']) {
+  test('does not attach media on unsupported sites to Web Audio', async () => {
+    for (const url of ['https://www.twitch.tv/example', 'https://soundcloud.com/a/b']) {
       const harness = await createContentHarness({ url });
 
       harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
@@ -195,7 +217,10 @@ describe('content script audio processing', () => {
 
   test('processes media elements added after the initial injection', async () => {
     const harness = await createContentHarness({ withMedia: false });
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const initial = harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    assert.equal(initial.playerDetected, false);
+    assert.equal(initial.processingActive, false);
+    assert.equal(initial.pending, true);
 
     const media = harness.window.document.createElement('audio');
     Object.defineProperties(media, {
@@ -209,6 +234,41 @@ describe('content script audio processing', () => {
 
     assert.equal(harness.getContext().sources.length, 1);
     assert.equal(media.playbackRate, SETTINGS.speed);
+    const state = harness.dispatch({ type: 'GET_STATE' });
+    assert.equal(state.playerDetected, true);
+    assert.equal(state.processingActive, true);
+    assert.equal(state.pending, false);
+    assert.equal(
+      harness.runtimeMessages.some(
+        (message) => message.type === 'CONTENT_STATE_CHANGED' && message.processingActive === true
+      ),
+      true
+    );
+
+    close(harness);
+  });
+
+  test('attaches a replacement player whose metadata loaded before insertion', async () => {
+    const harness = await createContentHarness();
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+
+    harness.media.remove();
+    const replacement = harness.window.document.createElement('audio');
+    Object.defineProperties(replacement, {
+      duration: { configurable: true, value: 240 },
+      mediaKeys: { configurable: true, value: null },
+      readyState: { configurable: true, value: 1 }
+    });
+    replacement.playbackRate = 1;
+    harness.window.document.body.appendChild(replacement);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    assert.equal(harness.context.sources.length, 2);
+    assert.equal(replacement.playbackRate, SETTINGS.speed);
+    const state = harness.dispatch({ type: 'GET_STATE' });
+    assert.equal(state.playerDetected, true);
+    assert.equal(state.processingActive, true);
+    assert.equal(state.pending, false);
 
     close(harness);
   });

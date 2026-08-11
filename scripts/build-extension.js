@@ -14,8 +14,11 @@ const SOURCE_FILES = [
   'popup.css'
 ];
 const GECKO_ID = 'slowed-reverb@sahinozan';
-const GECKO_MIN_VERSION = '140.0';
-const GECKO_ANDROID_MIN_VERSION = '142.0';
+const GECKO_MIN_VERSION = '142.0';
+const FIREFOX_YOUTUBE_ORIGINS = [
+  'https://www.youtube.com/*',
+  'https://music.youtube.com/*'
+];
 
 const target = process.argv[2];
 if (!TARGETS.has(target)) {
@@ -46,13 +49,16 @@ for (const file of assetFiles) {
 if (target === 'firefox') {
   // Firefox MV3 uses background.scripts; Chromium requires background.service_worker.
   manifest.background = { scripts: ['background.js'] };
+  manifest.optional_host_permissions = [
+    ...manifest.optional_host_permissions,
+    ...FIREFOX_YOUTUBE_ORIGINS
+  ];
   manifest.browser_specific_settings = {
     gecko: {
       id: GECKO_ID,
       strict_min_version: GECKO_MIN_VERSION,
       data_collection_permissions: { required: ['none'] }
-    },
-    gecko_android: { strict_min_version: GECKO_ANDROID_MIN_VERSION }
+    }
   };
 }
 
