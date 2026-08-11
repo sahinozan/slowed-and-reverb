@@ -29,6 +29,17 @@ const ICONS = {
 };
 
 const SPEED_EPSILON = 0.001;
+const SETTING_BOUNDS = Object.freeze({
+  speed: Object.freeze([0.5, 1.5]),
+  reverb: Object.freeze([0, 100]),
+  echo: Object.freeze([0, 100]),
+  pan: Object.freeze([-100, 100]),
+  width: Object.freeze([0, 200]),
+  saturation: Object.freeze([0, 100]),
+  eqLow: Object.freeze([-12, 12]),
+  eqMid: Object.freeze([-12, 12]),
+  eqHigh: Object.freeze([-12, 12])
+});
 const RESTORABLE_URL = /^https?:\/\//i;
 const TAB_STATE_PREFIX = 'tabState:';
 const tabApplyQueues = new Map();
@@ -41,6 +52,35 @@ const YOUTUBE_PERMISSION_ORIGINS = Object.freeze({
   'music.youtube.com': 'https://music.youtube.com/*'
 });
 let spotifyRegistrationQueue = Promise.resolve();
+
+function normalizeSettings(settings) {
+  const normalized = { ...DEFAULT_SETTINGS };
+  if (!settings || typeof settings !== 'object') return normalized;
+
+  for (const [key, [minimum, maximum]] of Object.entries(SETTING_BOUNDS)) {
+    const value = settings[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      normalized[key] = Math.min(maximum, Math.max(minimum, value));
+    }
+  }
+  normalized.keepPitch = settings.keepPitch === true;
+  return normalized;
+}
+
+function isExtensionPageSender(sender) {
+  const senderUrl = sender.url ?? sender.origin;
+  if (typeof senderUrl !== 'string') return sender.tab === undefined;
+
+  try {
+    const url = new URL(senderUrl);
+    return (
+      (url.protocol === 'chrome-extension:' || url.protocol === 'moz-extension:') &&
+      url.pathname === '/popup.html'
+    );
+  } catch {
+    return false;
+  }
+}
 
 function isSpotifyUrl(url) {
   try {
@@ -140,13 +180,20 @@ function tabStateKey(tabId) {
 async function rememberTabState(tabId, url, enabled, settings) {
   const origin = getOrigin(url);
   if (!origin) return;
-  await api.storage.session.set({ [tabStateKey(tabId)]: { origin, enabled, settings } });
+  await api.storage.session.set({
+    [tabStateKey(tabId)]: { origin, enabled: Boolean(enabled), settings: normalizeSettings(settings) }
+  });
 }
 
 async function recallTabState(tabId, url) {
   const key = tabStateKey(tabId);
   const entry = (await api.storage.session.get(key))[key];
-  return entry?.origin === getOrigin(url) ? entry : null;
+  if (entry?.origin !== getOrigin(url)) return null;
+  return {
+    origin: entry.origin,
+    enabled: Boolean(entry.enabled),
+    settings: normalizeSettings(entry.settings)
+  };
 }
 
 async function forgetTabState(tabId) {
@@ -200,6 +247,7 @@ async function getTabState(tabId) {
 }
 
 async function applyToTab(tabId, url, settings, enabled) {
+  settings = normalizeSettings(settings);
   const spotify = isSpotifyUrl(url);
 
   if (spotify && !(await hasSpotifyPermission())) {
@@ -292,36 +340,56 @@ api.commands.onCommand.addListener(async (command) => {
 });
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || typeof message !== 'object') return;
+  const extensionPageSender = isExtensionPageSender(sender);
   const senderTabId = sender.tab?.id;
+  const senderTabUrl = sender.tab?.url;
 
   if (message.type === 'CONTENT_STATE_CHANGED') {
-    if (senderTabId === undefined) return;
-    const youtubeOrigin = getYouTubePermissionOrigin(sender.tab?.url ?? message.origin);
+    if (
+      extensionPageSender ||
+      senderTabId === undefined ||
+      (!isYouTubeUrl(senderTabUrl) && !isSpotifyUrl(senderTabUrl))
+    ) return;
+    const youtubeOrigin = getYouTubePermissionOrigin(senderTabUrl);
     if (youtubeOrigin) youtubeTabs.set(senderTabId, youtubeOrigin);
     const iconEnabled = Boolean(message.enabled && (message.processingActive ?? true));
     setTabIcon(senderTabId, iconEnabled);
-    const url = sender.tab?.url ?? message.origin;
-    if (url) rememberTabState(senderTabId, url, message.enabled, message.settings);
+    rememberTabState(
+      senderTabId,
+      senderTabUrl,
+      message.enabled,
+      normalizeSettings(message.settings)
+    );
     return;
   }
 
   if (message.type === 'SPOTIFY_BRIDGE_READY') {
-    if (senderTabId !== undefined) spotifyBridgeTabs.add(senderTabId);
+    if (!extensionPageSender && senderTabId !== undefined && isSpotifyUrl(senderTabUrl)) {
+      spotifyBridgeTabs.add(senderTabId);
+    }
     return;
   }
 
   if (message.type === 'GET_TAB_STATE') {
-    const tabId = senderTabId ?? message.tabId;
-    const url = sender.tab?.url ?? message.url;
+    const tabId = extensionPageSender ? message.tabId : senderTabId;
+    const url = extensionPageSender ? message.url : senderTabUrl;
     if (tabId === undefined || !url) return;
+    if (!extensionPageSender && !isYouTubeUrl(url) && !isSpotifyUrl(url)) return;
     // Content scripts cannot access storage.session or discover their own tab id.
     recallTabState(tabId, url).then(sendResponse).catch(() => sendResponse(null));
     return true;
   }
 
   if (message.type === 'APPLY_TO_TAB') {
+    if (!extensionPageSender) return;
     if (message.tabId === undefined || !message.url) return;
-    queueTabApply(message.tabId, message.url, message.settings, Boolean(message.enabled))
+    queueTabApply(
+      message.tabId,
+      message.url,
+      normalizeSettings(message.settings),
+      Boolean(message.enabled)
+    )
       .then(sendResponse)
       .catch(() =>
         sendResponse({ success: false, blocked: true, blockReason: 'unsupported' })
@@ -330,6 +398,7 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'SYNC_SPOTIFY_REGISTRATION') {
+    if (!extensionPageSender) return;
     syncSpotifyRegistration()
       .then(sendResponse)
       .catch(() => sendResponse({ granted: false, error: true }));

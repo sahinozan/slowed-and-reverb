@@ -1,8 +1,8 @@
 # Slowed & Reverb
 
-A browser extension that applies real-time slowed, reverb, and related audio
-effects on YouTube, YouTube Music, and Spotify. Fully local processing, zero
-telemetry, and zero runtime dependencies.
+A browser extension that applies real-time speed, reverb, EQ, and stereo effects
+for YouTube™, YouTube Music™, and Spotify. Processing stays on the device, with
+zero telemetry and zero runtime dependencies.
 
 ## Get the extension
 
@@ -153,3 +153,7 @@ the [support guide](SUPPORT.md).
 
 Released under the [MIT License](LICENSE). Use of the extension remains subject
 to the terms of service of the websites on which it is used.
+
+Slowed & Reverb is independently developed and is not affiliated with, endorsed
+by, or sponsored by Google or Spotify. YouTube and YouTube Music are trademarks
+of Google LLC. Spotify is a trademark of Spotify AB.
