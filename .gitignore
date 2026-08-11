@@ -32,6 +32,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Local full-resolution captures used to assemble store screenshots
+store-assets/source-captures/
+store-assets/local-preview/
+
 # Local editor and assistant state
 .claude/settings.local.json
 .codex/

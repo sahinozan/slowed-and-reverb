@@ -44,6 +44,7 @@ const RESTORABLE_URL = /^https?:\/\//i;
 const TAB_STATE_PREFIX = 'tabState:';
 const tabApplyQueues = new Map();
 const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';
+const SPOTIFY_PAGE_ORIGIN = 'https://open.spotify.com';
 const SPOTIFY_SCRIPT_IDS = ['spotify-main', 'spotify-bridge'];
 const spotifyBridgeTabs = new Set();
 const youtubeTabs = new Map();
@@ -199,6 +200,19 @@ async function recallTabState(tabId, url) {
 
 async function forgetTabState(tabId) {
   await api.storage.session.remove(tabStateKey(tabId));
+}
+
+async function storedTabStatesForOrigins(origins) {
+  const stored = await api.storage.session.get(null);
+  const matches = new Map();
+
+  for (const [key, entry] of Object.entries(stored)) {
+    if (!key.startsWith(TAB_STATE_PREFIX) || !origins.has(entry?.origin)) continue;
+    const tabId = Number(key.slice(TAB_STATE_PREFIX.length));
+    if (Number.isInteger(tabId) && tabId >= 0) matches.set(tabId, entry);
+  }
+
+  return matches;
 }
 
 async function setTabIcon(tabId, enabled) {
@@ -433,38 +447,50 @@ api.permissions.onRemoved.addListener((removed) => {
 });
 
 async function cleanupSpotifyPermission() {
-  await Promise.all([...spotifyBridgeTabs].map(async (tabId) => {
-    try {
-      const tab = await api.tabs.get(tabId);
-      if (!isSpotifyUrl(tab.url)) {
-        spotifyBridgeTabs.delete(tabId);
-        return;
-      }
-      await Promise.allSettled([
-        api.tabs.sendMessage(tabId, { type: 'SPOTIFY_PERMISSION_REVOKED' }),
-        forgetTabState(tabId),
-        setTabIcon(tabId, false)
-      ]);
-    } catch {
-      spotifyBridgeTabs.delete(tabId);
+  const storedTabs = await storedTabStatesForOrigins(new Set([SPOTIFY_PAGE_ORIGIN]));
+  const tabIds = new Set([...spotifyBridgeTabs, ...storedTabs.keys()]);
+
+  await Promise.all([...tabIds].map(async (tabId) => {
+    let shouldNeutralize = storedTabs.has(tabId);
+    if (!shouldNeutralize) {
+      try {
+        shouldNeutralize = isSpotifyUrl((await api.tabs.get(tabId)).url);
+      } catch {}
     }
+
+    if (shouldNeutralize) {
+      const tasks = [
+        api.tabs.sendMessage(tabId, { type: 'SPOTIFY_PERMISSION_REVOKED' }),
+        setTabIcon(tabId, false)
+      ];
+      if (storedTabs.has(tabId)) tasks.push(forgetTabState(tabId));
+      await Promise.allSettled(tasks);
+    }
+    spotifyBridgeTabs.delete(tabId);
   }));
   await syncSpotifyRegistration();
 }
 
 async function cleanupYouTubePermissions(removedOrigins) {
-  await Promise.all([...youtubeTabs].map(async ([tabId, origin]) => {
-    if (!removedOrigins.has(origin)) return;
-    try {
-      await Promise.allSettled([
-        api.tabs.sendMessage(tabId, { type: 'YOUTUBE_PERMISSION_REVOKED' }),
-        forgetTabState(tabId),
-        setTabIcon(tabId, false)
-      ]);
-      youtubeTabs.delete(tabId);
-    } catch {
-      youtubeTabs.delete(tabId);
-    }
+  const pageOrigins = new Set(
+    [...removedOrigins]
+      .map((origin) => getOrigin(origin.replace('*', '')))
+      .filter(Boolean)
+  );
+  const storedTabs = await storedTabStatesForOrigins(pageOrigins);
+  const trackedTabs = [...youtubeTabs]
+    .filter(([, origin]) => removedOrigins.has(origin))
+    .map(([tabId]) => tabId);
+  const tabIds = new Set([...trackedTabs, ...storedTabs.keys()]);
+
+  await Promise.all([...tabIds].map(async (tabId) => {
+    const tasks = [
+      api.tabs.sendMessage(tabId, { type: 'YOUTUBE_PERMISSION_REVOKED' }),
+      setTabIcon(tabId, false)
+    ];
+    if (storedTabs.has(tabId)) tasks.push(forgetTabState(tabId));
+    await Promise.allSettled(tasks);
+    youtubeTabs.delete(tabId);
   }));
 }
 

@@ -27,6 +27,15 @@ const PNG_DIMENSIONS = new Map([
   ['assets/icon128.png', 128],
   ['assets/icon128-off.png', 128]
 ]);
+const STORE_ASSET_DIMENSIONS = new Map([
+  ['store-assets/screenshots/01-youtube.png', [1280, 800]],
+  ['store-assets/screenshots/02-youtube-music.png', [1280, 800]],
+  ['store-assets/screenshots/03-spotify.png', [1280, 800]],
+  ['store-assets/screenshots/04-controls.png', [1280, 800]],
+  ['store-assets/screenshots/05-themes.png', [1280, 800]],
+  ['store-assets/chrome/promotional-tile-440x280.png', [440, 280]],
+  ['store-assets/chrome/marquee-1400x560.png', [1400, 560]]
+]);
 const PACKAGE_FILES = [...SOURCE_FILES, 'manifest.json', ...PNG_DIMENSIONS.keys()].sort();
 
 function readJson(file) {
@@ -146,6 +155,36 @@ describe('store package contracts', () => {
     }
   });
 
+  test('keeps the approved store assets, documentation, and renderer synchronized', () => {
+    const packageJson = readJson('package.json');
+    const assetReadme = fs.readFileSync(path.join(root, 'store-assets/README.md'), 'utf8');
+    const renderer = fs.readFileSync(path.join(root, 'scripts/render-store-assets.js'), 'utf8');
+
+    assert.equal(packageJson.scripts['store:assets'], 'node scripts/render-store-assets.js');
+    assert.match(renderer, /require\('@playwright\/test'\)/);
+    assert.doesNotMatch(renderer, /require\('playwright'\)/);
+
+    for (const [file, [width, height]] of STORE_ASSET_DIMENSIONS) {
+      const png = fs.readFileSync(path.join(root, file));
+      assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+      assert.equal(png.readUInt32BE(16), width, `${file} width`);
+      assert.equal(png.readUInt32BE(20), height, `${file} height`);
+      assert.ok(
+        assetReadme.includes(`\`${file.replace('store-assets/', '')}\``),
+        `${file} is missing from store-assets/README.md`
+      );
+    }
+
+    for (const legacyName of [
+      '01-youtube-basic.png',
+      '02-youtube-music-eq.png',
+      '03-spotify-web-player.png',
+      '04-presets-controls.png'
+    ]) {
+      assert.equal(fs.existsSync(path.join(root, 'store-assets/screenshots', legacyName)), false);
+    }
+  });
+
   test('ships no remote code or extension-originated network clients', () => {
     const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
     const document = new JSDOM(html).window.document;
@@ -237,6 +276,18 @@ describe('store package contracts', () => {
       'playwright-report',
       'test-results'
     ]);
+    const textExtensions = new Set([
+      '.css',
+      '.html',
+      '.js',
+      '.json',
+      '.md',
+      '.svg',
+      '.txt',
+      '.yaml',
+      '.yml'
+    ]);
+    const textFileNames = new Set(['.gitignore', '.nvmrc', 'LICENSE']);
     const emDash = String.fromCodePoint(0x2014);
 
     function maintainedFiles(directory) {
@@ -248,6 +299,9 @@ describe('store package contracts', () => {
     }
 
     const offenders = maintainedFiles(root).filter((file) => {
+      if (!textExtensions.has(path.extname(file)) && !textFileNames.has(path.basename(file))) {
+        return false;
+      }
       try {
         return fs.readFileSync(file, 'utf8').includes(emDash);
       } catch {

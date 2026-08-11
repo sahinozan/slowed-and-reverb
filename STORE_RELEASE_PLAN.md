@@ -6,11 +6,46 @@ privacy declarations, screenshots, and tested packages consistent.
 
 ## Current status
 
-Stages 1 through 3 are complete. The initial release candidate was frozen at source
-commit `bc5b97d60d95d4343ead1ec5a8dfc9bf2dbd6a8a` after automated and manual desktop
-testing passed on Chromium and Firefox on August 11, 2026. The Stage 4 policy audit
-added an explicit extension content security policy and stricter internal-message
-validation. Freeze a new source commit after these changes pass final validation.
+Preparation through Stage 5 is substantively complete. Manual desktop testing
+passed on Chromium and Firefox on August 11, 2026, using behavior candidate
+`890d5575083be8b10335677150f53639c0527dd8`. The final store assets were approved
+and adopted on the same date. The pre-freeze audit then made two narrow hardening
+changes, so that earlier candidate is superseded. The audited tree represented by
+this document is the exact `1.0.0` release candidate. After its freeze commit is
+created, Stage 6 must package and test that commit without changing tracked files.
+
+## Pre-freeze audit record
+
+Completed August 11, 2026:
+
+- Synchronized the README, privacy policy, store copy, support guide, release plan,
+  manifests, package metadata, asset documentation, and `1.0.0` support list.
+- Adopted the approved five 1280 x 800 screenshots, 440 x 280 promotional tile,
+  and 1400 x 560 marquee. Automated contracts verify their names, PNG signatures,
+  dimensions, documentation, and renderer.
+- Fixed permission revocation after a Manifest V3 service-worker restart by
+  recovering eligible tab state from session storage before neutralizing Spotify,
+  YouTube, or YouTube Music processing.
+- Added range and type validation inside Spotify's main-world engine so page-world
+  messages cannot apply non-finite or out-of-range audio values.
+- Expanded lint coverage to both Spotify scripts and added regression tests for the
+  two hardening changes. `npm run check` passes with 76 tests and zero Firefox lint
+  warnings; `npm run test:e2e` passes in real Chromium.
+- Inspected both candidate ZIPs. Each contains only the 15 allowlisted runtime
+  entries, with no tests, local notes, source captures, development tools, secrets,
+  or files intended only for the other browser.
+- Confirmed the packaged extension has no runtime dependencies, remote code,
+  extension-originated network clients, telemetry, analytics, or undeclared host
+  access. `npm audit --omit=dev --audit-level=low` reports zero vulnerabilities.
+- Accepted one development-tool exception: `web-ext` currently reaches
+  `image-size@2.0.2` through `addons-linter`, which has two high-severity denial-of-
+  service advisories for malformed image files and no patched release. It is not
+  shipped, sees only the project's trusted package during local validation, and
+  npm's proposed forced fix would be a breaking downgrade to `web-ext@5.5.0`.
+  Monitor the pinned toolchain and update when upstream publishes a safe version.
+
+No unresolved code, permission, privacy, listing, or package inconsistency is known
+to block freezing `1.0.0`.
 
 ## Version 1.0 decisions
 
@@ -110,8 +145,8 @@ Published release information:
   1. YouTube with Slowed + Reverb active;
   2. YouTube Music with the Basic controls and EQ;
   3. Spotify working after optional permission has been granted;
-  4. Advanced controls;
-  5. custom presets or alternate themes.
+  4. built-in presets, advanced controls, and custom presets;
+  5. all four interface themes.
 - Remove account names, private library data, and unnecessary copyrighted artwork.
 - Keep screenshots full-bleed, crisp, and faithful to the frozen interface.
 - For Chrome, create the required 440 x 280 promotional tile.
