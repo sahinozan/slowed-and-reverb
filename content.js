@@ -38,12 +38,11 @@
   const LIMITER = { threshold: -3, knee: 3, ratio: 20, attack: 0.003, release: 0.25 };
 
   const HAVE_METADATA = 1;
-  const HAVE_CURRENT_DATA = 2;
   const MEDIA_SETTLE_MS = 100;
   const MAX_ACTIVE_PIPELINES = 32;
 
   const isSupportedHost =
-    location.hostname === 'youtube.com' || location.hostname.endsWith('.youtube.com');
+    location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com';
 
   let audioContext = null;
   let impulseResponse = null;
@@ -363,7 +362,10 @@
     playerDetected = mediaElements.length > 0;
 
     for (const media of mediaElements) {
-      if (!effectEnabled || pipelines.has(media) || media.readyState >= HAVE_CURRENT_DATA) {
+      // A replacement player may already have fired loadedmetadata by the time
+      // YouTube attaches it to the document. Attach as soon as metadata exists
+      // so we do not wait forever for an event that has already happened.
+      if (!effectEnabled || pipelines.has(media) || media.readyState >= HAVE_METADATA) {
         applySettings(media);
       } else if (!pendingMetadata.has(media)) {
         pendingMetadata.add(media);
@@ -454,6 +456,10 @@
         processingActive,
         pending: reason === null && effectEnabled && !processingActive
       });
+    } else if (message.type === 'YOUTUBE_PERMISSION_REVOKED') {
+      effectEnabled = false;
+      processMediaElements();
+      sendResponse({ success: true, enabled: false });
     }
     return true;
   });

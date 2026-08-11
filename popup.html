@@ -15,25 +15,25 @@
           <svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <linearGradient id="sr-logo" gradientUnits="userSpaceOnUse" x1="8" y1="64" x2="120" y2="64">
-                <stop offset="0" stop-color="#ff9ab8"/>
-                <stop offset="0.5" stop-color="#e8597f"/>
-                <stop offset="1" stop-color="#b32a58"/>
+                <stop class="sr-logo-stop-light" offset="0"/>
+                <stop class="sr-logo-stop-middle" offset="0.5"/>
+                <stop class="sr-logo-stop-dark" offset="1"/>
               </linearGradient>
               <linearGradient id="sr-logo-sheen" gradientUnits="userSpaceOnUse" x1="64" y1="4" x2="64" y2="124">
                 <stop offset="0" stop-color="#ffffff" stop-opacity="0.34"/>
                 <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
               </linearGradient>
             </defs>
-            <rect x="8" y="40" width="16" height="48" rx="8" fill="url(#sr-logo)"/>
-            <rect x="32" y="24" width="16" height="80" rx="8" fill="url(#sr-logo)"/>
-            <rect x="56" y="4" width="16" height="120" rx="8" fill="url(#sr-logo)"/>
-            <rect x="80" y="24" width="16" height="80" rx="8" fill="url(#sr-logo)"/>
-            <rect x="104" y="40" width="16" height="48" rx="8" fill="url(#sr-logo)"/>
-            <rect x="8" y="40" width="16" height="48" rx="8" fill="url(#sr-logo-sheen)"/>
-            <rect x="32" y="24" width="16" height="80" rx="8" fill="url(#sr-logo-sheen)"/>
-            <rect x="56" y="4" width="16" height="120" rx="8" fill="url(#sr-logo-sheen)"/>
-            <rect x="80" y="24" width="16" height="80" rx="8" fill="url(#sr-logo-sheen)"/>
-            <rect x="104" y="40" width="16" height="48" rx="8" fill="url(#sr-logo-sheen)"/>
+            <rect class="sr-bar" x="8" y="40" width="16" height="48" rx="8" fill="url(#sr-logo)"/>
+            <rect class="sr-bar" x="32" y="24" width="16" height="80" rx="8" fill="url(#sr-logo)"/>
+            <rect class="sr-bar" x="56" y="4" width="16" height="120" rx="8" fill="url(#sr-logo)"/>
+            <rect class="sr-bar" x="80" y="24" width="16" height="80" rx="8" fill="url(#sr-logo)"/>
+            <rect class="sr-bar" x="104" y="40" width="16" height="48" rx="8" fill="url(#sr-logo)"/>
+            <rect class="sr-sheen" x="8" y="40" width="16" height="48" rx="8" fill="url(#sr-logo-sheen)"/>
+            <rect class="sr-sheen" x="32" y="24" width="16" height="80" rx="8" fill="url(#sr-logo-sheen)"/>
+            <rect class="sr-sheen" x="56" y="4" width="16" height="120" rx="8" fill="url(#sr-logo-sheen)"/>
+            <rect class="sr-sheen" x="80" y="24" width="16" height="80" rx="8" fill="url(#sr-logo-sheen)"/>
+            <rect class="sr-sheen" x="104" y="40" width="16" height="48" rx="8" fill="url(#sr-logo-sheen)"/>
           </svg>
           <!-- icon:end -->
         </div>
@@ -75,8 +75,8 @@
         <span id="blocked-banner-text"></span>
       </div>
 
-      <section id="spotify-permission-panel" class="spotify-permission-panel" hidden>
-        <div class="spotify-permission-title">Enable Spotify support?</div>
+      <section id="spotify-permission-panel" class="site-permission-panel" hidden>
+        <div class="site-permission-title">Enable Spotify support?</div>
         <p id="spotify-permission-text">
           Spotify needs optional site access so the audio hook can start before its hidden player.
           Processing stays on this device.
@@ -84,7 +84,19 @@
         <button type="button" id="spotify-permission-btn" class="action-btn">
           Allow on Spotify
         </button>
-        <span id="spotify-permission-status" class="spotify-permission-status" aria-live="polite"></span>
+        <span id="spotify-permission-status" class="site-permission-status" aria-live="polite"></span>
+      </section>
+
+      <section id="youtube-permission-panel" class="site-permission-panel" hidden>
+        <div id="youtube-permission-title" class="site-permission-title">Enable YouTube support?</div>
+        <p>
+          Firefox needs optional site access to restore effects after a reload.
+          Processing stays on this device.
+        </p>
+        <button type="button" id="youtube-permission-btn" class="action-btn">
+          Allow on YouTube
+        </button>
+        <span id="youtube-permission-status" class="site-permission-status" aria-live="polite"></span>
       </section>
 
       <div id="current-preset-bar" class="current-preset-bar" hidden>

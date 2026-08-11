@@ -35,6 +35,11 @@ const tabApplyQueues = new Map();
 const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';
 const SPOTIFY_SCRIPT_IDS = ['spotify-main', 'spotify-bridge'];
 const spotifyBridgeTabs = new Set();
+const youtubeTabs = new Map();
+const YOUTUBE_PERMISSION_ORIGINS = Object.freeze({
+  'www.youtube.com': 'https://www.youtube.com/*',
+  'music.youtube.com': 'https://music.youtube.com/*'
+});
 let spotifyRegistrationQueue = Promise.resolve();
 
 function isSpotifyUrl(url) {
@@ -48,9 +53,17 @@ function isSpotifyUrl(url) {
 function isYouTubeUrl(url) {
   try {
     const { hostname } = new URL(url);
-    return hostname === 'youtube.com' || hostname.endsWith('.youtube.com');
+    return hostname in YOUTUBE_PERMISSION_ORIGINS;
   } catch {
     return false;
+  }
+}
+
+function getYouTubePermissionOrigin(url) {
+  try {
+    return YOUTUBE_PERMISSION_ORIGINS[new URL(url).hostname] ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -224,6 +237,7 @@ async function applyToTab(tabId, url, settings, enabled) {
 
   await api.storage.local.set(settings);
   await rememberTabState(tabId, url, enabled, settings);
+  if (!spotify) youtubeTabs.set(tabId, getYouTubePermissionOrigin(url));
   const iconEnabled = Boolean(enabled && (response.processingActive ?? true));
   await setTabIcon(tabId, iconEnabled);
   return {
@@ -282,6 +296,8 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'CONTENT_STATE_CHANGED') {
     if (senderTabId === undefined) return;
+    const youtubeOrigin = getYouTubePermissionOrigin(sender.tab?.url ?? message.origin);
+    if (youtubeOrigin) youtubeTabs.set(senderTabId, youtubeOrigin);
     const iconEnabled = Boolean(message.enabled && (message.processingActive ?? true));
     setTabIcon(senderTabId, iconEnabled);
     const url = sender.tab?.url ?? message.origin;
@@ -329,8 +345,23 @@ api.permissions.onAdded.addListener((added) => {
 });
 
 api.permissions.onRemoved.addListener((removed) => {
-  if (!removed.origins?.includes(SPOTIFY_ORIGIN)) return;
-  const cleanup = [...spotifyBridgeTabs].map(async (tabId) => {
+  const removedOrigins = new Set(removed.origins ?? []);
+  const tasks = [];
+
+  if (removedOrigins.has(SPOTIFY_ORIGIN)) tasks.push(cleanupSpotifyPermission());
+
+  const removedYouTubeOrigins = new Set(
+    Object.values(YOUTUBE_PERMISSION_ORIGINS).filter((origin) => removedOrigins.has(origin))
+  );
+  if (removedYouTubeOrigins.size > 0) {
+    tasks.push(cleanupYouTubePermissions(removedYouTubeOrigins));
+  }
+
+  Promise.allSettled(tasks).catch(() => {});
+});
+
+async function cleanupSpotifyPermission() {
+  await Promise.all([...spotifyBridgeTabs].map(async (tabId) => {
     try {
       const tab = await api.tabs.get(tabId);
       if (!isSpotifyUrl(tab.url)) {
@@ -345,11 +376,25 @@ api.permissions.onRemoved.addListener((removed) => {
     } catch {
       spotifyBridgeTabs.delete(tabId);
     }
-  });
-  Promise.all(cleanup)
-    .then(() => syncSpotifyRegistration())
-    .catch(() => {});
-});
+  }));
+  await syncSpotifyRegistration();
+}
+
+async function cleanupYouTubePermissions(removedOrigins) {
+  await Promise.all([...youtubeTabs].map(async ([tabId, origin]) => {
+    if (!removedOrigins.has(origin)) return;
+    try {
+      await Promise.allSettled([
+        api.tabs.sendMessage(tabId, { type: 'YOUTUBE_PERMISSION_REVOKED' }),
+        forgetTabState(tabId),
+        setTabIcon(tabId, false)
+      ]);
+      youtubeTabs.delete(tabId);
+    } catch {
+      youtubeTabs.delete(tabId);
+    }
+  }));
+}
 
 api.runtime.onInstalled.addListener(() => {
   syncSpotifyRegistration().catch(() => {});
@@ -361,21 +406,41 @@ api.runtime.onStartup.addListener(() => {
 
 api.tabs.onRemoved.addListener((tabId) => {
   spotifyBridgeTabs.delete(tabId);
+  youtubeTabs.delete(tabId);
   forgetTabState(tabId).catch(() => {});
 });
 
 api.tabs.onActivated.addListener(async ({ tabId }) => {
+  let tabUrl = null;
+  try {
+    tabUrl = (await api.tabs.get(tabId)).url;
+  } catch {}
+  const remembered = tabUrl ? await recallTabState(tabId, tabUrl) : null;
+  if (!remembered?.enabled) {
+    await setTabIcon(tabId, false);
+    return;
+  }
   const state = await getTabState(tabId);
   await setTabIcon(tabId, Boolean(state?.enabled));
 });
 
 api.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
+    const trackedOrigin = youtubeTabs.get(tabId);
+    if (trackedOrigin && trackedOrigin !== getYouTubePermissionOrigin(tab.url)) {
+      youtubeTabs.delete(tabId);
+    }
     setTabIcon(tabId, false);
     return;
   }
 
   if (changeInfo.status !== 'complete' || !RESTORABLE_URL.test(tab.url ?? '')) return;
+
+  const remembered = await recallTabState(tabId, tab.url);
+  if (!remembered?.enabled) {
+    await setTabIcon(tabId, false);
+    return;
+  }
 
   // Injection asks this worker for remembered state and restores it inside the page.
   const state = await getTabState(tabId);

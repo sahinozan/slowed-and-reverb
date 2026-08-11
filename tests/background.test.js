@@ -141,15 +141,40 @@ describe('background service worker', () => {
   });
 
   test('does not inject into sites outside the release support list', async () => {
+    for (const url of ['https://www.twitch.tv/example', 'https://studio.youtube.com/']) {
+      const harness = setup({ activeTab: { id: 7, url } });
+
+      await harness.events.command.emit('toggle-slowed-reverb');
+
+      assert.equal(harness.calls.executeScript.length, 0);
+      assert.equal(harness.calls.tabMessages.length, 0);
+      assert.equal(harness.local.writes.length, 0);
+    }
+  });
+
+  test('neutralizes a tracked YouTube tab when its optional permission is revoked', async () => {
     const harness = setup({
-      activeTab: { id: 7, url: 'https://www.twitch.tv/example' }
+      grantedOrigins: ['https://www.youtube.com/*'],
+      onTabMessage(_tabId, message) {
+        if (message.type === 'GET_STATE') {
+          return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false };
+        }
+        return { success: true };
+      }
     });
 
     await harness.events.command.emit('toggle-slowed-reverb');
+    await harness.api.permissions.remove({ origins: ['https://www.youtube.com/*'] });
+    await flushPromises();
 
-    assert.equal(harness.calls.executeScript.length, 0);
-    assert.equal(harness.calls.tabMessages.length, 0);
-    assert.equal(harness.local.writes.length, 0);
+    assert.equal(
+      harness.calls.tabMessages.some(
+        ({ message }) => message.type === 'YOUTUBE_PERMISSION_REVOKED'
+      ),
+      true
+    );
+    assert.equal(harness.session.data['tabState:7'], undefined);
+    assert.match(harness.calls.icons.at(-1).path[16], /icon16-off\.png$/);
   });
 
   test('applies the slowed preset from its keyboard command', async () => {
@@ -293,6 +318,9 @@ describe('background service worker', () => {
 
   test('updates the icon across tab loading and activation', async () => {
     const harness = setup({
+      session: {
+        'tabState:7': { origin: 'https://www.youtube.com', enabled: true, settings: SLOWED }
+      },
       onTabMessage(_tabId, message) {
         return message.type === 'GET_STATE' ? { enabled: true, settings: SLOWED } : null;
       }
@@ -314,6 +342,21 @@ describe('background service worker', () => {
 
     await harness.events.tabActivated.emit({ tabId: 7 });
     assert.match(harness.calls.icons.at(-1).path[16], /icon16\.png$/);
+  });
+
+  test('does not inject on navigation when a tab has no enabled state to restore', async () => {
+    const harness = setup();
+
+    await harness.events.tabUpdated.emit(
+      7,
+      { status: 'complete' },
+      { url: 'https://www.youtube.com/watch?v=example' }
+    );
+    await harness.events.tabActivated.emit({ tabId: 7 });
+
+    assert.equal(harness.calls.executeScript.length, 0);
+    assert.equal(harness.calls.tabMessages.length, 0);
+    assert.match(harness.calls.icons.at(-1).path[16], /icon16-off\.png$/);
   });
 
   test('does not record activation when applying to the page fails', async () => {

@@ -31,11 +31,12 @@ const PNG_SIZES = [16, 48, 128];
 const LOGO_START = '<!-- icon:start -->';
 const LOGO_END = '<!-- icon:end -->';
 
-function bars(fill, indent) {
+function bars(fill, indent, className) {
+  const classAttr = className ? ` class="${className}"` : '';
   return BAR_HEIGHTS.map((height, index) => {
     const x = FIRST_BAR_X + index * (BAR_WIDTH + BAR_GAP);
     const y = CENTRE_Y - height / 2;
-    return `${indent}<rect x="${x}" y="${y}" width="${BAR_WIDTH}" height="${height}" rx="${BAR_WIDTH / 2}" fill="${fill}"/>`;
+    return `${indent}<rect${classAttr} x="${x}" y="${y}" width="${BAR_WIDTH}" height="${height}" rx="${BAR_WIDTH / 2}" fill="${fill}"/>`;
   }).join('\n');
 }
 
@@ -71,6 +72,41 @@ ${markup(prefix, state)}
 `;
 }
 
+// Theme colors live beside the other theme tokens in popup.css. The generated
+// stops use stable classes so one gradient follows those CSS variables without
+// duplicating a color table here.
+function popupMarkup(indent) {
+  const sheenStops = SHEEN
+    .map(([offset, color, opacity]) =>
+      `${indent}    <stop offset="${offset}" stop-color="${color}" stop-opacity="${opacity}"/>`)
+    .join('\n');
+
+  return [
+    `${indent}<defs>`,
+    `${indent}  <linearGradient id="sr-logo" gradientUnits="userSpaceOnUse" x1="8" y1="64" x2="120" y2="64">`,
+    `${indent}    <stop class="sr-logo-stop-light" offset="0"/>`,
+    `${indent}    <stop class="sr-logo-stop-middle" offset="0.5"/>`,
+    `${indent}    <stop class="sr-logo-stop-dark" offset="1"/>`,
+    `${indent}  </linearGradient>`,
+    `${indent}  <linearGradient id="sr-logo-sheen" gradientUnits="userSpaceOnUse" x1="64" y1="4" x2="64" y2="124">`,
+    sheenStops,
+    `${indent}  </linearGradient>`,
+    `${indent}</defs>`,
+    bars('url(#sr-logo)', indent, 'sr-bar'),
+    bars('url(#sr-logo-sheen)', indent, 'sr-sheen')
+  ].join('\n');
+}
+
+function popupBlock(indent) {
+  return [
+    LOGO_START,
+    `${indent}<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">`,
+    popupMarkup(`${indent}  `),
+    `${indent}</svg>`,
+    `${indent}${LOGO_END}`
+  ].join('\n');
+}
+
 // The popup mark is inline rather than an <img> so it inherits no network or
 // CSP concerns; keep its gradient ids distinct from anything else on the page.
 function updatePopup(indent) {
@@ -81,13 +117,7 @@ function updatePopup(indent) {
     throw new Error(`popup.html is missing the ${LOGO_START} / ${LOGO_END} markers`);
   }
 
-  const block = [
-    LOGO_START,
-    `${indent}<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">`,
-    markup('sr-logo', 'on', `${indent}  `),
-    `${indent}</svg>`,
-    `${indent}${LOGO_END}`
-  ].join('\n');
+  const block = popupBlock(indent);
 
   const updated = source.slice(0, start) + block + source.slice(end + LOGO_END.length);
   fs.writeFileSync(popupFile, updated);
@@ -125,7 +155,11 @@ async function main() {
   console.log(changed ? 'Updated the popup header mark' : 'Popup header mark already current');
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { popupBlock };

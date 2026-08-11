@@ -7,6 +7,7 @@ const { spawnSync } = require('child_process');
 const { describe, test } = require('node:test');
 const AdmZip = require('adm-zip');
 const { JSDOM } = require('jsdom');
+const { popupBlock } = require('../scripts/render-icons');
 
 const { root } = require('./helpers/load-script');
 const SOURCE_FILES = [
@@ -75,6 +76,9 @@ describe('store package contracts', () => {
     assert.equal(fs.existsSync(path.join(root, 'STORE_RELEASE_PLAN.md')), true);
     assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
     assert.equal('host_permissions' in manifest, false);
+    assert.equal('content_security_policy' in manifest, false);
+    assert.equal('externally_connectable' in manifest, false);
+    assert.equal('web_accessible_resources' in manifest, false);
     assert.deepEqual(manifest.optional_host_permissions, ['https://open.spotify.com/*']);
     assert.equal('content_scripts' in manifest, false);
     assert.deepEqual(Object.keys(manifest.commands).sort(), [
@@ -100,6 +104,30 @@ describe('store package contracts', () => {
     }
   });
 
+  test('keeps the generated popup logo and theme color tokens synchronized', () => {
+    const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
+    const css = fs.readFileSync(path.join(root, 'popup.css'), 'utf8');
+    const generatedBlock = html.match(/<!-- icon:start -->[\s\S]*?<!-- icon:end -->/);
+
+    assert.ok(generatedBlock, 'popup.html is missing its generated icon block');
+    assert.equal(generatedBlock[0], popupBlock('          '));
+
+    const themeSelectors = [
+      ':root',
+      ':root[data-theme="midnight"]',
+      ':root[data-theme="paper"]',
+      ':root[data-theme="frost"]'
+    ];
+    for (const selector of themeSelectors) {
+      const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const block = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]+)\\}`));
+      assert.ok(block, `Missing CSS block for ${selector}`);
+      for (const token of ['--logo-light', '--logo-middle', '--logo-dark']) {
+        assert.match(block[1], new RegExp(`${token}:\\s*[^;]+;`), `${selector} is missing ${token}`);
+      }
+    }
+  });
+
   test('uses a real repository URL and valid PNG icon dimensions', () => {
     const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
     const document = new JSDOM(html).window.document;
@@ -113,6 +141,20 @@ describe('store package contracts', () => {
       assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
       assert.equal(png.readUInt32BE(16), expectedSize, `${file} width`);
       assert.equal(png.readUInt32BE(20), expectedSize, `${file} height`);
+    }
+  });
+
+  test('ships no remote code or extension-originated network clients', () => {
+    const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
+    const document = new JSDOM(html).window.document;
+    for (const script of document.querySelectorAll('script[src]')) {
+      assert.equal(new URL(script.src, 'https://extension.invalid/').origin, 'https://extension.invalid');
+    }
+
+    for (const file of SOURCE_FILES.filter((source) => source.endsWith('.js'))) {
+      const source = fs.readFileSync(path.join(root, file), 'utf8');
+      assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource)\b/, file);
+      assert.doesNotMatch(source, /\b(?:eval|Function)\s*\(/, file);
     }
   });
 
@@ -134,6 +176,11 @@ describe('store package contracts', () => {
     assert.equal('gecko_android' in firefox.browser_specific_settings, false);
     assert.equal(firefox.version, chromium.version);
     assert.deepEqual(firefox.permissions, chromium.permissions);
+    assert.deepEqual(firefox.optional_host_permissions, [
+      'https://open.spotify.com/*',
+      'https://www.youtube.com/*',
+      'https://music.youtube.com/*'
+    ]);
 
     for (const target of ['chromium', 'firefox']) {
       for (const file of SOURCE_FILES) {
