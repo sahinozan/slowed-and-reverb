@@ -310,10 +310,125 @@ describe('background service worker', () => {
       { type: 'GET_TAB_STATE', url: 'https://www.youtube.com/watch?v=another' },
       { tab: { id: 7, url: 'https://www.youtube.com/watch?v=another' } }
     );
-    assert.deepEqual(recalled.settings, settings);
+    assert.deepEqual({ ...recalled.settings }, settings);
 
     await harness.events.tabRemoved.emit(7);
     assert.equal(harness.session.data['tabState:7'], undefined);
+  });
+
+  test('rejects cross-tab actions from content scripts and normalizes reported settings', async () => {
+    const harness = setup();
+
+    const rejected = await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      {
+        type: 'APPLY_TO_TAB',
+        tabId: 99,
+        url: 'https://www.youtube.com/watch?v=other',
+        settings: SLOWED,
+        enabled: true
+      },
+      { tab: { id: 7, url: 'https://www.youtube.com/watch?v=one' } }
+    );
+
+    assert.equal(rejected, undefined);
+    assert.equal(harness.calls.tabMessages.length, 0);
+
+    await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      {
+        type: 'CONTENT_STATE_CHANGED',
+        enabled: true,
+        settings: {
+          ...DEFAULT_SETTINGS,
+          speed: 99,
+          reverb: Number.POSITIVE_INFINITY,
+          keepPitch: 'yes'
+        }
+      },
+      { tab: { id: 7, url: 'https://www.youtube.com/watch?v=one' } }
+    );
+    await flushPromises();
+
+    assert.equal(harness.session.data['tabState:7'].settings.speed, 1.5);
+    assert.equal(harness.session.data['tabState:7'].settings.reverb, 0);
+    assert.equal(harness.session.data['tabState:7'].settings.keepPitch, false);
+  });
+
+  test('allows packaged Chromium and Firefox popup messages with active-tab context', async () => {
+    for (const popupUrl of [
+      'chrome-extension://example/popup.html',
+      'moz-extension://example/popup.html'
+    ]) {
+      const harness = setup({
+        onTabMessage(_tabId, message) {
+          return message.type === 'UPDATE_AUDIO' ? { success: true } : null;
+        }
+      });
+
+      const response = await dispatchRuntimeMessage(
+        harness.events.runtimeMessage,
+        {
+          type: 'APPLY_TO_TAB',
+          tabId: 7,
+          url: 'https://www.youtube.com/watch?v=one',
+          settings: SLOWED,
+          enabled: true
+        },
+      {
+        id: 'example',
+        url: popupUrl,
+          tab: { id: 7, url: 'https://www.youtube.com/watch?v=one' }
+        }
+      );
+
+      assert.equal(response.success, true, popupUrl);
+      assert.equal(updates(harness.calls).length, 1, popupUrl);
+    }
+  });
+
+  test('rejects a popup-shaped sender from a different extension', async () => {
+    const harness = setup();
+
+    const response = await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      {
+        type: 'APPLY_TO_TAB',
+        tabId: 7,
+        url: 'https://www.youtube.com/watch?v=one',
+        settings: SLOWED,
+        enabled: true
+      },
+      { id: 'different-extension', url: 'chrome-extension://different-extension/popup.html' }
+    );
+
+    assert.equal(response, undefined);
+    assert.equal(harness.calls.tabMessages.length, 0);
+  });
+
+  test('uses a validated reported origin when the browser omits the sender tab URL', async () => {
+    const harness = setup();
+    const settings = { ...DEFAULT_SETTINGS, pan: -50 };
+
+    await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      {
+        type: 'CONTENT_STATE_CHANGED',
+        enabled: true,
+        settings,
+        origin: 'https://www.youtube.com'
+      },
+      { tab: { id: 7 } }
+    );
+    await flushPromises();
+
+    const recalled = await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      { type: 'GET_TAB_STATE', url: 'https://www.youtube.com' },
+      { tab: { id: 7 } }
+    );
+
+    assert.deepEqual({ ...recalled.settings }, settings);
   });
 
   test('updates the icon across tab loading and activation', async () => {
