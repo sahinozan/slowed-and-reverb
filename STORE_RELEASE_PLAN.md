@@ -18,6 +18,9 @@ three supported services pass final desktop testing.
 - **Resolved:** Spotify support is a normal supported feature, not experimental. It
   uses optional access to `https://open.spotify.com/*` and remains off until the user
   grants that access.
+- **Resolved:** Firefox requests exact optional access to YouTube or YouTube Music on
+  first use because Firefox revokes temporary tab access during reload. Chromium does
+  not request these additional origins.
 - **Accepted:** YouTube live streams support the audio filters but not playback-speed
   changes.
 - **Resolved:** Supported pages distinguish active processing, a player that is still
@@ -63,6 +66,7 @@ repeating the relevant checks and manual tests.
   - local settings and preset storage;
   - the purpose of `activeTab`, `scripting`, and `storage`;
   - Spotify's optional host access;
+  - Firefox-only optional YouTube and YouTube Music access for reload restoration;
   - no collection, sale, sharing, telemetry, analytics, or remote processing;
   - no remote code or extension-originated network requests;
   - how to request support or ask a privacy question.
@@ -77,6 +81,8 @@ repeating the relevant checks and manual tests.
   - `scripting`;
   - `storage`;
   - optional access to `https://open.spotify.com/*`.
+- Prepare Firefox-specific justification for optional access to
+  `https://www.youtube.com/*` and `https://music.youtube.com/*`.
 - Prepare no-data-collection and no-remote-code declarations.
 - Provide homepage, support, and privacy-policy URLs.
 - Describe only YouTube, YouTube Music, and Spotify as supported.
@@ -141,7 +147,8 @@ This stage requires the account owner.
 - Complete the listing, privacy, support, license, category, and compatibility fields.
 - Upload the shared icon and suitable screenshots.
 - Clearly state desktop Firefox 142+ compatibility and do not select Android.
-- Explain Spotify's optional permission and include reviewer testing steps.
+- Explain Spotify's optional permission, Firefox's optional YouTube reload access,
+  and include reviewer testing steps for both flows.
 - Provide readable source and reproducible build instructions if Mozilla requests a
   source submission.
 - Audit the uploaded package and listing, then submit and respond to reviewer feedback.

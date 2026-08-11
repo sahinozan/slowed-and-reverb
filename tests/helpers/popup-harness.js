@@ -21,6 +21,7 @@ async function createPopupHarness(options = {}) {
     },
     local: options.local,
     session: options.session,
+    manifest: options.manifest,
     grantedOrigins: options.grantedOrigins,
     permissionRequestResult: options.permissionRequestResult,
     executeScriptError: options.executeScriptError,

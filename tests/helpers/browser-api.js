@@ -97,6 +97,9 @@ function createBrowserApi(options = {}) {
       onInstalled: events.installed,
       onMessage: events.runtimeMessage,
       onStartup: events.startup,
+      getManifest() {
+        return clone(options.manifest ?? {});
+      },
       async sendMessage(message) {
         calls.runtimeMessages.push(clone(message));
         if (options.onRuntimeMessage) return options.onRuntimeMessage(message);

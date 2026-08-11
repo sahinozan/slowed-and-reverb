@@ -19,6 +19,10 @@ granted, the page reloads once so the audio hook can start before Spotify's hidd
 player. The permission is not requested during installation and can be revoked at
 any time in the browser's extension settings.
 
+Firefox also asks for optional access to the current YouTube or YouTube Music site
+on first use. Firefox requires that access to restore processing after a page reload;
+Chromium keeps using temporary tab access and does not show this additional prompt.
+
 ### Controls
 
 **Basic**
@@ -107,8 +111,8 @@ The root manifest targets Chromium. Target builds emit clean, allowlisted
 directories under `dist/`; `npm run package` creates one upload ZIP per store in
 `dist/packages/`. The Firefox version receives Firefox's MV3 background
 configuration and add-on metadata during the build. Its data-collection
-declaration targets Firefox desktop 142+. Firefox Android is not declared for
-`1.0.0` because it has not been tested.
+declaration and optional YouTube reload permissions target Firefox desktop 142+.
+Firefox Android is not declared for `1.0.0` because it has not been tested.
 
 Needs Node >= 24.19 and npm 11.19. Development tools are exact-versioned in
 `package.json` and `package-lock.json`; use `npm ci` for normal setup rather
@@ -132,12 +136,15 @@ behavior cannot be reproduced completely in an automated environment.
 ## Privacy
 
 No data collection, no analytics, no external network requests. Core permissions
-are `activeTab`, `scripting`, and `storage`. YouTube and YouTube Music are touched
-only after the user opens the popup or uses a shortcut on that tab. Spotify
-declares optional access to `open.spotify.com`; it is not granted at installation
-and is requested only if the user chooses **Allow on Spotify** while visiting the
-web player. Revoking that site access disables Spotify processing without
-affecting YouTube or YouTube Music.
+are `activeTab`, `scripting`, and `storage`. Initial YouTube and YouTube Music access
+begins only after the user opens the popup or uses a shortcut on that tab. The
+Firefox package declares optional access to `www.youtube.com` and
+`music.youtube.com` so it can restore only previously enabled tabs after reload;
+each origin is requested separately on first use and neither is granted at
+installation. Spotify declares optional access to `open.spotify.com` in both
+packages and requests it only when the user chooses **Allow on Spotify** while
+visiting the web player. Revoking optional site access neutralizes processing and
+prevents later restoration on that site.
 
 ## License
 

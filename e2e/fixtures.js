@@ -98,15 +98,18 @@ function prepareTestExtension(tempRoot) {
     [
       'content.js',
       [
-        "location.hostname === 'youtube.com' || location.hostname.endsWith('.youtube.com')",
-        "location.hostname === '127.0.0.1' ||\n      location.hostname === 'youtube.com' || location.hostname.endsWith('.youtube.com')"
+        "location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com'",
+        "location.hostname === '127.0.0.1' ||\n      location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com'"
       ]
     ],
-    ...['background.js', 'popup.js'].map((file) => [
+    ...[
+      ['background.js', 'YOUTUBE_PERMISSION_ORIGINS'],
+      ['popup.js', 'FIREFOX_YOUTUBE_PERMISSIONS']
+    ].map(([file, permissionsName]) => [
       file,
       [
-        "return hostname === 'youtube.com' || hostname.endsWith('.youtube.com');",
-        "return (\n      hostname === '127.0.0.1' ||\n      hostname === 'youtube.com' ||\n      hostname.endsWith('.youtube.com')\n    );"
+        `return hostname in ${permissionsName};`,
+        `return hostname === '127.0.0.1' || hostname in ${permissionsName};`
       ]
     ])
   ]);

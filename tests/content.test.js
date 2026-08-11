@@ -88,6 +88,24 @@ describe('content script audio processing', () => {
     close(harness);
   });
 
+  test('returns the graph to neutral when YouTube permission is revoked', async () => {
+    const harness = await createContentHarness();
+
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const response = harness.dispatch({ type: 'YOUTUBE_PERMISSION_REVOKED' });
+
+    assert.equal(response.success, true);
+    assert.equal(response.enabled, false);
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.dispatch({ type: 'GET_STATE' }).enabled, false);
+    const outputGains = harness.context.gains.filter((node) =>
+      node.connections.some((connection) => connection.target === harness.context.destination)
+    );
+    assert.deepEqual(outputGains.map((node) => node.gain.value), [1, 0]);
+
+    close(harness);
+  });
+
   test('restores remembered state after reinjection', async () => {
     const harness = await createContentHarness({
       remembered: {
@@ -129,7 +147,9 @@ describe('content script audio processing', () => {
       'https://clips.twitch.tv/ExampleClip',
       'https://soundcloud.com/artist/song',
       'https://music.apple.com/album/example',
-      'https://open.spotify.com/track/1'
+      'https://open.spotify.com/track/1',
+      'https://studio.youtube.com/',
+      'https://m.youtube.com/watch?v=example'
     ];
 
     for (const url of urls) {
@@ -224,6 +244,31 @@ describe('content script audio processing', () => {
       ),
       true
     );
+
+    close(harness);
+  });
+
+  test('attaches a replacement player whose metadata loaded before insertion', async () => {
+    const harness = await createContentHarness();
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+
+    harness.media.remove();
+    const replacement = harness.window.document.createElement('audio');
+    Object.defineProperties(replacement, {
+      duration: { configurable: true, value: 240 },
+      mediaKeys: { configurable: true, value: null },
+      readyState: { configurable: true, value: 1 }
+    });
+    replacement.playbackRate = 1;
+    harness.window.document.body.appendChild(replacement);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    assert.equal(harness.context.sources.length, 2);
+    assert.equal(replacement.playbackRate, SETTINGS.speed);
+    const state = harness.dispatch({ type: 'GET_STATE' });
+    assert.equal(state.playerDetected, true);
+    assert.equal(state.processingActive, true);
+    assert.equal(state.pending, false);
 
     close(harness);
   });
