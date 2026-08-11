@@ -30,9 +30,11 @@ const ICONS = {
 
 const BLOCKED_TEXT = {
   drm: "This page's audio looks copy-protected (DRM), so effects can't be applied here.",
-  broken: "This breaks audio playback completely, so it's disabled here.",
-  unreachable: "This site's player keeps its audio out of the page, so effects can't reach it.",
-  unsupported: "Browser-protected pages and this type of player can't be changed here.",
+  unsupportedSite:
+    'This website is not officially supported yet. Try YouTube, YouTube Music, or Spotify.',
+  unsupported: "This page's player is not available to the extension.",
+  noPlayer: "Waiting for this site's supported audio player...",
+  loadingPlayer: 'The audio player is still loading. Effects will start when it is ready.',
   spotifyEffects:
     'Spotify speed is available, but this browser did not expose its audio to the filters.'
 };
@@ -264,6 +266,33 @@ function isSpotifyUrl(url) {
   }
 }
 
+function isYouTubeUrl(url) {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === 'youtube.com' || hostname.endsWith('.youtube.com');
+  } catch {
+    return false;
+  }
+}
+
+function showProcessingStatus(state) {
+  if (state?.effectsUnavailable) {
+    els.blockedBannerText.textContent = BLOCKED_TEXT.spotifyEffects;
+    els.blockedBanner.hidden = false;
+    return;
+  }
+
+  if (state?.pending) {
+    els.blockedBannerText.textContent = state.playerDetected
+      ? BLOCKED_TEXT.loadingPlayer
+      : BLOCKED_TEXT.noPlayer;
+    els.blockedBanner.hidden = false;
+    return;
+  }
+
+  els.blockedBanner.hidden = true;
+}
+
 function showSpotifyPermissionPanel(mode) {
   els.spotifyPermissionPanel.hidden = false;
   els.spotifyPermissionBtn.dataset.mode = mode;
@@ -428,6 +457,8 @@ async function saveAndApplySettings(enabled) {
     setBlocked(true, result?.blockReason ?? 'unsupported');
     setPowerUI(false);
     setTabIcon(tab.id, false);
+  } else {
+    showProcessingStatus(result);
   }
 
   return result;
@@ -902,6 +933,11 @@ async function syncWithActiveTab() {
 
   if (spotify) {
     await api.runtime.sendMessage({ type: 'SYNC_SPOTIFY_REGISTRATION' });
+  } else if (!isYouTubeUrl(tab.url)) {
+    setBlocked(true, 'unsupportedSite');
+    setPowerUI(false);
+    setTabIcon(tab.id, false);
+    return;
   } else if (!(await ensureContentScript(tab.id))) {
     setBlocked(true, 'unsupported');
     setPowerUI(false);
@@ -932,10 +968,7 @@ async function syncWithActiveTab() {
 
   setBlocked(false);
   hideSpotifyPermissionPanel();
-  if (state?.effectsUnavailable) {
-    els.blockedBannerText.textContent = BLOCKED_TEXT.spotifyEffects;
-    els.blockedBanner.hidden = false;
-  }
+  showProcessingStatus(state);
   setLiveState(Boolean(state?.live));
 
   if (state?.enabled) {

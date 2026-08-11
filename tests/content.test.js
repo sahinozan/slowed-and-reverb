@@ -93,7 +93,7 @@ describe('content script audio processing', () => {
       remembered: {
         enabled: true,
         settings: SETTINGS,
-        url: 'https://example.com/previous'
+        url: 'https://www.youtube.com/watch?v=previous'
       }
     });
 
@@ -123,24 +123,26 @@ describe('content script audio processing', () => {
     close(harness);
   });
 
-  test('reports static platform restrictions with the correct reason', async () => {
-    const cases = [
-      ['https://open.spotify.com/track/1', 'drm'],
-      ['https://soundcloud.com/artist/song', 'unreachable'],
-      ['https://www.twitch.tv/user/clip/example', 'broken']
+  test('reports every site outside the release support list as unsupported', async () => {
+    const urls = [
+      'https://www.twitch.tv/example',
+      'https://clips.twitch.tv/ExampleClip',
+      'https://soundcloud.com/artist/song',
+      'https://music.apple.com/album/example',
+      'https://open.spotify.com/track/1'
     ];
 
-    for (const [url, reason] of cases) {
+    for (const url of urls) {
       const harness = await createContentHarness({ url, withMedia: false });
       const state = harness.dispatch({ type: 'GET_STATE' });
       assert.equal(state.blocked, true);
-      assert.equal(state.blockReason, reason);
+      assert.equal(state.blockReason, 'unsupportedSite');
       close(harness);
     }
   });
 
-  test('does not attach blocked media to Web Audio', async () => {
-    for (const url of ['https://open.spotify.com/track/1', 'https://soundcloud.com/a/b']) {
+  test('does not attach media on unsupported sites to Web Audio', async () => {
+    for (const url of ['https://www.twitch.tv/example', 'https://soundcloud.com/a/b']) {
       const harness = await createContentHarness({ url });
 
       harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
@@ -195,7 +197,10 @@ describe('content script audio processing', () => {
 
   test('processes media elements added after the initial injection', async () => {
     const harness = await createContentHarness({ withMedia: false });
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const initial = harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    assert.equal(initial.playerDetected, false);
+    assert.equal(initial.processingActive, false);
+    assert.equal(initial.pending, true);
 
     const media = harness.window.document.createElement('audio');
     Object.defineProperties(media, {
@@ -209,6 +214,16 @@ describe('content script audio processing', () => {
 
     assert.equal(harness.getContext().sources.length, 1);
     assert.equal(media.playbackRate, SETTINGS.speed);
+    const state = harness.dispatch({ type: 'GET_STATE' });
+    assert.equal(state.playerDetected, true);
+    assert.equal(state.processingActive, true);
+    assert.equal(state.pending, false);
+    assert.equal(
+      harness.runtimeMessages.some(
+        (message) => message.type === 'CONTENT_STATE_CHANGED' && message.processingActive === true
+      ),
+      true
+    );
 
     close(harness);
   });

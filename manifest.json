@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Slowed & Reverb",
   "version": "1.0.0",
-  "description": "Apply real-time slowed, reverb, and related audio effects to HTML5 media on supported pages. Fully local with zero telemetry.",
+  "description": "Real-time slowed, reverb, and related audio effects for YouTube, YouTube Music, and Spotify. Fully local with zero telemetry.",
   "permissions": [
     "activeTab",
     "scripting",
