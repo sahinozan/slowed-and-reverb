@@ -67,9 +67,9 @@ cosmetic and stored globally, not per tab.
   off. Enabling the effect and reloading restores it, as does navigating within
   the same site.
 - **Some sites are blocked, with an explanation.** DRM-protected media (Spotify,
-  Netflix, Apple Music…) genuinely cannot be tapped by Web Audio; Twitch *clips*
-  would be silenced outright; SoundCloud keeps its audio element out of the page.
-  The popup says which of the three applies rather than guessing.
+  Netflix, Apple Music…) may not expose audio to Web Audio; Twitch *clips* would
+  be silenced outright; SoundCloud keeps its audio element out of the page.
+  Spotify has an experimental opt-in path described below.
 - **Live streams ignore Speed.** The player's own latency correction fights it
   every tick. Reverb, EQ, and the rest still work.
 - **Embedded players may be unreachable.** Media inside iframes or shadow roots
@@ -120,9 +120,11 @@ behavior cannot be reproduced completely in an automated environment.
 ## Privacy
 
 No data collection, no analytics, no external network requests. Permissions are
-`activeTab`, `scripting`, and `storage` only: there are no host permissions, so
-the content script is injected on demand into the tab you act on and never runs
-on pages you haven't touched.
+`activeTab`, `scripting`, and `storage`. Ordinary pages are still processed only
+after an explicit action. Spotify support declares optional access to
+`open.spotify.com`; it is not granted at installation and is requested only if
+the user chooses **Allow on Spotify** while visiting the web player. Revoking
+that site access disables Spotify processing without affecting other sites.
 
 ## License
 

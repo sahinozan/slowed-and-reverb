@@ -8,6 +8,9 @@
     "scripting",
     "storage"
   ],
+  "optional_host_permissions": [
+    "https://open.spotify.com/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

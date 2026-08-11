@@ -9,7 +9,15 @@ const AdmZip = require('adm-zip');
 const { JSDOM } = require('jsdom');
 
 const { root } = require('./helpers/load-script');
-const SOURCE_FILES = ['background.js', 'content.js', 'popup.js', 'popup.html', 'popup.css'];
+const SOURCE_FILES = [
+  'background.js',
+  'content.js',
+  'spotify-bridge.js',
+  'spotify-main.js',
+  'popup.js',
+  'popup.html',
+  'popup.css'
+];
 const PNG_DIMENSIONS = new Map([
   ['assets/icon16.png', 16],
   ['assets/icon16-off.png', 16],
@@ -62,6 +70,7 @@ describe('store package contracts', () => {
     assert.match(readme, /Node >= 24\.19/);
     assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
     assert.equal('host_permissions' in manifest, false);
+    assert.deepEqual(manifest.optional_host_permissions, ['https://open.spotify.com/*']);
     assert.equal('content_scripts' in manifest, false);
     assert.deepEqual(Object.keys(manifest.commands).sort(), [
       'toggle-effect',

@@ -38,6 +38,71 @@ function updates(calls) {
 }
 
 describe('background service worker', () => {
+  test('registers Spotify hooks only while optional site access is granted', async () => {
+    const harness = setup();
+
+    await harness.events.installed.emit();
+    assert.equal(harness.registeredContentScripts.size, 0);
+
+    await harness.api.permissions.request({ origins: ['https://open.spotify.com/*'] });
+    await flushPromises();
+    assert.deepEqual([...harness.registeredContentScripts.keys()].sort(), [
+      'spotify-bridge',
+      'spotify-main'
+    ]);
+    assert.equal(harness.registeredContentScripts.get('spotify-main').world, 'MAIN');
+    assert.equal(harness.registeredContentScripts.get('spotify-main').runAt, 'document_start');
+
+    await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      { type: 'SPOTIFY_BRIDGE_READY' },
+      { tab: { id: 7, url: 'https://open.spotify.com/' } }
+    );
+
+    await harness.api.permissions.remove({ origins: ['https://open.spotify.com/*'] });
+    await flushPromises();
+    assert.equal(harness.registeredContentScripts.size, 0);
+    assert.equal(
+      harness.calls.tabMessages.some(
+        ({ message }) => message.type === 'SPOTIFY_PERMISSION_REVOKED'
+      ),
+      true
+    );
+  });
+
+  test('reloads the active Spotify tab after optional access is granted', async () => {
+    const harness = setup({
+      activeTab: { id: 7, url: 'https://open.spotify.com/track/example' }
+    });
+
+    await harness.api.permissions.request({ origins: ['https://open.spotify.com/*'] });
+    await flushPromises();
+
+    assert.deepEqual(harness.calls.reloadedTabs, [7]);
+    assert.deepEqual([...harness.registeredContentScripts.keys()].sort(), [
+      'spotify-bridge',
+      'spotify-main'
+    ]);
+  });
+
+  test('routes an enabled Spotify tab through its early bridge', async () => {
+    const harness = setup({
+      activeTab: { id: 7, url: 'https://open.spotify.com/track/example' },
+      grantedOrigins: ['https://open.spotify.com/*'],
+      onTabMessage(_tabId, message) {
+        return message.type === 'GET_STATE'
+          ? { enabled: false, settings: DEFAULT_SETTINGS, blocked: false }
+          : { success: true };
+      }
+    });
+
+    await harness.events.command.emit('toggle-slowed-reverb');
+
+    assert.equal(harness.calls.executeScript.length, 0);
+    assert.equal(updates(harness.calls).length, 1);
+    assert.equal(updates(harness.calls)[0].message.enabled, true);
+  });
+
   test('applies the slowed preset from its keyboard command', async () => {
     const harness = setup({
       onTabMessage(_tabId, message) {

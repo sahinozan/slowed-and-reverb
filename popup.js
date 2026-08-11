@@ -15,6 +15,8 @@ const DEFAULT_SETTINGS = Object.freeze({
 
 const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS);
 const SPEED_EPSILON = 0.001;
+const SPOTIFY_HOST = 'open.spotify.com';
+const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';
 
 const PRESETS = Object.freeze({
   slowed: Object.freeze({ name: 'Slowed + Reverb', ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 }),
@@ -30,7 +32,9 @@ const BLOCKED_TEXT = {
   drm: "This page's audio looks copy-protected (DRM), so effects can't be applied here.",
   broken: "This breaks audio playback completely, so it's disabled here.",
   unreachable: "This site's player keeps its audio out of the page, so effects can't reach it.",
-  unsupported: "Browser-protected pages and this type of player can't be changed here."
+  unsupported: "Browser-protected pages and this type of player can't be changed here.",
+  spotifyEffects:
+    'Spotify speed is available, but this browser did not expose its audio to the filters.'
 };
 
 const THEMES = [
@@ -178,6 +182,10 @@ const els = {
   powerStatus: el('power-status'),
   blockedBanner: el('blocked-banner'),
   blockedBannerText: el('blocked-banner-text'),
+  spotifyPermissionPanel: el('spotify-permission-panel'),
+  spotifyPermissionText: el('spotify-permission-text'),
+  spotifyPermissionBtn: el('spotify-permission-btn'),
+  spotifyPermissionStatus: el('spotify-permission-status'),
   presetBar: el('current-preset-bar'),
   presetLabel: el('current-preset-label'),
   presetNameInput: el('preset-name-input'),
@@ -246,6 +254,112 @@ let blocked = false;
 let liveBlocked = false;
 let applyRevision = 0;
 let presetWriteQueue = Promise.resolve();
+let spotifyPermissionTabId = null;
+
+function isSpotifyUrl(url) {
+  try {
+    return new URL(url).hostname === SPOTIFY_HOST;
+  } catch {
+    return false;
+  }
+}
+
+function showSpotifyPermissionPanel(mode) {
+  els.spotifyPermissionPanel.hidden = false;
+  els.spotifyPermissionBtn.dataset.mode = mode;
+  els.spotifyPermissionStatus.textContent = '';
+
+  if (mode === 'reload') {
+    els.spotifyPermissionText.textContent =
+      'Spotify access is enabled. Reload the page so the audio hook can start before its player.';
+    els.spotifyPermissionBtn.textContent = 'Reload Spotify';
+  } else {
+    els.spotifyPermissionText.textContent =
+      'Spotify needs optional site access so the audio hook can start before its hidden player. Processing stays on this device.';
+    els.spotifyPermissionBtn.textContent = 'Allow on Spotify';
+  }
+}
+
+function hideSpotifyPermissionPanel() {
+  els.spotifyPermissionPanel.hidden = true;
+  els.spotifyPermissionStatus.textContent = '';
+}
+
+function watchForTabReload(tabId) {
+  let resolveReload;
+  let settled = false;
+  let timeoutId = null;
+  const promise = new Promise((resolve) => {
+    resolveReload = resolve;
+  });
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    window.clearTimeout(timeoutId);
+    api.tabs.onUpdated.removeListener(onUpdated);
+    resolveReload();
+  };
+  const onUpdated = (updatedTabId, changeInfo) => {
+    if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+  };
+
+  api.tabs.onUpdated.addListener(onUpdated);
+  timeoutId = window.setTimeout(finish, 15_000);
+  return { cancel: finish, promise };
+}
+
+async function reloadSpotifyTab(tab) {
+  els.spotifyPermissionStatus.textContent = 'Reloading Spotify...';
+  const reloadWatcher = watchForTabReload(tab.id);
+  try {
+    await api.tabs.reload(tab.id);
+    await reloadWatcher.promise;
+  } catch (error) {
+    reloadWatcher.cancel();
+    throw error;
+  }
+}
+
+async function handleSpotifyPermissionAction() {
+  const reloadOnly = els.spotifyPermissionBtn.dataset.mode === 'reload';
+  const permissionReloadWatcher =
+    !reloadOnly && spotifyPermissionTabId !== null
+      ? watchForTabReload(spotifyPermissionTabId)
+      : null;
+  els.spotifyPermissionBtn.disabled = true;
+  try {
+    // Firefox loses user-action status after the first await, so this permission
+    // request must happen before looking up the active tab or doing any other work.
+    if (!reloadOnly) {
+      const granted = await api.permissions.request({ origins: [SPOTIFY_ORIGIN] });
+      if (!granted) {
+        permissionReloadWatcher?.cancel();
+        els.spotifyPermissionStatus.textContent = 'Permission was not granted.';
+        return;
+      }
+
+      els.spotifyPermissionStatus.textContent = 'Reloading Spotify...';
+      if (permissionReloadWatcher) await permissionReloadWatcher.promise;
+      await syncWithActiveTab();
+      return;
+    }
+
+    const tab = await getActiveTab();
+    if (tab?.id === undefined || !isSpotifyUrl(tab.url)) {
+      els.spotifyPermissionStatus.textContent = 'Return to Spotify and try again.';
+      return;
+    }
+
+    await reloadSpotifyTab(tab);
+    await syncWithActiveTab();
+  } catch {
+    permissionReloadWatcher?.cancel();
+    els.spotifyPermissionStatus.textContent =
+      'Permission request failed. You can also enable Spotify in the browser extension settings.';
+  } finally {
+    els.spotifyPermissionBtn.disabled = false;
+  }
+}
 
 function getCurrentSettings() {
   const settings = { keepPitch: els.keepPitch.checked };
@@ -735,6 +849,7 @@ function bindControls() {
   });
 
   els.power.addEventListener('change', () => saveAndApplySettings(els.power.checked));
+  els.spotifyPermissionBtn.addEventListener('click', handleSpotifyPermissionAction);
 
   els.resetBtn.addEventListener('click', () => {
     applySettingsToUI(DEFAULT_SETTINGS);
@@ -771,9 +886,23 @@ function bindControls() {
 
 async function syncWithActiveTab() {
   const tab = await getActiveTab();
+  spotifyPermissionTabId =
+    tab?.id !== undefined && isSpotifyUrl(tab.url) ? tab.id : null;
   if (tab?.id === undefined) return;
 
-  if (!(await ensureContentScript(tab.id))) {
+  const spotify = isSpotifyUrl(tab.url);
+  if (spotify && !(await api.permissions.contains({ origins: [SPOTIFY_ORIGIN] }))) {
+    setBlocked(true, 'drm');
+    els.blockedBanner.hidden = true;
+    showSpotifyPermissionPanel('enable');
+    setPowerUI(false);
+    setTabIcon(tab.id, false);
+    return;
+  }
+
+  if (spotify) {
+    await api.runtime.sendMessage({ type: 'SYNC_SPOTIFY_REGISTRATION' });
+  } else if (!(await ensureContentScript(tab.id))) {
     setBlocked(true, 'unsupported');
     setPowerUI(false);
     setTabIcon(tab.id, false);
@@ -784,7 +913,11 @@ async function syncWithActiveTab() {
   try {
     state = await api.tabs.sendMessage(tab.id, { type: 'GET_STATE' });
   } catch {
-    setBlocked(true, 'unsupported');
+    setBlocked(true, spotify ? 'drm' : 'unsupported');
+    if (spotify) {
+      els.blockedBanner.hidden = true;
+      showSpotifyPermissionPanel('reload');
+    }
     setPowerUI(false);
     setTabIcon(tab.id, false);
     return;
@@ -798,6 +931,11 @@ async function syncWithActiveTab() {
   }
 
   setBlocked(false);
+  hideSpotifyPermissionPanel();
+  if (state?.effectsUnavailable) {
+    els.blockedBannerText.textContent = BLOCKED_TEXT.spotifyEffects;
+    els.blockedBanner.hidden = false;
+  }
   setLiveState(Boolean(state?.live));
 
   if (state?.enabled) {

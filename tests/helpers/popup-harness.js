@@ -18,6 +18,8 @@ async function createPopupHarness(options = {}) {
     activeTab: options.activeTab ?? { id: 9, url: 'https://example.com/watch' },
     local: options.local,
     session: options.session,
+    grantedOrigins: options.grantedOrigins,
+    permissionRequestResult: options.permissionRequestResult,
     executeScriptError: options.executeScriptError,
     onTabMessage(tabId, message) {
       if (options.onTabMessage) return options.onTabMessage(tabId, message);
