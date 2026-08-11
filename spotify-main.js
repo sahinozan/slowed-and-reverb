@@ -340,7 +340,7 @@
       notifyStatus();
     } else if (event.data.type === 'APPLY') {
       settings = normalizeSettings(event.data.settings);
-      enabled = Boolean(event.data.enabled);
+      enabled = event.data.enabled === true;
       for (const media of mediaElements) applySettings(media);
       notifyStatus();
     }

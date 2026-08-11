@@ -158,4 +158,19 @@ describe('Spotify main-world audio engine', () => {
 
     harness.dom.window.close();
   });
+
+  test('does not enable processing for non-boolean page-world values', () => {
+    const harness = setup();
+    harness.apply('true');
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+
+    assert.equal(FakeAudioContext.instances.length, 0);
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(
+      harness.statusMessages.filter(({ type }) => type === 'STATUS').at(-1).processingActive,
+      false
+    );
+
+    harness.dom.window.close();
+  });
 });

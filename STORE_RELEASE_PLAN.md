@@ -29,7 +29,7 @@ Completed August 11, 2026:
 - Added range and type validation inside Spotify's main-world engine so page-world
   messages cannot apply non-finite or out-of-range audio values.
 - Expanded lint coverage to both Spotify scripts and added regression tests for the
-  two hardening changes. `npm run check` passes with 75 tests and zero Firefox lint
+  two hardening changes. `npm run check` passes with 76 tests and zero Firefox lint
   warnings; `npm run test:e2e` passes in real Chromium.
 - Inspected both candidate ZIPs. Each contains only the 15 allowlisted runtime
   entries, with no tests, local notes, source captures, development tools, secrets,
