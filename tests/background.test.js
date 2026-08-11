@@ -39,7 +39,9 @@ function updates(calls) {
 
 describe('background service worker', () => {
   test('registers Spotify hooks only while optional site access is granted', async () => {
-    const harness = setup();
+    const harness = setup({
+      activeTab: { id: 7, url: 'https://open.spotify.com/track/example' }
+    });
 
     await harness.events.installed.emit();
     assert.equal(harness.registeredContentScripts.size, 0);
@@ -67,6 +69,41 @@ describe('background service worker', () => {
         ({ message }) => message.type === 'SPOTIFY_PERMISSION_REVOKED'
       ),
       true
+    );
+  });
+
+  test('does not clear unrelated tab state after a tracked Spotify tab navigates away', async () => {
+    const settings = { ...DEFAULT_SETTINGS, reverb: 25 };
+    const harness = setup({
+      activeTab: { id: 7, url: 'https://example.com/watch' },
+      grantedOrigins: ['https://open.spotify.com/*'],
+      session: {
+        'tabState:7': {
+          origin: 'https://example.com',
+          enabled: true,
+          settings
+        }
+      }
+    });
+
+    await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      { type: 'SPOTIFY_BRIDGE_READY' },
+      { tab: { id: 7, url: 'https://open.spotify.com/' } }
+    );
+    await harness.api.permissions.remove({ origins: ['https://open.spotify.com/*'] });
+    await flushPromises();
+
+    assert.deepEqual(harness.session.data['tabState:7'], {
+      origin: 'https://example.com',
+      enabled: true,
+      settings
+    });
+    assert.equal(
+      harness.calls.tabMessages.some(
+        ({ message }) => message.type === 'SPOTIFY_PERMISSION_REVOKED'
+      ),
+      false
     );
   });
 

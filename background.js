@@ -302,12 +302,25 @@ api.permissions.onAdded.addListener((added) => {
 
 api.permissions.onRemoved.addListener((removed) => {
   if (!removed.origins?.includes(SPOTIFY_ORIGIN)) return;
-  for (const tabId of spotifyBridgeTabs) {
-    api.tabs.sendMessage(tabId, { type: 'SPOTIFY_PERMISSION_REVOKED' }).catch(() => {});
-    forgetTabState(tabId);
-    setTabIcon(tabId, false);
-  }
-  syncSpotifyRegistration().catch(() => {});
+  const cleanup = [...spotifyBridgeTabs].map(async (tabId) => {
+    try {
+      const tab = await api.tabs.get(tabId);
+      if (!isSpotifyUrl(tab.url)) {
+        spotifyBridgeTabs.delete(tabId);
+        return;
+      }
+      await Promise.allSettled([
+        api.tabs.sendMessage(tabId, { type: 'SPOTIFY_PERMISSION_REVOKED' }),
+        forgetTabState(tabId),
+        setTabIcon(tabId, false)
+      ]);
+    } catch {
+      spotifyBridgeTabs.delete(tabId);
+    }
+  });
+  Promise.all(cleanup)
+    .then(() => syncSpotifyRegistration())
+    .catch(() => {});
 });
 
 api.runtime.onInstalled.addListener(() => {
@@ -320,7 +333,7 @@ api.runtime.onStartup.addListener(() => {
 
 api.tabs.onRemoved.addListener((tabId) => {
   spotifyBridgeTabs.delete(tabId);
-  forgetTabState(tabId);
+  forgetTabState(tabId).catch(() => {});
 });
 
 api.tabs.onActivated.addListener(async ({ tabId }) => {
