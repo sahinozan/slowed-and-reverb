@@ -6,9 +6,12 @@ privacy declarations, screenshots, and tested packages consistent.
 
 ## Current status
 
-Pre-freeze corrections are in progress. Do not declare the release candidate frozen
-until the implementation and documentation changes pass the full checks and the
-three supported services pass final desktop testing.
+Stages 1 and 2 are complete. Version `1.0.0` is frozen at source commit
+`bc5b97d60d95d4343ead1ec5a8dfc9bf2dbd6a8a` after the full automated checks and
+final desktop testing passed on Chromium and Firefox on August 11, 2026. Make only
+release-blocking implementation changes; any such change requires repeating the
+relevant automated and manual checks. Continue with Stage 3, privacy and support
+information.
 
 ## Version 1.0 decisions
 
