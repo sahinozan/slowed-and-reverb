@@ -7,6 +7,7 @@ const browserGlobals = {
   console: 'readonly',
   setTimeout: 'readonly',
   requestAnimationFrame: 'readonly',
+  HTMLMediaElement: 'readonly',
   MutationObserver: 'readonly',
   Node: 'readonly',
   URL: 'readonly',
@@ -20,7 +21,13 @@ module.exports = [
     ignores: ['dist/**']
   },
   {
-    files: ['background.js', 'content.js', 'popup.js'],
+    files: [
+      'background.js',
+      'content.js',
+      'popup.js',
+      'spotify-bridge.js',
+      'spotify-main.js'
+    ],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'script',
