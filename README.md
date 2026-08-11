@@ -146,6 +146,9 @@ packages and requests it only when the user chooses **Allow on Spotify** while
 visiting the web player. Revoking optional site access neutralizes processing and
 prevents later restoration on that site.
 
+Read the full [privacy policy](PRIVACY.md). For questions and bug reports, follow
+the [support guide](SUPPORT.md).
+
 ## License
 
 Released under the [MIT License](LICENSE). Use of the extension remains subject
