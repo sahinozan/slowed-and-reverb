@@ -1,7 +1,7 @@
 {
   "name": "slowed-reverb-extension",
   "version": "1.0.0",
-  "description": "Real-time slowed, reverb, and related audio effects for YouTube, YouTube Music, and Spotify.",
+  "description": "Real-time speed, reverb, EQ, and stereo effects for YouTube™, YouTube Music™, and Spotify. Processing stays on your device.",
   "private": true,
   "scripts": {
     "build:chromium": "node scripts/build-extension.js chromium",

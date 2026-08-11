@@ -71,12 +71,14 @@ describe('store package contracts', () => {
     assert.match(readme, /Node >= 24\.19/);
     assert.match(readme, /YouTube, YouTube Music, and\s+Spotify are supported/);
     assert.doesNotMatch(readme, /Spotify has an experimental/);
-    assert.match(manifest.description, /YouTube, YouTube Music, and Spotify/);
-    assert.match(packageJson.description, /YouTube, YouTube Music, and Spotify/);
+    assert.match(manifest.description, /YouTube™, YouTube Music™, and Spotify/);
+    assert.match(packageJson.description, /YouTube™, YouTube Music™, and Spotify/);
     assert.equal(fs.existsSync(path.join(root, 'STORE_RELEASE_PLAN.md')), true);
     assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
     assert.equal('host_permissions' in manifest, false);
-    assert.equal('content_security_policy' in manifest, false);
+    assert.deepEqual(manifest.content_security_policy, {
+      extension_pages: "default-src 'self'"
+    });
     assert.equal('externally_connectable' in manifest, false);
     assert.equal('web_accessible_resources' in manifest, false);
     assert.deepEqual(manifest.optional_host_permissions, ['https://open.spotify.com/*']);
@@ -154,6 +156,8 @@ describe('store package contracts', () => {
     for (const file of SOURCE_FILES.filter((source) => source.endsWith('.js'))) {
       const source = fs.readFileSync(path.join(root, file), 'utf8');
       assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource)\b/, file);
+      assert.doesNotMatch(source, /\b(?:RTCPeerConnection|RTCDataChannel)\b/, file);
+      assert.doesNotMatch(source, /\b(?:unload|beforeunload)\b/, file);
       assert.doesNotMatch(source, /\b(?:eval|Function)\s*\(/, file);
     }
   });

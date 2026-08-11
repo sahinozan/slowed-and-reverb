@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Slowed & Reverb",
   "version": "1.0.0",
-  "description": "Real-time slowed, reverb, and related audio effects for YouTube, YouTube Music, and Spotify. Fully local with zero telemetry.",
+  "description": "Real-time speed, reverb, EQ, and stereo effects for YouTube™, YouTube Music™, and Spotify. Processing stays on your device.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -21,6 +21,9 @@
   },
   "background": {
     "service_worker": "background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'"
   },
   "commands": {
     "toggle-effect": {
