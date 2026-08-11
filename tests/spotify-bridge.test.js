@@ -31,22 +31,43 @@ describe('Spotify isolated bridge', () => {
     const harness = createBrowserApi();
     const engineMessages = [];
     window.chrome = harness.api;
-    window.addEventListener('message', (event) => {
-      if (event.data?.channel === 'SLOWED_REVERB_SPOTIFY') engineMessages.push(event.data);
-    });
+    window.postMessage = (message) => engineMessages.push(message);
+    const originalAddEventListener = window.addEventListener.bind(window);
+    window.addEventListener = (type, listener, options) => {
+      if (type === 'message') window.__bridgeMessageListener = listener;
+      return originalAddEventListener(type, listener, options);
+    };
     window.eval(fs.readFileSync(`${root}/spotify-bridge.js`, 'utf8'));
+    window.addEventListener = originalAddEventListener;
     await flushPromises();
 
-    window.eval(`window.dispatchEvent(new MessageEvent('message', {
+    const iframe = window.document.createElement('iframe');
+    window.document.body.appendChild(iframe);
+    window.eval(`window.__bridgeMessageListener({
+      source: document.querySelector('iframe').contentWindow,
+      data: ${JSON.stringify({
+        channel: 'SLOWED_REVERB_SPOTIFY',
+        type: 'STATUS',
+        playerDetected: true,
+        effectsUnavailable: true
+      })}
+    })`);
+    const stateAfterSpoof = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
+      type: 'GET_STATE'
+    });
+    assert.equal(stateAfterSpoof.playerDetected, false);
+    assert.equal(stateAfterSpoof.effectsUnavailable, false);
+
+    window.eval(`window.__bridgeMessageListener({
       source: window,
       data: { channel: 'SLOWED_REVERB_SPOTIFY', type: 'READY' }
-    }))`);
+    })`);
     await dispatchRuntimeMessage(harness.events.runtimeMessage, {
       type: 'UPDATE_AUDIO',
       enabled: true,
       settings: SETTINGS
     });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await flushPromises();
     assert.equal(engineMessages.at(-1).type, 'APPLY');
     assert.equal(engineMessages.at(-1).enabled, true);
     assert.equal(engineMessages.at(-1).settings.speed, 0.8);
@@ -54,7 +75,7 @@ describe('Spotify isolated bridge', () => {
     await dispatchRuntimeMessage(harness.events.runtimeMessage, {
       type: 'SPOTIFY_PERMISSION_REVOKED'
     });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await flushPromises();
     assert.equal(engineMessages.at(-1).type, 'APPLY');
     assert.equal(engineMessages.at(-1).enabled, false);
     assert.equal(

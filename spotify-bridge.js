@@ -41,7 +41,7 @@
   }
 
   window.addEventListener('message', (event) => {
-    if (event.data?.channel !== CHANNEL) return;
+    if (event.source !== window || event.data?.channel !== CHANNEL) return;
 
     if (event.data.type === 'READY') {
       engineReady = true;
