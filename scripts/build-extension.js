@@ -4,7 +4,15 @@ const fs = require('fs');
 const path = require('path');
 
 const TARGETS = new Set(['chromium', 'firefox']);
-const SOURCE_FILES = ['background.js', 'content.js', 'popup.js', 'popup.html', 'popup.css'];
+const SOURCE_FILES = [
+  'background.js',
+  'content.js',
+  'spotify-bridge.js',
+  'spotify-main.js',
+  'popup.js',
+  'popup.html',
+  'popup.css'
+];
 const GECKO_ID = 'slowed-reverb@sahinozan';
 const GECKO_MIN_VERSION = '140.0';
 const GECKO_ANDROID_MIN_VERSION = '142.0';

@@ -32,6 +32,68 @@ const SPEED_EPSILON = 0.001;
 const RESTORABLE_URL = /^https?:\/\//i;
 const TAB_STATE_PREFIX = 'tabState:';
 const tabApplyQueues = new Map();
+const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';
+const SPOTIFY_SCRIPT_IDS = ['spotify-main', 'spotify-bridge'];
+const spotifyBridgeTabs = new Set();
+let spotifyRegistrationQueue = Promise.resolve();
+
+function isSpotifyUrl(url) {
+  try {
+    return new URL(url).hostname === 'open.spotify.com';
+  } catch {
+    return false;
+  }
+}
+
+async function hasSpotifyPermission() {
+  return api.permissions.contains({ origins: [SPOTIFY_ORIGIN] });
+}
+
+async function syncSpotifyRegistrationNow() {
+  const registered = await api.scripting.getRegisteredContentScripts({ ids: SPOTIFY_SCRIPT_IDS });
+  const registeredIds = new Set(registered.map(({ id }) => id));
+
+  if (!(await hasSpotifyPermission())) {
+    const staleIds = SPOTIFY_SCRIPT_IDS.filter((id) => registeredIds.has(id));
+    if (staleIds.length > 0) await api.scripting.unregisterContentScripts({ ids: staleIds });
+    return { granted: false };
+  }
+
+  const scripts = [
+    {
+      id: 'spotify-main',
+      matches: [SPOTIFY_ORIGIN],
+      js: ['spotify-main.js'],
+      runAt: 'document_start',
+      world: 'MAIN'
+    },
+    {
+      id: 'spotify-bridge',
+      matches: [SPOTIFY_ORIGIN],
+      js: ['spotify-bridge.js'],
+      runAt: 'document_start',
+      world: 'ISOLATED'
+    }
+  ].filter(({ id }) => !registeredIds.has(id));
+
+  if (scripts.length > 0) await api.scripting.registerContentScripts(scripts);
+  return { granted: true };
+}
+
+function syncSpotifyRegistration() {
+  spotifyRegistrationQueue = spotifyRegistrationQueue
+    .catch(() => {})
+    .then(syncSpotifyRegistrationNow);
+  return spotifyRegistrationQueue;
+}
+
+async function enableSpotifyForActiveTab() {
+  const registration = await syncSpotifyRegistration();
+  if (!registration.granted) return;
+
+  const tab = await getActiveTab();
+  if (tab?.id !== undefined && isSpotifyUrl(tab.url)) await api.tabs.reload(tab.id);
+}
 
 function settingsMatch(a, b) {
   return Object.keys(DEFAULT_SETTINGS).every((key) => {
@@ -85,6 +147,22 @@ async function ensureContentScript(tabId) {
 }
 
 async function getTabState(tabId) {
+  let tabUrl = null;
+  try {
+    tabUrl = (await api.tabs.get(tabId)).url;
+  } catch {}
+
+  if (isSpotifyUrl(tabUrl)) {
+    if (!(await hasSpotifyPermission())) {
+      return { enabled: false, blocked: true, blockReason: 'permission' };
+    }
+    try {
+      return await api.tabs.sendMessage(tabId, { type: 'GET_STATE' });
+    } catch {
+      return { enabled: false, blocked: true, blockReason: 'reload' };
+    }
+  }
+
   if (!(await ensureContentScript(tabId))) {
     return { enabled: false, blocked: true, blockReason: 'unsupported' };
   }
@@ -96,7 +174,13 @@ async function getTabState(tabId) {
 }
 
 async function applyToTab(tabId, url, settings, enabled) {
-  if (!(await ensureContentScript(tabId))) {
+  const spotify = isSpotifyUrl(url);
+
+  if (spotify && !(await hasSpotifyPermission())) {
+    return { success: false, blocked: true, blockReason: 'permission' };
+  }
+
+  if (!spotify && !(await ensureContentScript(tabId))) {
     await forgetTabState(tabId);
     await setTabIcon(tabId, false);
     return { success: false, blocked: true, blockReason: 'unsupported' };
@@ -177,6 +261,11 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.type === 'SPOTIFY_BRIDGE_READY') {
+    if (senderTabId !== undefined) spotifyBridgeTabs.add(senderTabId);
+    return;
+  }
+
   if (message.type === 'GET_TAB_STATE') {
     const tabId = senderTabId ?? message.tabId;
     const url = sender.tab?.url ?? message.url;
@@ -195,9 +284,57 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
       );
     return true;
   }
+
+  if (message.type === 'SYNC_SPOTIFY_REGISTRATION') {
+    syncSpotifyRegistration()
+      .then(sendResponse)
+      .catch(() => sendResponse({ granted: false, error: true }));
+    return true;
+  }
 });
 
-api.tabs.onRemoved.addListener(forgetTabState);
+api.permissions.onAdded.addListener((added) => {
+  const setup = added.origins?.includes(SPOTIFY_ORIGIN)
+    ? enableSpotifyForActiveTab()
+    : syncSpotifyRegistration();
+  setup.catch(() => {});
+});
+
+api.permissions.onRemoved.addListener((removed) => {
+  if (!removed.origins?.includes(SPOTIFY_ORIGIN)) return;
+  const cleanup = [...spotifyBridgeTabs].map(async (tabId) => {
+    try {
+      const tab = await api.tabs.get(tabId);
+      if (!isSpotifyUrl(tab.url)) {
+        spotifyBridgeTabs.delete(tabId);
+        return;
+      }
+      await Promise.allSettled([
+        api.tabs.sendMessage(tabId, { type: 'SPOTIFY_PERMISSION_REVOKED' }),
+        forgetTabState(tabId),
+        setTabIcon(tabId, false)
+      ]);
+    } catch {
+      spotifyBridgeTabs.delete(tabId);
+    }
+  });
+  Promise.all(cleanup)
+    .then(() => syncSpotifyRegistration())
+    .catch(() => {});
+});
+
+api.runtime.onInstalled.addListener(() => {
+  syncSpotifyRegistration().catch(() => {});
+});
+
+api.runtime.onStartup.addListener(() => {
+  syncSpotifyRegistration().catch(() => {});
+});
+
+api.tabs.onRemoved.addListener((tabId) => {
+  spotifyBridgeTabs.delete(tabId);
+  forgetTabState(tabId).catch(() => {});
+});
 
 api.tabs.onActivated.addListener(async ({ tabId }) => {
   const state = await getTabState(tabId);
