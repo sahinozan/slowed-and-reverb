@@ -37,9 +37,10 @@ The browser's local extension storage holds only:
 
 For reload restoration, browser session storage temporarily holds a tab
 identifier, the supported site's origin, the enabled state, and effect settings.
-It does not store the full page URL. This session data is removed when the tab is
-closed or no longer eligible for restoration, and the browser clears remaining
-session data when the browser session ends.
+It does not store the full page URL. A stored entry is ignored while the tab is on
+a different origin. It is removed when the tab closes, when relevant site access is
+revoked, or when an attempted activation cannot be applied. The browser clears any
+remaining session data when the browser session ends.
 
 Optional site permissions are recorded and managed by the browser. The extension
 can check whether permission is present, but it does not transmit that status.

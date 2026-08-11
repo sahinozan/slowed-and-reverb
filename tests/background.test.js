@@ -107,6 +107,34 @@ describe('background service worker', () => {
     );
   });
 
+  test('neutralizes remembered Spotify tabs after a service worker restart', async () => {
+    const harness = setup({
+      grantedOrigins: ['https://open.spotify.com/*'],
+      session: {
+        'tabState:7': {
+          origin: 'https://open.spotify.com',
+          enabled: true,
+          settings: SLOWED
+        }
+      },
+      onTabMessage() {
+        return { success: true };
+      }
+    });
+
+    await harness.api.permissions.remove({ origins: ['https://open.spotify.com/*'] });
+    await flushPromises();
+
+    assert.equal(
+      harness.calls.tabMessages.some(
+        ({ message }) => message.type === 'SPOTIFY_PERMISSION_REVOKED'
+      ),
+      true
+    );
+    assert.equal(harness.session.data['tabState:7'], undefined);
+    assert.match(harness.calls.icons.at(-1).path[16], /icon16-off\.png$/);
+  });
+
   test('reloads the active Spotify tab after optional access is granted', async () => {
     const harness = setup({
       activeTab: { id: 7, url: 'https://open.spotify.com/track/example' }
@@ -164,6 +192,34 @@ describe('background service worker', () => {
     });
 
     await harness.events.command.emit('toggle-slowed-reverb');
+    await harness.api.permissions.remove({ origins: ['https://www.youtube.com/*'] });
+    await flushPromises();
+
+    assert.equal(
+      harness.calls.tabMessages.some(
+        ({ message }) => message.type === 'YOUTUBE_PERMISSION_REVOKED'
+      ),
+      true
+    );
+    assert.equal(harness.session.data['tabState:7'], undefined);
+    assert.match(harness.calls.icons.at(-1).path[16], /icon16-off\.png$/);
+  });
+
+  test('neutralizes remembered YouTube tabs after a service worker restart', async () => {
+    const harness = setup({
+      grantedOrigins: ['https://www.youtube.com/*'],
+      session: {
+        'tabState:7': {
+          origin: 'https://www.youtube.com',
+          enabled: true,
+          settings: SLOWED
+        }
+      },
+      onTabMessage() {
+        return { success: true };
+      }
+    });
+
     await harness.api.permissions.remove({ origins: ['https://www.youtube.com/*'] });
     await flushPromises();
 
