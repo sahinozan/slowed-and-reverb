@@ -60,16 +60,70 @@ describe('popup behavior', () => {
 
   test('disables all effect controls and explains blocked pages', async () => {
     const harness = await createPopupHarness({
-      contentState: { enabled: false, blocked: true, blockReason: 'unreachable' }
+      contentState: { enabled: false, blocked: true, blockReason: 'unsupportedSite' }
     });
     const document = harness.window.document;
 
     assert.equal(document.getElementById('blocked-banner').hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /can't reach it/);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /not officially supported/);
     assert.equal(document.getElementById('power-toggle').disabled, true);
     assert.equal(document.getElementById('reverb-slider').disabled, true);
     assert.equal(document.getElementById('eq-handle-low').getAttribute('tabindex'), '-1');
     assert.equal(audioUpdates(harness).length, 0);
+
+    close(harness);
+  });
+
+  test('does not inject into Twitch or present its controls as available', async () => {
+    const harness = await createPopupHarness({
+      activeTab: { id: 9, url: 'https://www.twitch.tv/example' }
+    });
+    const document = harness.window.document;
+
+    assert.equal(harness.calls.executeScript.length, 0);
+    assert.equal(document.getElementById('power-toggle').checked, false);
+    assert.equal(document.getElementById('power-toggle').disabled, true);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /YouTube/);
+
+    close(harness);
+  });
+
+  test('explains when a supported page is waiting for its player', async () => {
+    const harness = await createPopupHarness({
+      contentState: {
+        enabled: true,
+        settings: DEFAULT_SETTINGS,
+        blocked: false,
+        live: false,
+        playerDetected: false,
+        processingActive: false,
+        pending: true
+      }
+    });
+    const document = harness.window.document;
+
+    assert.equal(document.getElementById('power-toggle').checked, true);
+    assert.equal(document.getElementById('blocked-banner').hidden, false);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /Waiting/);
+
+    close(harness);
+  });
+
+  test('shows a pending status when the initial preset starts before the player', async () => {
+    const harness = await createPopupHarness({
+      contentState: { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false },
+      applyResult: {
+        success: true,
+        playerDetected: false,
+        processingActive: false,
+        pending: true
+      }
+    });
+    const document = harness.window.document;
+
+    assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
+    assert.equal(document.getElementById('blocked-banner').hidden, false);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /Waiting/);
 
     close(harness);
   });
@@ -284,7 +338,7 @@ describe('popup behavior', () => {
     const document = harness.window.document;
 
     assert.equal(document.getElementById('blocked-banner').hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /Browser-protected/);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /not available/);
     assert.equal(document.getElementById('power-toggle').checked, false);
     assert.equal(document.getElementById('power-toggle').disabled, true);
     assert.equal(audioUpdates(harness).length, 0);

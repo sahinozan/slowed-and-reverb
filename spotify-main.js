@@ -230,12 +230,16 @@
   }
 
   function notifyStatus() {
+    const processingActive =
+      enabled &&
+      [...mediaElements].some((media) => startedMedia.has(media) && pipelines.has(media));
     window.postMessage(
       {
         channel: CHANNEL,
         type: 'STATUS',
         playerDetected: mediaElements.size > 0,
-        effectsUnavailable: processingUnavailable
+        effectsUnavailable: processingUnavailable,
+        processingActive
       },
       '*'
     );
@@ -252,6 +256,7 @@
       startedMedia.add(media);
       applySettings(media);
       resumePipeline(pipelines.get(media));
+      notifyStatus();
     });
     media.addEventListener('ratechange', () => applySettings(media));
     media.addEventListener('loadedmetadata', () => applySettings(media));

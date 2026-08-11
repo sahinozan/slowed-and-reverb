@@ -1,7 +1,7 @@
 {
   "name": "slowed-reverb-extension",
   "version": "1.0.0",
-  "description": "Apply real-time slowed, reverb, and related audio effects to HTML5 media on supported pages.",
+  "description": "Real-time slowed, reverb, and related audio effects for YouTube, YouTube Music, and Spotify.",
   "private": true,
   "scripts": {
     "build:chromium": "node scripts/build-extension.js chromium",

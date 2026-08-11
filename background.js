@@ -45,6 +45,15 @@ function isSpotifyUrl(url) {
   }
 }
 
+function isYouTubeUrl(url) {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === 'youtube.com' || hostname.endsWith('.youtube.com');
+  } catch {
+    return false;
+  }
+}
+
 async function hasSpotifyPermission() {
   return api.permissions.contains({ origins: [SPOTIFY_ORIGIN] });
 }
@@ -163,6 +172,10 @@ async function getTabState(tabId) {
     }
   }
 
+  if (!isYouTubeUrl(tabUrl)) {
+    return { enabled: false, blocked: true, blockReason: 'unsupportedSite' };
+  }
+
   if (!(await ensureContentScript(tabId))) {
     return { enabled: false, blocked: true, blockReason: 'unsupported' };
   }
@@ -178,6 +191,12 @@ async function applyToTab(tabId, url, settings, enabled) {
 
   if (spotify && !(await hasSpotifyPermission())) {
     return { success: false, blocked: true, blockReason: 'permission' };
+  }
+
+  if (!spotify && !isYouTubeUrl(url)) {
+    await forgetTabState(tabId);
+    await setTabIcon(tabId, false);
+    return { success: false, blocked: true, blockReason: 'unsupportedSite' };
   }
 
   if (!spotify && !(await ensureContentScript(tabId))) {
@@ -205,8 +224,16 @@ async function applyToTab(tabId, url, settings, enabled) {
 
   await api.storage.local.set(settings);
   await rememberTabState(tabId, url, enabled, settings);
-  await setTabIcon(tabId, enabled);
-  return { success: true, enabled };
+  const iconEnabled = Boolean(enabled && (response.processingActive ?? true));
+  await setTabIcon(tabId, iconEnabled);
+  return {
+    success: true,
+    enabled,
+    playerDetected: response.playerDetected,
+    processingActive: response.processingActive,
+    pending: response.pending,
+    effectsUnavailable: response.effectsUnavailable
+  };
 }
 
 function queueTabApply(tabId, url, settings, enabled) {
@@ -255,7 +282,8 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'CONTENT_STATE_CHANGED') {
     if (senderTabId === undefined) return;
-    setTabIcon(senderTabId, Boolean(message.enabled));
+    const iconEnabled = Boolean(message.enabled && (message.processingActive ?? true));
+    setTabIcon(senderTabId, iconEnabled);
     const url = sender.tab?.url ?? message.origin;
     if (url) rememberTabState(senderTabId, url, message.enabled, message.settings);
     return;

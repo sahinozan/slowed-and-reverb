@@ -26,7 +26,7 @@ const SLOWED = { ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 };
 
 function setup(options = {}) {
   const harness = createBrowserApi({
-    activeTab: { id: 7, url: 'https://example.com/watch/1' },
+    activeTab: { id: 7, url: 'https://www.youtube.com/watch?v=one' },
     ...options
   });
   loadScript('background.js', { chrome: harness.api });
@@ -75,11 +75,11 @@ describe('background service worker', () => {
   test('does not clear unrelated tab state after a tracked Spotify tab navigates away', async () => {
     const settings = { ...DEFAULT_SETTINGS, reverb: 25 };
     const harness = setup({
-      activeTab: { id: 7, url: 'https://example.com/watch' },
+      activeTab: { id: 7, url: 'https://www.youtube.com/watch?v=example' },
       grantedOrigins: ['https://open.spotify.com/*'],
       session: {
         'tabState:7': {
-          origin: 'https://example.com',
+          origin: 'https://www.youtube.com',
           enabled: true,
           settings
         }
@@ -95,7 +95,7 @@ describe('background service worker', () => {
     await flushPromises();
 
     assert.deepEqual(harness.session.data['tabState:7'], {
-      origin: 'https://example.com',
+      origin: 'https://www.youtube.com',
       enabled: true,
       settings
     });
@@ -140,6 +140,18 @@ describe('background service worker', () => {
     assert.equal(updates(harness.calls)[0].message.enabled, true);
   });
 
+  test('does not inject into sites outside the release support list', async () => {
+    const harness = setup({
+      activeTab: { id: 7, url: 'https://www.twitch.tv/example' }
+    });
+
+    await harness.events.command.emit('toggle-slowed-reverb');
+
+    assert.equal(harness.calls.executeScript.length, 0);
+    assert.equal(harness.calls.tabMessages.length, 0);
+    assert.equal(harness.local.writes.length, 0);
+  });
+
   test('applies the slowed preset from its keyboard command', async () => {
     const harness = setup({
       onTabMessage(_tabId, message) {
@@ -158,11 +170,31 @@ describe('background service worker', () => {
       message: { type: 'UPDATE_AUDIO', settings: SLOWED, enabled: true }
     });
     assert.deepEqual(harness.session.data['tabState:7'], {
-      origin: 'https://example.com',
+      origin: 'https://www.youtube.com',
       enabled: true,
       settings: SLOWED
     });
     assert.match(harness.calls.icons.at(-1).path[16], /icon16\.png$/);
+  });
+
+  test('keeps the toolbar icon off while a supported player is pending', async () => {
+    const harness = setup({
+      onTabMessage(_tabId, message) {
+        return message.type === 'GET_STATE'
+          ? { enabled: false, settings: DEFAULT_SETTINGS }
+          : {
+              success: true,
+              playerDetected: false,
+              processingActive: false,
+              pending: true
+            };
+      }
+    });
+
+    await harness.events.command.emit('toggle-slowed-reverb');
+
+    assert.equal(harness.session.data['tabState:7'].enabled, true);
+    assert.match(harness.calls.icons.at(-1).path[16], /icon16-off\.png$/);
   });
 
   test('turns off an already active preset', async () => {
@@ -184,7 +216,7 @@ describe('background service worker', () => {
     const custom = { ...DEFAULT_SETTINGS, speed: 0.65, echo: 35 };
     const harness = setup({
       session: {
-        'tabState:7': { origin: 'https://example.com', enabled: false, settings: custom }
+        'tabState:7': { origin: 'https://www.youtube.com', enabled: false, settings: custom }
       },
       onTabMessage(_tabId, message) {
         return message.type === 'GET_STATE'
@@ -197,9 +229,9 @@ describe('background service worker', () => {
     assert.deepEqual(updates(harness.calls)[0].message.settings, custom);
 
     const crossOrigin = setup({
-      activeTab: { id: 7, url: 'https://other.example/watch' },
+      activeTab: { id: 7, url: 'https://music.youtube.com/watch?v=other' },
       session: {
-        'tabState:7': { origin: 'https://example.com', enabled: false, settings: custom }
+        'tabState:7': { origin: 'https://www.youtube.com', enabled: false, settings: custom }
       },
       onTabMessage(_tabId, message) {
         return message.type === 'GET_STATE'
@@ -235,14 +267,14 @@ describe('background service worker', () => {
         type: 'CONTENT_STATE_CHANGED',
         enabled: true,
         settings,
-        origin: 'https://example.com'
+        origin: 'https://www.youtube.com'
       },
-      { tab: { id: 7, url: 'https://example.com/watch/2?private=value' } }
+      { tab: { id: 7, url: 'https://www.youtube.com/watch?v=private' } }
     );
     await flushPromises();
 
     assert.deepEqual(harness.session.data['tabState:7'], {
-      origin: 'https://example.com',
+      origin: 'https://www.youtube.com',
       enabled: true,
       settings
     });
@@ -250,8 +282,8 @@ describe('background service worker', () => {
 
     const recalled = await dispatchRuntimeMessage(
       harness.events.runtimeMessage,
-      { type: 'GET_TAB_STATE', url: 'https://example.com/another' },
-      { tab: { id: 7, url: 'https://example.com/another' } }
+      { type: 'GET_TAB_STATE', url: 'https://www.youtube.com/watch?v=another' },
+      { tab: { id: 7, url: 'https://www.youtube.com/watch?v=another' } }
     );
     assert.deepEqual(recalled.settings, settings);
 
@@ -266,13 +298,17 @@ describe('background service worker', () => {
       }
     });
 
-    await harness.events.tabUpdated.emit(7, { status: 'loading' }, { url: 'https://example.com' });
+    await harness.events.tabUpdated.emit(
+      7,
+      { status: 'loading' },
+      { url: 'https://www.youtube.com' }
+    );
     assert.match(harness.calls.icons.at(-1).path[16], /icon16-off\.png$/);
 
     await harness.events.tabUpdated.emit(
       7,
       { status: 'complete' },
-      { url: 'https://example.com/watch' }
+      { url: 'https://www.youtube.com/watch?v=example' }
     );
     assert.match(harness.calls.icons.at(-1).path[16], /icon16\.png$/);
 
@@ -314,14 +350,14 @@ describe('background service worker', () => {
       harness.api.runtime.sendMessage({
         type: 'APPLY_TO_TAB',
         tabId: 7,
-        url: 'https://example.com/one',
+        url: 'https://www.youtube.com/watch?v=one',
         settings: first,
         enabled: true
       }),
       harness.api.runtime.sendMessage({
         type: 'APPLY_TO_TAB',
         tabId: 7,
-        url: 'https://example.com/two',
+        url: 'https://www.youtube.com/watch?v=two',
         settings: second,
         enabled: true
       })

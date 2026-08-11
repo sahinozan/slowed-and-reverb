@@ -68,6 +68,11 @@ describe('store package contracts', () => {
     const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
     assert.match(readme, /ESLint 10/);
     assert.match(readme, /Node >= 24\.19/);
+    assert.match(readme, /YouTube, YouTube Music, and\s+Spotify are supported/);
+    assert.doesNotMatch(readme, /Spotify has an experimental/);
+    assert.match(manifest.description, /YouTube, YouTube Music, and Spotify/);
+    assert.match(packageJson.description, /YouTube, YouTube Music, and Spotify/);
+    assert.equal(fs.existsSync(path.join(root, 'STORE_RELEASE_PLAN.md')), true);
     assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
     assert.equal('host_permissions' in manifest, false);
     assert.deepEqual(manifest.optional_host_permissions, ['https://open.spotify.com/*']);
@@ -125,8 +130,8 @@ describe('store package contracts', () => {
       required: ['none']
     });
     assert.equal(firefox.browser_specific_settings.gecko.id, 'slowed-reverb@sahinozan');
-    assert.equal(firefox.browser_specific_settings.gecko.strict_min_version, '140.0');
-    assert.equal(firefox.browser_specific_settings.gecko_android.strict_min_version, '142.0');
+    assert.equal(firefox.browser_specific_settings.gecko.strict_min_version, '142.0');
+    assert.equal('gecko_android' in firefox.browser_specific_settings, false);
     assert.equal(firefox.version, chromium.version);
     assert.deepEqual(firefox.permissions, chromium.permissions);
 

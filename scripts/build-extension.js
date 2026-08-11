@@ -14,8 +14,7 @@ const SOURCE_FILES = [
   'popup.css'
 ];
 const GECKO_ID = 'slowed-reverb@sahinozan';
-const GECKO_MIN_VERSION = '140.0';
-const GECKO_ANDROID_MIN_VERSION = '142.0';
+const GECKO_MIN_VERSION = '142.0';
 
 const target = process.argv[2];
 if (!TARGETS.has(target)) {
@@ -51,8 +50,7 @@ if (target === 'firefox') {
       id: GECKO_ID,
       strict_min_version: GECKO_MIN_VERSION,
       data_collection_permissions: { required: ['none'] }
-    },
-    gecko_android: { strict_min_version: GECKO_ANDROID_MIN_VERSION }
+    }
   };
 }
 

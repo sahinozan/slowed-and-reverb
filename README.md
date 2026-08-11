@@ -1,8 +1,8 @@
 # Slowed & Reverb
 
 A browser extension that applies real-time slowed, reverb, and related audio
-effects to HTML5 `<video>`/`<audio>` elements it can reach on supported pages.
-Fully local processing, zero telemetry, and zero runtime dependencies.
+effects on YouTube, YouTube Music, and Spotify. Fully local processing, zero
+telemetry, and zero runtime dependencies.
 
 ## Get the extension
 
@@ -10,9 +10,14 @@ Chrome Web Store and Firefox Add-ons links will be added here after publication.
 
 ## Use
 
-Click the toolbar icon on any page with media. On a tab the extension has never
-touched, opening the popup applies **Slowed + Reverb** straight away. That is the
-point of installing it. Everything else is one click from there.
+Open YouTube, YouTube Music, or Spotify and click the toolbar icon. On a supported
+tab the extension has never touched, opening the popup applies **Slowed + Reverb**
+straight away. Everything else is one click from there.
+
+Spotify first asks for optional access to `open.spotify.com`. After permission is
+granted, the page reloads once so the audio hook can start before Spotify's hidden
+player. The permission is not requested during installation and can be revoked at
+any time in the browser's extension settings.
 
 ### Controls
 
@@ -46,8 +51,9 @@ rename and any slider changes and ↺ discards them. Custom presets live only in
 
 ### Keyboard shortcuts
 
-Three commands are declared with **no default keys**. Assign them yourself at
-`chrome://extensions/shortcuts`:
+Three commands are declared with **no default keys**. Assign them in
+`chrome://extensions/shortcuts` on Chromium browsers or through **Manage Extension
+Shortcuts** in Firefox's Add-ons Manager:
 
 - **Toggle last preset:** turns the effect off, or back on with this tab's last
   settings (falling back to Slowed + Reverb).
@@ -63,15 +69,18 @@ cosmetic and stored globally, not per tab.
 
 ## Behaviour worth knowing
 
-- **State is per tab.** Two tabs can run different settings; a fresh tab starts
-  off. Enabling the effect and reloading restores it, as does navigating within
-  the same site.
-- **Some sites are blocked, with an explanation.** DRM-protected media (Spotify,
-  Netflix, Apple Music…) may not expose audio to Web Audio; Twitch *clips* would
-  be silenced outright; SoundCloud keeps its audio element out of the page.
-  Spotify has an experimental opt-in path described below.
-- **Live streams ignore Speed.** The player's own latency correction fights it
-  every tick. Reverb, EQ, and the rest still work.
+- **The `1.0.0` support list is intentionally small.** YouTube, YouTube Music, and
+  Spotify are supported. Other sites, including Twitch and SoundCloud, are left
+  untouched and show a clear unsupported-site message.
+- **State is per tab and origin.** Two tabs can run different settings. Enabling
+  the effect and reloading restores it, as does navigating within the same
+  origin.
+- **Supported players report their status.** The popup distinguishes active
+  processing from a player that is still loading or has not appeared yet. If a
+  supported player rejects Web Audio or exposes DRM unexpectedly, processing is
+  stopped and explained instead of being presented as active.
+- **YouTube live streams ignore Speed.** The player's own latency correction
+  fights it every tick. Reverb, EQ, and the rest still work.
 - **Embedded players may be unreachable.** Media inside iframes or shadow roots
   is not currently processed. Frame support can require broader permissions,
   and both cases need more complex lifecycle and state handling.
@@ -92,11 +101,14 @@ npm run lint:firefox      # build, then validate with web-ext
 npm run check             # run every required local and store-package check
 ```
 
+Publication preparation is tracked in [STORE_RELEASE_PLAN.md](STORE_RELEASE_PLAN.md).
+
 The root manifest targets Chromium. Target builds emit clean, allowlisted
 directories under `dist/`; `npm run package` creates one upload ZIP per store in
 `dist/packages/`. The Firefox version receives Firefox's MV3 background
 configuration and add-on metadata during the build. Its data-collection
-declaration supports Firefox desktop 140+ and Firefox Android 142+.
+declaration targets Firefox desktop 142+. Firefox Android is not declared for
+`1.0.0` because it has not been tested.
 
 Needs Node >= 24.19 and npm 11.19. Development tools are exact-versioned in
 `package.json` and `package-lock.json`; use `npm ci` for normal setup rather
@@ -119,12 +131,13 @@ behavior cannot be reproduced completely in an automated environment.
 
 ## Privacy
 
-No data collection, no analytics, no external network requests. Permissions are
-`activeTab`, `scripting`, and `storage`. Ordinary pages are still processed only
-after an explicit action. Spotify support declares optional access to
-`open.spotify.com`; it is not granted at installation and is requested only if
-the user chooses **Allow on Spotify** while visiting the web player. Revoking
-that site access disables Spotify processing without affecting other sites.
+No data collection, no analytics, no external network requests. Core permissions
+are `activeTab`, `scripting`, and `storage`. YouTube and YouTube Music are touched
+only after the user opens the popup or uses a shortcut on that tab. Spotify
+declares optional access to `open.spotify.com`; it is not granted at installation
+and is requested only if the user chooses **Allow on Spotify** while visiting the
+web player. Revoking that site access disables Spotify processing without
+affecting YouTube or YouTube Music.
 
 ## License
 
