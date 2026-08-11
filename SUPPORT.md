@@ -40,6 +40,9 @@ For a private support or privacy question, email
 [slowedandreverbsupport@proton.me](mailto:slowedandreverbsupport@proton.me).
 Do not send passwords or authentication tokens by email.
 
+Do not report suspected vulnerabilities in a public issue. Follow the private
+reporting instructions in the [security policy](SECURITY.md).
+
 ## Known limitations
 
 - YouTube live streams support audio filters but not playback-speed changes.

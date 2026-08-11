@@ -147,7 +147,8 @@ visiting the web player. Revoking optional site access neutralizes processing an
 prevents later restoration on that site.
 
 Read the full [privacy policy](PRIVACY.md). For questions and bug reports, follow
-the [support guide](SUPPORT.md).
+the [support guide](SUPPORT.md). Report suspected vulnerabilities privately as
+described in the [security policy](SECURITY.md).
 
 ## License
 

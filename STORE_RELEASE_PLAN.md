@@ -6,13 +6,23 @@ privacy declarations, screenshots, and tested packages consistent.
 
 ## Current status
 
-Preparation through Stage 5 is substantively complete. Manual desktop testing
-passed on Chromium and Firefox on August 11, 2026, using behavior candidate
-`890d5575083be8b10335677150f53639c0527dd8`. The final store assets were approved
-and adopted on the same date. The pre-freeze audit then made two narrow hardening
-changes, so that earlier candidate is superseded. The audited tree represented by
-this document is the exact `1.0.0` release candidate. After its freeze commit is
-created, Stage 6 must package and test that commit without changing tracked files.
+Stages 1 through 7 are complete. Manual desktop testing passed on Chromium and
+Firefox on August 11, 2026. The final store assets were approved and adopted on
+the same date. The audited `1.0.0` source tree is commit
+`dc27ae1f11f0136f09f30302d9a397fb7dbbe33c`; merge commit
+`d673099a1c73886d17282dbbbe4bd6509ca58448` has the same tree.
+
+Stage 6 produced and tested the exact upload archives below without changing
+their packaged source:
+
+- Chromium: 47,601 bytes, SHA-256
+  `1017bb22bcad6859682ef3b7331cbd0355143cfae34c4b19f8d6c922e3ca74bb`
+- Firefox: 47,707 bytes, SHA-256
+  `1b4e37b9648e61ef026bdad83952c7df4eda3f686b6dc3b62ca7578e2141a1eb`
+
+The Chrome publisher account is registered, contact-verified, protected by
+two-step verification, and configured to send review-completion email. Stage 8
+is next. Do not rebuild either upload archive unless Stage 6 is repeated.
 
 ## Pre-freeze audit record
 
