@@ -62,15 +62,41 @@ describe('Spotify isolated bridge', () => {
       source: window,
       data: { channel: 'SLOWED_REVERB_SPOTIFY', type: 'READY' }
     })`);
-    await dispatchRuntimeMessage(harness.events.runtimeMessage, {
+    const pending = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
       type: 'UPDATE_AUDIO',
       enabled: true,
       settings: SETTINGS
     });
     await flushPromises();
+    assert.equal(pending.pending, true);
+    assert.equal(pending.processingActive, false);
     assert.equal(engineMessages.at(-1).type, 'APPLY');
     assert.equal(engineMessages.at(-1).enabled, true);
     assert.equal(engineMessages.at(-1).settings.speed, 0.8);
+
+    window.eval(`window.__bridgeMessageListener({
+      source: window,
+      data: {
+        channel: 'SLOWED_REVERB_SPOTIFY',
+        type: 'STATUS',
+        playerDetected: true,
+        effectsUnavailable: false,
+        processingActive: true
+      }
+    })`);
+    await flushPromises();
+    const active = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
+      type: 'GET_STATE'
+    });
+    assert.equal(active.processingActive, true);
+    assert.equal(active.pending, false);
+    assert.equal(
+      harness.calls.runtimeMessages.some(
+        ({ type, processingActive }) =>
+          type === 'CONTENT_STATE_CHANGED' && processingActive === true
+      ),
+      true
+    );
 
     await dispatchRuntimeMessage(harness.events.runtimeMessage, {
       type: 'SPOTIFY_PERMISSION_REVOKED'

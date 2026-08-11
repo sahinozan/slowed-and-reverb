@@ -15,9 +15,13 @@ async function createPopupHarness(options = {}) {
   const { window } = dom;
 
   const harness = createBrowserApi({
-    activeTab: options.activeTab ?? { id: 9, url: 'https://example.com/watch' },
+    activeTab: options.activeTab ?? {
+      id: 9,
+      url: 'https://www.youtube.com/watch?v=example'
+    },
     local: options.local,
     session: options.session,
+    manifest: options.manifest,
     grantedOrigins: options.grantedOrigins,
     permissionRequestResult: options.permissionRequestResult,
     executeScriptError: options.executeScriptError,

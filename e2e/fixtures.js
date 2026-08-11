@@ -92,6 +92,35 @@ function prepareTestExtension(tempRoot) {
   const extensionDir = path.join(tempRoot, 'extension');
   fs.cpSync(builtExtensionDir, extensionDir, { recursive: true });
 
+  // Production intentionally accepts only YouTube hosts. Patch the disposable
+  // E2E copy so the local audio fixture can exercise the same runtime path.
+  const supportPatches = new Map([
+    [
+      'content.js',
+      [
+        "location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com'",
+        "location.hostname === '127.0.0.1' ||\n      location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com'"
+      ]
+    ],
+    ...[
+      ['background.js', 'YOUTUBE_PERMISSION_ORIGINS'],
+      ['popup.js', 'FIREFOX_YOUTUBE_PERMISSIONS']
+    ].map(([file, permissionsName]) => [
+      file,
+      [
+        `return hostname in ${permissionsName};`,
+        `return hostname === '127.0.0.1' || hostname in ${permissionsName};`
+      ]
+    ])
+  ]);
+
+  for (const [file, [needle, replacement]] of supportPatches) {
+    const filePath = path.join(extensionDir, file);
+    const source = fs.readFileSync(filePath, 'utf8');
+    if (!source.includes(needle)) throw new Error(`E2E support patch did not match ${file}`);
+    fs.writeFileSync(filePath, source.replace(needle, replacement));
+  }
+
   const manifestPath = path.join(extensionDir, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   // Production keeps activeTab only. The E2E copy receives localhost access so
