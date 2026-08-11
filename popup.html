@@ -75,6 +75,18 @@
         <span id="blocked-banner-text"></span>
       </div>
 
+      <section id="spotify-permission-panel" class="spotify-permission-panel" hidden>
+        <div class="spotify-permission-title">Enable Spotify support?</div>
+        <p id="spotify-permission-text">
+          Spotify needs optional site access so the audio hook can start before its hidden player.
+          Processing stays on this device.
+        </p>
+        <button type="button" id="spotify-permission-btn" class="action-btn">
+          Allow on Spotify
+        </button>
+        <span id="spotify-permission-status" class="spotify-permission-status" aria-live="polite"></span>
+      </section>
+
       <div id="current-preset-bar" class="current-preset-bar" hidden>
         <span id="current-preset-label" class="current-preset-label"></span>
       </div>
