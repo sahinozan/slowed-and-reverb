@@ -12,6 +12,10 @@ function createEvent() {
     addListener(listener) {
       listeners.push(listener);
     },
+    removeListener(listener) {
+      const index = listeners.indexOf(listener);
+      if (index >= 0) listeners.splice(index, 1);
+    },
     async emit(...args) {
       for (const listener of listeners) await listener(...args);
     }
@@ -58,6 +62,10 @@ class StorageArea {
 function createBrowserApi(options = {}) {
   const events = {
     command: createEvent(),
+    installed: createEvent(),
+    startup: createEvent(),
+    permissionAdded: createEvent(),
+    permissionRemoved: createEvent(),
     runtimeMessage: createEvent(),
     tabActivated: createEvent(),
     tabRemoved: createEvent(),
@@ -66,11 +74,17 @@ function createBrowserApi(options = {}) {
   const local = new StorageArea(options.local);
   const session = new StorageArea(options.session);
   const calls = {
+    order: [],
     executeScript: [],
     icons: [],
+    permissionRequests: [],
+    registeredContentScripts: [],
+    reloadedTabs: [],
     runtimeMessages: [],
     tabMessages: []
   };
+  const grantedOrigins = new Set(options.grantedOrigins ?? []);
+  const registeredContentScripts = new Map();
 
   const api = {
     action: {
@@ -80,7 +94,9 @@ function createBrowserApi(options = {}) {
     },
     commands: { onCommand: events.command },
     runtime: {
+      onInstalled: events.installed,
       onMessage: events.runtimeMessage,
+      onStartup: events.startup,
       async sendMessage(message) {
         calls.runtimeMessages.push(clone(message));
         if (options.onRuntimeMessage) return options.onRuntimeMessage(message);
@@ -91,6 +107,39 @@ function createBrowserApi(options = {}) {
       async executeScript(details) {
         calls.executeScript.push(clone(details));
         if (options.executeScriptError) throw options.executeScriptError;
+      },
+      async getRegisteredContentScripts(filter = {}) {
+        const ids = filter.ids ? new Set(filter.ids) : null;
+        return [...registeredContentScripts.values()]
+          .filter(({ id }) => !ids || ids.has(id))
+          .map(clone);
+      },
+      async registerContentScripts(scripts) {
+        calls.registeredContentScripts.push(clone(scripts));
+        for (const script of scripts) registeredContentScripts.set(script.id, clone(script));
+      },
+      async unregisterContentScripts({ ids }) {
+        for (const id of ids) registeredContentScripts.delete(id);
+      }
+    },
+    permissions: {
+      onAdded: events.permissionAdded,
+      onRemoved: events.permissionRemoved,
+      async contains({ origins = [] }) {
+        return origins.every((origin) => grantedOrigins.has(origin));
+      },
+      async request({ origins = [] }) {
+        calls.order.push('permissions.request');
+        calls.permissionRequests.push(clone(origins));
+        if (options.permissionRequestResult === false) return false;
+        for (const origin of origins) grantedOrigins.add(origin);
+        await events.permissionAdded.emit({ origins: clone(origins) });
+        return true;
+      },
+      async remove({ origins = [] }) {
+        for (const origin of origins) grantedOrigins.delete(origin);
+        await events.permissionRemoved.emit({ origins: clone(origins) });
+        return true;
       }
     },
     storage: { local, session },
@@ -99,7 +148,20 @@ function createBrowserApi(options = {}) {
       onRemoved: events.tabRemoved,
       onUpdated: events.tabUpdated,
       async query() {
+        calls.order.push('tabs.query');
         return options.activeTab ? [clone(options.activeTab)] : [];
+      },
+      async get(tabId) {
+        if (options.activeTab?.id === tabId) return clone(options.activeTab);
+        return { id: tabId };
+      },
+      async reload(tabId) {
+        calls.reloadedTabs.push(tabId);
+        if (options.completeReload !== false) {
+          const tab = clone(options.activeTab ?? { id: tabId });
+          await events.tabUpdated.emit(tabId, { status: 'loading' }, tab);
+          await events.tabUpdated.emit(tabId, { status: 'complete' }, tab);
+        }
       },
       async sendMessage(tabId, message) {
         calls.tabMessages.push({ tabId, message: clone(message) });
@@ -109,7 +171,7 @@ function createBrowserApi(options = {}) {
     }
   };
 
-  return { api, calls, events, local, session };
+  return { api, calls, events, grantedOrigins, local, registeredContentScripts, session };
 }
 
 async function dispatchRuntimeMessage(event, message, sender = {}) {

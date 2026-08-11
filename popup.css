@@ -260,6 +260,39 @@ h1 {
   background: hsl(var(--accent-hsl) / 0.08);
 }
 
+.spotify-permission-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid hsl(var(--accent-hsl) / 0.5);
+  border-radius: var(--radius);
+  background: hsl(var(--accent-hsl) / 0.08);
+}
+
+.spotify-permission-title {
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.spotify-permission-panel p,
+.spotify-permission-status {
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.spotify-permission-panel .action-btn {
+  align-self: stretch;
+}
+
+.spotify-permission-status:empty {
+  display: none;
+}
+
 .header-power {
   display: flex;
   align-items: center;

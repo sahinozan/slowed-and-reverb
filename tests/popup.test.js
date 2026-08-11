@@ -74,6 +74,68 @@ describe('popup behavior', () => {
     close(harness);
   });
 
+  test('offers Spotify as an optional permission without injecting into the page', async () => {
+    const harness = await createPopupHarness({
+      activeTab: { id: 9, url: 'https://open.spotify.com/track/example' }
+    });
+    const document = harness.window.document;
+
+    assert.equal(document.getElementById('spotify-permission-panel').hidden, false);
+    assert.equal(document.getElementById('spotify-permission-btn').textContent.trim(), 'Allow on Spotify');
+    assert.equal(document.getElementById('power-toggle').disabled, true);
+    assert.equal(harness.calls.executeScript.length, 0);
+    assert.equal(harness.calls.permissionRequests.length, 0);
+
+    close(harness);
+  });
+
+  test('grants Spotify access only after confirmation and reloads the tab', async () => {
+    const harness = await createPopupHarness({
+      activeTab: { id: 9, url: 'https://open.spotify.com/track/example' }
+    });
+
+    const callStart = harness.calls.order.length;
+    harness.window.document.getElementById('spotify-permission-btn').click();
+    for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
+
+    assert.deepEqual(harness.calls.permissionRequests, [['https://open.spotify.com/*']]);
+    assert.deepEqual(harness.calls.order.slice(callStart, callStart + 2), [
+      'permissions.request',
+      'tabs.query'
+    ]);
+    assert.deepEqual([...harness.registeredContentScripts.keys()].sort(), [
+      'spotify-bridge',
+      'spotify-main'
+    ]);
+    assert.deepEqual(harness.calls.reloadedTabs, [9]);
+    assert.equal(
+      harness.window.document.getElementById('spotify-permission-panel').hidden,
+      true
+    );
+    assert.equal(harness.window.document.getElementById('power-toggle').disabled, false);
+
+    close(harness);
+  });
+
+  test('keeps Spotify disabled when optional permission is denied', async () => {
+    const harness = await createPopupHarness({
+      activeTab: { id: 9, url: 'https://open.spotify.com/track/example' },
+      permissionRequestResult: false
+    });
+
+    harness.window.document.getElementById('spotify-permission-btn').click();
+    for (let attempt = 0; attempt < 4; attempt++) await flushPromises();
+
+    assert.equal(harness.calls.reloadedTabs.length, 0);
+    assert.equal(harness.registeredContentScripts.size, 0);
+    assert.match(
+      harness.window.document.getElementById('spotify-permission-status').textContent,
+      /not granted/
+    );
+
+    close(harness);
+  });
+
   test('pins speed and pitch controls while live media is active', async () => {
     const harness = await createPopupHarness({
       contentState: {

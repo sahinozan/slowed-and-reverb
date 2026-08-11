@@ -211,4 +211,4 @@ async function createContentHarness(options = {}) {
   };
 }
 
-module.exports = { createContentHarness };
+module.exports = { FakeAudioContext, FakeAudioNode, createContentHarness };
