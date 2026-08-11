@@ -68,8 +68,9 @@ function normalizeSettings(settings) {
 }
 
 function isExtensionPageSender(sender) {
+  if (sender.id !== api.runtime.id) return false;
   const senderUrl = sender.url ?? sender.origin;
-  if (typeof senderUrl !== 'string') return sender.tab === undefined;
+  if (typeof senderUrl !== 'string') return false;
 
   try {
     const url = new URL(senderUrl);
@@ -346,18 +347,19 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const senderTabUrl = sender.tab?.url;
 
   if (message.type === 'CONTENT_STATE_CHANGED') {
+    const contentUrl = senderTabUrl ?? message.origin;
     if (
       extensionPageSender ||
       senderTabId === undefined ||
-      (!isYouTubeUrl(senderTabUrl) && !isSpotifyUrl(senderTabUrl))
+      (!isYouTubeUrl(contentUrl) && !isSpotifyUrl(contentUrl))
     ) return;
-    const youtubeOrigin = getYouTubePermissionOrigin(senderTabUrl);
+    const youtubeOrigin = getYouTubePermissionOrigin(contentUrl);
     if (youtubeOrigin) youtubeTabs.set(senderTabId, youtubeOrigin);
     const iconEnabled = Boolean(message.enabled && (message.processingActive ?? true));
     setTabIcon(senderTabId, iconEnabled);
     rememberTabState(
       senderTabId,
-      senderTabUrl,
+      contentUrl,
       message.enabled,
       normalizeSettings(message.settings)
     );
@@ -365,7 +367,8 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'SPOTIFY_BRIDGE_READY') {
-    if (!extensionPageSender && senderTabId !== undefined && isSpotifyUrl(senderTabUrl)) {
+    const contentUrl = senderTabUrl ?? message.origin;
+    if (!extensionPageSender && senderTabId !== undefined && isSpotifyUrl(contentUrl)) {
       spotifyBridgeTabs.add(senderTabId);
     }
     return;
@@ -373,7 +376,7 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'GET_TAB_STATE') {
     const tabId = extensionPageSender ? message.tabId : senderTabId;
-    const url = extensionPageSender ? message.url : senderTabUrl;
+    const url = extensionPageSender ? message.url : (senderTabUrl ?? message.url);
     if (tabId === undefined || !url) return;
     if (!extensionPageSender && !isYouTubeUrl(url) && !isSpotifyUrl(url)) return;
     // Content scripts cannot access storage.session or discover their own tab id.
