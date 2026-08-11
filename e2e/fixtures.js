@@ -7,7 +7,9 @@ const path = require('path');
 const { chromium, test: base } = require('@playwright/test');
 
 const root = path.join(__dirname, '..');
-const builtExtensionDir = path.join(root, 'dist', 'chromium');
+const builtExtensionDir = process.env.SLOWED_REVERB_E2E_EXTENSION_DIR
+  ? path.resolve(process.env.SLOWED_REVERB_E2E_EXTENSION_DIR)
+  : path.join(root, 'dist', 'chromium');
 
 function createToneWav() {
   const sampleRate = 8_000;

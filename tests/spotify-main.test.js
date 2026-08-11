@@ -127,4 +127,35 @@ describe('Spotify main-world audio engine', () => {
 
     harness.dom.window.close();
   });
+
+  test('normalizes untrusted page-world settings before applying them', () => {
+    const harness = setup();
+    harness.apply(true, {
+      speed: Number.POSITIVE_INFINITY,
+      reverb: 200,
+      echo: -1,
+      pan: -250,
+      width: 500,
+      keepPitch: 'true',
+      saturation: Number.NaN,
+      eqLow: -30,
+      eqMid: 30,
+      eqHigh: '12'
+    });
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+
+    const context = FakeAudioContext.instances[0];
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.media.preservesPitch, false);
+    assert.deepEqual(
+      context.filters.map(({ gain }) => gain.value),
+      [-12, 12, 0]
+    );
+    assert.equal(context.gains[2].gain.value, 0.7);
+    assert.equal(context.gains[3].gain.value, 0);
+    assert.equal(context.gains[4].gain.value, 0);
+    assert.equal(context.panners[0].pan.value, -1);
+
+    harness.dom.window.close();
+  });
 });

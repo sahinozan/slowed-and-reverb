@@ -15,6 +15,17 @@
     eqMid: 0,
     eqHigh: 0
   });
+  const SETTING_BOUNDS = Object.freeze({
+    speed: Object.freeze([0.5, 1.5]),
+    reverb: Object.freeze([0, 100]),
+    echo: Object.freeze([0, 100]),
+    pan: Object.freeze([-100, 100]),
+    width: Object.freeze([0, 200]),
+    saturation: Object.freeze([0, 100]),
+    eqLow: Object.freeze([-12, 12]),
+    eqMid: Object.freeze([-12, 12]),
+    eqHigh: Object.freeze([-12, 12])
+  });
 
   const mediaElements = new Set();
   const startedMedia = new WeakSet();
@@ -24,6 +35,20 @@
   let processingUnavailable = false;
   let impulseResponse = null;
   let saturationCurve = null;
+
+  function normalizeSettings(candidate) {
+    const normalized = { ...NEUTRAL_SETTINGS };
+    if (!candidate || typeof candidate !== 'object') return normalized;
+
+    for (const [key, [minimum, maximum]] of Object.entries(SETTING_BOUNDS)) {
+      const value = candidate[key];
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        normalized[key] = Math.min(maximum, Math.max(minimum, value));
+      }
+    }
+    normalized.keepPitch = candidate.keepPitch === true;
+    return normalized;
+  }
 
   function createGain(context, value = 1) {
     const node = context.createGain();
@@ -314,7 +339,7 @@
       window.postMessage({ channel: CHANNEL, type: 'READY' }, '*');
       notifyStatus();
     } else if (event.data.type === 'APPLY') {
-      settings = { ...NEUTRAL_SETTINGS, ...event.data.settings };
+      settings = normalizeSettings(event.data.settings);
       enabled = Boolean(event.data.enabled);
       for (const media of mediaElements) applySettings(media);
       notifyStatus();
