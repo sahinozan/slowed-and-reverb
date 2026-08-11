@@ -8,9 +8,10 @@ for Chromium-based browsers and Firefox.
 ## Summary
 
 Slowed & Reverb processes audio locally in the browser. The extension does not
-collect or transmit personal information, browsing history, account information,
-audio, page content, usage statistics, diagnostics, or telemetry. It has no
-developer-operated service and makes no extension-originated network requests.
+transmit personal information, browsing activity, account information, audio,
+page content, usage statistics, diagnostics, or telemetry. It does not create or
+retain a browsing history. It has no developer-operated service and makes no
+extension-originated network requests.
 
 ## Local access and processing
 
@@ -70,6 +71,12 @@ The extension does not:
 
 Because no user data is transmitted to or retained by the developer, there is no
 server-side user record to access, export, or delete.
+
+Information accessed through browser permissions is used only to provide the
+extension's disclosed audio-effects purpose. It is not transferred, used for
+advertising or credit decisions, or made available for human review. Slowed &
+Reverb's use of information complies with the Chrome Web Store User Data Policy,
+including its Limited Use requirements.
 
 ## Retention and deletion
 

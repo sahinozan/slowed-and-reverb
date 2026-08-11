@@ -6,12 +6,11 @@ privacy declarations, screenshots, and tested packages consistent.
 
 ## Current status
 
-Stages 1 through 3 are complete. Version `1.0.0` is frozen at source commit
-`bc5b97d60d95d4343ead1ec5a8dfc9bf2dbd6a8a` after the full automated checks and
-final desktop testing passed on Chromium and Firefox on August 11, 2026. Make only
-release-blocking implementation changes; any such change requires repeating the
-relevant automated and manual checks. Continue with Stage 4, shared store text and
-permission justifications.
+Stages 1 through 3 are complete. The initial release candidate was frozen at source
+commit `bc5b97d60d95d4343ead1ec5a8dfc9bf2dbd6a8a` after automated and manual desktop
+testing passed on Chromium and Firefox on August 11, 2026. The Stage 4 policy audit
+added an explicit extension content security policy and stricter internal-message
+validation. Freeze a new source commit after these changes pass final validation.
 
 ## Version 1.0 decisions
 
@@ -37,6 +36,8 @@ permission justifications.
 - Synchronize the README, manifests, package metadata, tests, and store plan.
 - Run `npm run check`.
 - Run `npm run test:e2e`.
+- Confirm content scripts contain no unload handler, WebSocket, or WebRTC connection
+  that would invalidate Chrome's back/forward cache.
 - Confirm the worktree contains only intended release changes.
 - Review every requested permission and every generated package file.
 - Resolve or explicitly defer every remaining audit finding.
@@ -117,6 +118,9 @@ Published release information:
 - For Chrome, optionally create a 1400 x 560 marquee image.
 - Reuse suitable screenshots and the square icon for Firefox. Firefox does not need
   Chrome's promotional tiles.
+- Do not use Google or Spotify logos, Spotify Green, album artwork, or artist imagery
+  as promotional design elements. Keep third-party branding incidental to honest
+  product screenshots.
 
 ## Stage 6 - Produce and inspect the exact upload packages
 
@@ -175,6 +179,9 @@ This stage requires the account owner.
 - Add the public store URLs and identifiers to the README.
 - Tag the verified source commit as `v1.0.0` and create the repository release.
 - Monitor reviews, support reports, store-policy email, and crash or playback reports.
+- After the public release is stable, consider nominating the extension for Chrome's
+  Featured badge and, later, Firefox's Recommended Extensions program. Neither badge
+  has a guaranteed pre-publication checklist.
 
 ## Official references
 
@@ -183,6 +190,10 @@ This stage requires the account owner.
 - [Chrome Web Store images](https://developer.chrome.com/docs/webstore/images)
 - [Chrome Web Store privacy fields](https://developer.chrome.com/docs/webstore/cws-dashboard-privacy)
 - [Chrome Web Store review process](https://developer.chrome.com/docs/webstore/review-process)
+- [Chrome Web Store best practices](https://developer.chrome.com/docs/webstore/best-practices)
+- [Chrome Web Store discovery and badges](https://developer.chrome.com/docs/webstore/discovery)
+- [Chrome Web Store branding](https://developer.chrome.com/docs/webstore/branding)
 - [Firefox extension publication](https://extensionworkshop.com/documentation/publish/)
 - [Firefox add-on submission](https://extensionworkshop.com/documentation/publish/submitting-an-add-on/)
 - [Firefox add-on policies](https://extensionworkshop.com/documentation/publish/add-on-policies/)
+- [Firefox Recommended Extensions](https://extensionworkshop.com/documentation/publish/recommended-extensions/)

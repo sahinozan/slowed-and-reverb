@@ -104,7 +104,9 @@
       applyToEngine();
     });
 
-  api.runtime.sendMessage({ type: 'SPOTIFY_BRIDGE_READY' }).catch(() => {});
+  api.runtime
+    .sendMessage({ type: 'SPOTIFY_BRIDGE_READY', origin: location.origin })
+    .catch(() => {});
 
   window.postMessage({ channel: CHANNEL, type: 'BRIDGE_READY' }, '*');
 })();
