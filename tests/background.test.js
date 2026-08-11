@@ -375,8 +375,9 @@ describe('background service worker', () => {
           settings: SLOWED,
           enabled: true
         },
-        {
-          url: popupUrl,
+      {
+        id: 'example',
+        url: popupUrl,
           tab: { id: 7, url: 'https://www.youtube.com/watch?v=one' }
         }
       );
@@ -384,6 +385,50 @@ describe('background service worker', () => {
       assert.equal(response.success, true, popupUrl);
       assert.equal(updates(harness.calls).length, 1, popupUrl);
     }
+  });
+
+  test('rejects a popup-shaped sender from a different extension', async () => {
+    const harness = setup();
+
+    const response = await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      {
+        type: 'APPLY_TO_TAB',
+        tabId: 7,
+        url: 'https://www.youtube.com/watch?v=one',
+        settings: SLOWED,
+        enabled: true
+      },
+      { id: 'different-extension', url: 'chrome-extension://different-extension/popup.html' }
+    );
+
+    assert.equal(response, undefined);
+    assert.equal(harness.calls.tabMessages.length, 0);
+  });
+
+  test('uses a validated reported origin when the browser omits the sender tab URL', async () => {
+    const harness = setup();
+    const settings = { ...DEFAULT_SETTINGS, pan: -50 };
+
+    await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      {
+        type: 'CONTENT_STATE_CHANGED',
+        enabled: true,
+        settings,
+        origin: 'https://www.youtube.com'
+      },
+      { tab: { id: 7 } }
+    );
+    await flushPromises();
+
+    const recalled = await dispatchRuntimeMessage(
+      harness.events.runtimeMessage,
+      { type: 'GET_TAB_STATE', url: 'https://www.youtube.com' },
+      { tab: { id: 7 } }
+    );
+
+    assert.deepEqual({ ...recalled.settings }, settings);
   });
 
   test('updates the icon across tab loading and activation', async () => {

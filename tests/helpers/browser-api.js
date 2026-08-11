@@ -94,6 +94,7 @@ function createBrowserApi(options = {}) {
     },
     commands: { onCommand: events.command },
     runtime: {
+      id: options.runtimeId ?? 'example',
       onInstalled: events.installed,
       onMessage: events.runtimeMessage,
       onStartup: events.startup,
@@ -103,7 +104,14 @@ function createBrowserApi(options = {}) {
       async sendMessage(message) {
         calls.runtimeMessages.push(clone(message));
         if (options.onRuntimeMessage) return options.onRuntimeMessage(message);
-        return dispatchRuntimeMessage(events.runtimeMessage, message, options.runtimeSender);
+        return dispatchRuntimeMessage(
+          events.runtimeMessage,
+          message,
+          options.runtimeSender ?? {
+            id: api.runtime.id,
+            url: `chrome-extension://${api.runtime.id}/popup.html`
+          }
+        );
       }
     },
     scripting: {
