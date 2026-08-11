@@ -6,12 +6,12 @@ privacy declarations, screenshots, and tested packages consistent.
 
 ## Current status
 
-Stages 1 and 2 are complete. Version `1.0.0` is frozen at source commit
+Stages 1 through 3 are complete. Version `1.0.0` is frozen at source commit
 `bc5b97d60d95d4343ead1ec5a8dfc9bf2dbd6a8a` after the full automated checks and
 final desktop testing passed on Chromium and Firefox on August 11, 2026. Make only
 release-blocking implementation changes; any such change requires repeating the
-relevant automated and manual checks. Continue with Stage 3, privacy and support
-information.
+relevant automated and manual checks. Continue with Stage 4, shared store text and
+permission justifications.
 
 ## Version 1.0 decisions
 
@@ -75,6 +75,15 @@ repeating the relevant checks and manual tests.
   - how to request support or ask a privacy question.
 - Choose a public support URL, provisionally the repository's Issues page.
 - Confirm the public publisher name and monitored contact email.
+
+Published release information:
+
+- **Privacy policy:**
+  `https://github.com/sahinozan/slowed-and-reverb/blob/main/PRIVACY.md`
+- **Support:** `https://github.com/sahinozan/slowed-and-reverb/issues`
+- **Homepage:** `https://github.com/sahinozan/slowed-and-reverb`
+- **Publisher:** Ozan Sahin
+- **Contact:** `slowedandreverbsupport@proton.me`
 
 ## Stage 4 - Prepare shared store text
 
