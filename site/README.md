@@ -54,21 +54,16 @@ the `@font-face` block at the top of `styles.css`.
 
 ## Deploying
 
-The site is served at `slowedreverbapp.com` by Cloudflare Pages, connected to
-this repository. There is nothing to build, so the whole configuration is:
-
-| Setting | Value |
-| --- | --- |
-| Framework preset | None |
-| Build command | *(empty)* |
-| Build output directory | `site` |
-| Production branch | `main` |
+The site is served at `slowedreverbapp.com` by Cloudflare, connected to this
+repository. `wrangler.jsonc` in the repository root points Cloudflare at this
+folder and is the entire configuration: there is no build step, no Worker
+script, and no build command. Wrangler runs in Cloudflare's build container, so
+it is not a dependency here.
 
 Cloudflare redeploys on every push to `main`, and gives each other branch a
 preview URL. The domain is registered in the same Cloudflare account, so
-attaching it under the project's **Custom domains** tab creates the DNS record
-automatically; no record needs writing by hand and no `CNAME` file belongs in
-this folder.
+attaching it to the project creates the DNS record automatically; no record
+needs writing by hand and no `CNAME` file belongs in this folder.
 
 The absolute URLs in the `<head>` of `index.html` (canonical and Open Graph)
 point at that domain. They are the only place the domain is hard-coded.
