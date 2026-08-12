@@ -68,6 +68,27 @@ module.exports = [
     }
   },
   {
+    // The marketing site ships no build step, so its script is held to the same
+    // rules as the extension's own browser scripts.
+    files: ['site/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: {
+        document: 'readonly',
+        window: 'readonly',
+        ResizeObserver: 'readonly'
+      }
+    },
+    rules: {
+      'no-unused-vars': 'error',
+      'no-undef': 'error',
+      eqeqeq: 'error',
+      'prefer-const': 'error',
+      'no-var': 'error'
+    }
+  },
+  {
     files: ['tests/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,

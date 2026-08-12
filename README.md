@@ -103,7 +103,11 @@ npm run build:firefox     # emit dist/firefox/
 npm run package           # build allowlisted ZIPs for both stores
 npm run lint:firefox      # build, then validate with web-ext
 npm run check             # run every required local and store-package check
+npm run site:assets       # re-render the popup images used by the website
 ```
+
+The public website lives in [site/](site/README.md): static HTML, CSS, and one
+small script, served at [slowedreverbapp.com](https://slowedreverbapp.com).
 
 Publication preparation is tracked in [STORE_RELEASE_PLAN.md](STORE_RELEASE_PLAN.md).
 
