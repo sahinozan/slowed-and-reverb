@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" preserveAspectRatio="none">
+  <!-- Bar spacing is the integral of a playback-rate ramp from 1.00x to 0.42x:
+       the pattern is a readout of what the extension does. Same math as
+       rateBars() in scripts/render-store-assets.js (step=26, weight=20). -->
+  <g fill="#e8597f">
+  <rect x="0.00" y="0" width="4.00" height="900"/>
+  <rect x="26.00" y="0" width="4.19" height="900"/>
+  <rect x="52.25" y="0" width="4.38" height="900"/>
+  <rect x="78.75" y="0" width="4.57" height="900"/>
+  <rect x="105.51" y="0" width="4.76" height="900"/>
+  <rect x="132.55" y="0" width="4.96" height="900"/>
+  <rect x="159.86" y="0" width="5.16" height="900"/>
+  <rect x="187.46" y="0" width="5.36" height="900"/>
+  <rect x="215.35" y="0" width="5.56" height="900"/>
+  <rect x="243.56" y="0" width="5.77" height="900"/>
+  <rect x="272.07" y="0" width="5.97" height="900"/>
+  <rect x="300.92" y="0" width="6.18" height="900"/>
+  <rect x="330.10" y="0" width="6.39" height="900"/>
+  <rect x="359.64" y="0" width="6.61" height="900"/>
+  <rect x="389.53" y="0" width="6.82" height="900"/>
+  <rect x="419.81" y="0" width="7.04" height="900"/>
+  <rect x="450.48" y="0" width="7.27" height="900"/>
+  <rect x="481.55" y="0" width="7.49" height="900"/>
+  <rect x="513.05" y="0" width="7.72" height="900"/>
+  <rect x="544.99" y="0" width="7.95" height="900"/>
+  <rect x="577.39" y="0" width="8.19" height="900"/>
+  <rect x="610.27" y="0" width="8.42" height="900"/>
+  <rect x="643.66" y="0" width="8.67" height="900"/>
+  <rect x="677.57" y="0" width="8.91" height="900"/>
+  <rect x="712.04" y="0" width="9.16" height="900"/>
+  <rect x="747.08" y="0" width="9.42" height="900"/>
+  <rect x="782.74" y="0" width="9.67" height="900"/>
+  <rect x="819.04" y="0" width="9.94" height="900"/>
+  <rect x="856.02" y="0" width="10.21" height="900"/>
+  <rect x="893.72" y="0" width="10.48" height="900"/>
+  <rect x="932.18" y="0" width="10.76" height="900"/>
+  <rect x="971.45" y="0" width="11.04" height="900"/>
+  <rect x="1011.58" y="0" width="11.33" height="900"/>
+  <rect x="1052.63" y="0" width="11.63" height="900"/>
+  <rect x="1094.68" y="0" width="11.94" height="900"/>
+  <rect x="1137.78" y="0" width="12.25" height="900"/>
+  <rect x="1182.03" y="0" width="12.57" height="900"/>
+  <rect x="1227.52" y="0" width="12.90" height="900"/>
+  <rect x="1274.37" y="0" width="13.24" height="900"/>
+  <rect x="1322.69" y="0" width="13.59" height="900"/>
+  <rect x="1372.64" y="0" width="13.95" height="900"/>
+  <rect x="1424.39" y="0" width="14.33" height="900"/>
+  <rect x="1478.15" y="0" width="14.72" height="900"/>
+  <rect x="1534.16" y="0" width="15.12" height="900"/>
+  <rect x="1592.74" y="0" width="15.55" height="900"/>
+  </g>
+</svg>

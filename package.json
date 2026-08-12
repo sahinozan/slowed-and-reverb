@@ -13,6 +13,7 @@
     "package": "npm run package:chromium && npm run package:firefox",
     "package:chromium": "npm run build:chromium && web-ext build --source-dir=dist/chromium --artifacts-dir=dist/packages --filename=slowed-reverb-chromium.zip --overwrite-dest --no-config-discovery",
     "package:firefox": "npm run build:firefox && web-ext build --source-dir=dist/firefox --artifacts-dir=dist/packages --filename=slowed-reverb-firefox.zip --overwrite-dest --no-config-discovery",
+    "site:assets": "node scripts/render-site-assets.js",
     "store:assets": "node scripts/render-store-assets.js",
     "test": "node --test --test-concurrency=1",
     "test:e2e": "npm run build:chromium && playwright test",

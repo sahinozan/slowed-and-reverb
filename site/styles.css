@@ -1,0 +1,517 @@
+/* Slowed & Reverb site styles.
+ *
+ * The visual system is the extension's store art, not a second brand:
+ *   Colour  ink / oxblood grounds, rose + hot pink inks, bone type.
+ *           Values lifted from scripts/render-store-assets.js.
+ *   Type    Futura (display) + Menlo, the popup's own UI face.
+ *   Edges   Square. Chromium popups have no rounded chrome, so nothing here adds any.
+ *   Depth   Hard offset blocks, screen-print registration. No blur, no glow.
+ *   Motif   assets/rate-field.svg, bar spacing produced by integrating a
+ *           playback-rate ramp, so the pattern reads out what the extension does.
+ *
+ * Hot pink is never used for text: at small sizes it fails contrast on both
+ * grounds. It carries rules, fills, and the motif; rose and bone carry words.
+ */
+
+/* Jost 700, latin subset, SIL Open Font License (assets/jost-OFL.txt). Self
+   hosted rather than linked, so the page still makes no third-party request.
+   The store art is set in Futura, which ships only on macOS; Jost is the
+   geometric sans it was drawn after, so every visitor sees the same page. */
+@font-face {
+  font-family: "Jost";
+  src: url("assets/jost-700-latin.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --ink: #12060d;
+  --oxblood: #2f0a14;
+  --hot: #e8597f;
+  --rose: #ff9ab8;
+  --deep: #b32a58;
+  --bone: #fff0f4;
+
+  --body: rgba(255, 240, 244, 0.84);
+  --dim: rgba(255, 240, 244, 0.5);
+  --rule: rgba(232, 89, 127, 0.32);
+
+  --display: "Jost", Futura, "Century Gothic", "Trebuchet MS", system-ui, sans-serif;
+  --mono: Menlo, Consolas, "SF Mono", ui-monospace, monospace;
+
+  --wrap: 1120px;
+  --gut: clamp(20px, 5vw, 64px);
+  --section: clamp(64px, 9vw, 132px);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--body);
+  font-family: var(--mono);
+  font-size: clamp(0.9rem, 0.4vw + 0.82rem, 1rem);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: var(--display);
+  font-weight: 700;
+  color: var(--bone);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+h1 { font-size: clamp(2.6rem, 7vw, 4.5rem); line-height: 0.95; }
+h2 { font-size: clamp(1.85rem, 4vw, 2.9rem); line-height: 1.02; }
+h3 { font-size: 1.1rem; line-height: 1.2; letter-spacing: 0; }
+
+p { margin: 0; }
+img { max-width: 100%; display: block; }
+code { font-family: var(--mono); font-size: 0.94em; color: var(--rose); }
+
+a { color: var(--rose); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { color: var(--bone); }
+
+:focus-visible {
+  outline: 2px solid var(--rose);
+  outline-offset: 3px;
+}
+
+.wrap {
+  max-width: var(--wrap);
+  margin-inline: auto;
+  padding-inline: var(--gut);
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 10;
+  background: var(--rose); color: var(--ink);
+  padding: 10px 16px; text-decoration: none;
+}
+.skip:focus { left: 0; }
+
+.eyebrow {
+  font-size: 0.72rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--rose);
+  margin-bottom: 18px;
+}
+
+.dim { color: var(--dim); }
+
+.note {
+  font-size: 0.78rem;
+  color: var(--dim);
+  letter-spacing: 0.02em;
+}
+
+.prose {
+  max-width: 62ch;
+  margin-top: 22px;
+  font-size: 1rem;
+}
+.prose.tight { margin-top: 18px; font-size: 0.9rem; }
+
+/* ── Masthead ───────────────────────────────────────────────────────────── */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 28px;
+  align-items: center;
+  justify-content: space-between;
+  max-width: var(--wrap);
+  margin-inline: auto;
+  padding: 26px var(--gut);
+}
+
+.lockup {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+  color: var(--bone);
+  text-decoration: none;
+}
+/* The icon file is a square canvas with the bars centred inside it, so the box
+   has to stay square or the mark stretches. */
+.lockup .mark { width: 26px; height: 26px; }
+footer .lockup .mark { width: 22px; height: 22px; }
+
+.masthead nav {
+  display: flex;
+  gap: 22px;
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.masthead nav a { text-decoration: none; }
+.masthead nav a:hover { text-decoration: underline; }
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+
+.hero {
+  max-width: var(--wrap);
+  margin-inline: auto;
+  padding: clamp(28px, 5vw, 64px) var(--gut) var(--section);
+  display: grid;
+  gap: clamp(40px, 6vw, 72px);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  /* The copy column takes the larger share so the three buttons hold one row. */
+  .hero { grid-template-columns: minmax(0, 1.18fr) minmax(330px, 0.82fr); }
+}
+
+.hero .lede {
+  max-width: 46ch;
+  margin-top: 24px;
+  color: var(--body);
+  font-size: clamp(0.95rem, 0.5vw + 0.85rem, 1.08rem);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 34px 0 16px;
+}
+
+.button {
+  display: inline-block;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 0.94rem;
+  letter-spacing: 0.02em;
+  padding: 12px 18px;
+  border: 1px solid var(--hot);
+  color: var(--bone);
+  text-decoration: none;
+  background: transparent;
+  box-shadow: 5px 5px 0 var(--oxblood);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+}
+.button:hover {
+  transform: translate(2px, 2px);
+  box-shadow: 3px 3px 0 var(--oxblood);
+  background: rgba(232, 89, 127, 0.12);
+  color: var(--bone);
+}
+.button:active { transform: translate(5px, 5px); box-shadow: 0 0 0 var(--oxblood); }
+
+.button.primary {
+  background: var(--rose);
+  border-color: var(--rose);
+  color: var(--ink);
+  box-shadow: 5px 5px 0 var(--deep);
+}
+.button.primary:hover { background: var(--bone); border-color: var(--bone); box-shadow: 3px 3px 0 var(--deep); }
+
+.button.ghost { border-color: var(--rule); box-shadow: none; }
+.button.ghost:hover { transform: none; box-shadow: none; border-color: var(--hot); }
+
+/* Both store buttons point at the repository until the listings are approved;
+   the note under the row says so rather than a disabled control implying it. */
+
+/* ── Signature: rate instrument ─────────────────────────────────────────── */
+
+.instrument {
+  margin: 0;
+  background: var(--oxblood);
+  border: 1px solid var(--rule);
+  padding: 20px 22px 22px;
+  box-shadow: 12px 12px 0 rgba(179, 42, 88, 0.28);
+}
+
+.instrument-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.tag {
+  font-size: 0.72rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--rose);
+}
+
+#readout {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  color: var(--bone);
+  font-variant-numeric: tabular-nums;
+}
+#readout .dim { font-size: 0.62em; }
+
+/* No-JS state is the truthful one: even spacing is exactly 1.00x. */
+.field {
+  height: clamp(120px, 22vw, 178px);
+  background-image: repeating-linear-gradient(90deg, var(--hot) 0 4px, transparent 4px 25px);
+  opacity: 0.85;
+}
+.field.is-live { background-image: none; }
+.field svg { display: block; width: 100%; height: 100%; }
+
+.instrument input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  margin: 22px 0 0;
+  background: transparent;
+  cursor: ew-resize;
+}
+.instrument input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px;
+  background: var(--hot);
+}
+.instrument input[type="range"]::-moz-range-track {
+  height: 2px;
+  background: var(--hot);
+}
+.instrument input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px; height: 18px;
+  margin-top: -8px;
+  border-radius: 50%;
+  border: none;
+  background: var(--rose);
+}
+.instrument input[type="range"]::-moz-range-thumb {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: var(--rose);
+}
+
+.instrument-foot {
+  margin-top: 18px;
+  font-size: 0.78rem;
+  color: var(--dim);
+  max-width: 42ch;
+}
+
+/* ── Bands ──────────────────────────────────────────────────────────────── */
+
+.band {
+  background-color: var(--oxblood);
+  padding-block: var(--section);
+}
+
+/* The motif carries the thesis and the call to action; the reference sections
+   between them stay flat so the tables and policy copy read plainly. The SVG
+   ships at full ink, so the wash lives here and one file serves every use. */
+#why, #get {
+  position: relative;
+  isolation: isolate;
+}
+#why::before, #get::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: url("assets/rate-field.svg") center / cover no-repeat;
+  opacity: 0.16;
+  /* Fades out under the body copy, so the motif frames the section instead of
+     printing stripes behind every line of text. */
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 22%, transparent 62%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 22%, transparent 62%);
+}
+
+.claims {
+  list-style: none;
+  margin: clamp(36px, 5vw, 56px) 0 0;
+  padding: 0;
+  display: grid;
+  gap: 34px 44px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+}
+.claims li { border-top: 2px solid var(--hot); padding-top: 16px; }
+.after-claims { margin-top: clamp(30px, 4vw, 44px); font-size: 0.9rem; }
+.claims p { margin: 10px 0 0; font-size: 0.86rem; color: var(--body); }
+
+/* ── Screens ────────────────────────────────────────────────────────────── */
+
+.shots { padding-block: var(--section); }
+.shots h2 { max-width: 20ch; }
+
+/* Frames are captures of the real popup, so they carry its own dark chrome.
+   The offset block replaces a border rather than sitting next to one. */
+.popup {
+  width: 100%;
+  height: auto;
+  box-shadow: 14px 14px 0 var(--oxblood);
+}
+
+.showcase {
+  margin-top: clamp(34px, 5vw, 56px);
+  display: grid;
+  gap: clamp(32px, 5vw, 64px);
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+}
+.showcase-copy p + p { margin-top: 16px; }
+.showcase-copy p { max-width: 46ch; }
+
+@media (min-width: 760px) {
+  .showcase { grid-template-columns: minmax(280px, 400px) minmax(0, 1fr); }
+}
+
+.frames {
+  list-style: none;
+  padding: 0;
+  margin: clamp(48px, 7vw, 84px) 0 0;
+  display: grid;
+  gap: clamp(30px, 4vw, 48px) clamp(30px, 4vw, 56px);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  /* Two rows so the captions line up even though the panels differ in height. */
+  grid-template-rows: auto auto;
+  align-items: end;
+}
+.frames li {
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
+  gap: 22px;
+}
+.frames p { font-size: 0.86rem; color: var(--body); max-width: 44ch; }
+.frames strong { color: var(--bone); font-weight: 400; }
+
+.themes { margin-top: clamp(48px, 7vw, 84px); }
+.themes ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: clamp(20px, 3vw, 32px);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+}
+.themes li { display: grid; gap: 14px; }
+.themes .popup { box-shadow: 8px 8px 0 var(--oxblood); }
+.themes span {
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--rose);
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+
+.tables {
+  display: grid;
+  gap: clamp(32px, 4vw, 52px);
+  margin-top: clamp(34px, 5vw, 54px);
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.tables table { width: 100%; border-collapse: collapse; text-align: left; }
+.tables caption {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: var(--rose);
+  text-align: left;
+  padding-bottom: 12px;
+}
+.tables th, .tables td {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  font-weight: 400;
+  font-size: 0.86rem;
+}
+.tables thead th {
+  font-size: 0.68rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--dim);
+  border-bottom-color: var(--hot);
+}
+.tables tbody th { color: var(--bone); padding-right: 20px; white-space: nowrap; }
+.tables td .dim { display: block; font-size: 0.78rem; margin-top: 3px; }
+
+/* ── Scope ──────────────────────────────────────────────────────────────── */
+
+.scope { padding-block: var(--section); }
+
+.eyebrow.small { color: var(--dim); margin-bottom: 10px; }
+
+.split {
+  margin-top: clamp(34px, 5vw, 54px);
+  display: grid;
+  gap: clamp(38px, 5vw, 72px);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.list { list-style: none; margin: 0; padding: 0; }
+.list li {
+  padding: 14px 0 14px 30px;
+  border-bottom: 1px solid var(--rule);
+  position: relative;
+  font-size: 0.9rem;
+  color: var(--bone);
+}
+.list li .dim { display: block; font-size: 0.78rem; margin-top: 2px; }
+.list li::before {
+  position: absolute;
+  left: 0;
+  font-family: var(--mono);
+}
+.list.yes li::before { content: "▮"; color: var(--hot); }
+
+/* ── Close ──────────────────────────────────────────────────────────────── */
+
+.close {
+  background-color: var(--ink);
+  padding-block: var(--section);
+  border-top: 1px solid var(--rule);
+}
+.close .actions { margin-bottom: 18px; }
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+
+footer {
+  border-top: 1px solid var(--rule);
+  padding-block: clamp(40px, 5vw, 64px);
+}
+.foot { display: grid; gap: 26px; }
+footer nav { display: flex; flex-wrap: wrap; gap: 10px 24px; font-size: 0.82rem; }
+.fine { font-size: 0.74rem; color: var(--dim); max-width: 84ch; line-height: 1.7; }
+
+/* ── Motion ─────────────────────────────────────────────────────────────── */
+
+/* One orchestrated moment: the field rises once on load, left to right. */
+@keyframes rise {
+  from { transform: scaleY(0.06); opacity: 0; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

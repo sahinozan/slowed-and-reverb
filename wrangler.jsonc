@@ -1,0 +1,15 @@
+// Cloudflare deployment for the website in site/.
+//
+// There is no Worker script here, only static assets: Cloudflare serves the
+// folder as it is, and `npx wrangler deploy` runs in Cloudflare's own build
+// container, so wrangler never becomes a dependency of this repository.
+//
+// The extension itself is not affected by this file. It is packaged from an
+// explicit allowlist in scripts/build-extension.js.
+{
+  "name": "slowed-and-reverb",
+  "compatibility_date": "2026-08-12",
+  "assets": {
+    "directory": "./site"
+  }
+}
