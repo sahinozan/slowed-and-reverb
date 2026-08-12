@@ -149,7 +149,10 @@ a:hover { color: var(--bone); }
   color: var(--bone);
   text-decoration: none;
 }
-.lockup .mark { width: 26px; height: 28px; }
+/* The icon file is a square canvas with the bars centred inside it, so the box
+   has to stay square or the mark stretches. */
+.lockup .mark { width: 26px; height: 26px; }
+footer .lockup .mark { width: 22px; height: 22px; }
 
 .masthead nav {
   display: flex;
