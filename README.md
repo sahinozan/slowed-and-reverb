@@ -6,7 +6,10 @@ zero telemetry and zero runtime dependencies.
 
 ## Get the extension
 
-Chrome Web Store and Firefox Add-ons links will be added here after publication.
+Install it from the
+[Chrome Web Store](https://chromewebstore.google.com/detail/slowed-reverb/nhndfhonlljbmkpnblndjfdefjoecpoa)
+for Chrome, Edge, Brave, and other Chromium browsers. The Firefox Add-ons listing
+is in review; its link will be added here once it is published.
 
 ## Use
 
