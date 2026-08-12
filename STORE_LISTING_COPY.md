@@ -13,7 +13,7 @@ privacy policy.
 - **Chrome category:** Entertainment
 - **Firefox category:** Photos, Music & Videos
 - **Mature content:** No
-- **Homepage:** `https://github.com/sahinozan/slowed-and-reverb`
+- **Homepage:** `https://slowedreverbapp.com`
 - **Support:** `https://github.com/sahinozan/slowed-and-reverb/issues`
 - **Support email:** `slowedandreverbsupport@proton.me`
 - **Privacy policy:**
