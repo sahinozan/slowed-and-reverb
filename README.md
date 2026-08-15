@@ -8,8 +8,9 @@ zero telemetry and zero runtime dependencies.
 
 Install it from the
 [Chrome Web Store](https://chromewebstore.google.com/detail/slowed-reverb/nhndfhonlljbmkpnblndjfdefjoecpoa)
-for Chrome, Edge, Brave, and other Chromium browsers. The Firefox Add-ons listing
-is in review; its link will be added here once it is published.
+for Chrome, Edge, Brave, and other Chromium browsers, or from
+[Firefox Add-ons](https://addons.mozilla.org/firefox/addon/slowed-reverb/)
+for desktop Firefox 142 and later.
 
 ## Use
 

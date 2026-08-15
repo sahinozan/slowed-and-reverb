@@ -68,9 +68,7 @@ needs writing by hand and no `CNAME` file belongs in this folder.
 The absolute URLs in the `<head>` of `index.html` (canonical and Open Graph)
 point at that domain. They are the only place the domain is hard-coded.
 
-The Chrome buttons point at the published listing. The two Firefox buttons still
-point at the repository while that review runs; search `index.html` for `TODO`
-to find them, and update the note under each button row at the same time. Both
+The Chrome and Firefox buttons point at their published store listings. Both
 store dashboards should list `https://slowedreverbapp.com` as the homepage.
 
 ## Editing rules
