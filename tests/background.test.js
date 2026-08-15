@@ -29,7 +29,7 @@ function setup(options = {}) {
     activeTab: { id: 7, url: 'https://www.youtube.com/watch?v=one' },
     ...options
   });
-  loadScript('background.js', { chrome: harness.api });
+  loadScript('extension/background.js', { chrome: harness.api });
   return harness;
 }
 

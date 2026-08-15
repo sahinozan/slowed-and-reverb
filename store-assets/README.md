@@ -20,8 +20,8 @@ store-sized render.
 - `chrome/promotional-tile-440x280.png`: required Chrome promotional tile
 - `chrome/marquee-1400x560.png`: optional Chrome marquee image
 
-Firefox can reuse the five screenshots and `assets/icon128.png`; it does not need
-the Chrome promotional images.
+Firefox can reuse the five screenshots and `extension/assets/icon128.png`; it
+does not need the Chrome promotional images.
 
 ## Review notes
 

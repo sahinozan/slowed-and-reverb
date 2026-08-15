@@ -37,7 +37,7 @@ describe('Spotify isolated bridge', () => {
       if (type === 'message') window.__bridgeMessageListener = listener;
       return originalAddEventListener(type, listener, options);
     };
-    window.eval(fs.readFileSync(`${root}/spotify-bridge.js`, 'utf8'));
+    window.eval(fs.readFileSync(`${root}/extension/spotify-bridge.js`, 'utf8'));
     window.addEventListener = originalAddEventListener;
     await flushPromises();
 

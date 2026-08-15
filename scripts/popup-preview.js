@@ -13,6 +13,7 @@ const http = require('http');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
+const extensionDir = path.join(root, 'extension');
 
 const POPUP_W = 340;
 
@@ -33,9 +34,9 @@ function contentType(file) {
 // callers can register files they have not written yet.
 function startServer(extraRoutes = new Map()) {
   const routes = new Map([
-    ['/popup.html', path.join(root, 'popup.html')],
-    ['/popup.css', path.join(root, 'popup.css')],
-    ['/popup.js', path.join(root, 'popup.js')],
+    ['/popup.html', path.join(extensionDir, 'popup.html')],
+    ['/popup.css', path.join(extensionDir, 'popup.css')],
+    ['/popup.js', path.join(extensionDir, 'popup.js')],
     ...extraRoutes
   ]);
 
