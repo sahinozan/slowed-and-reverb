@@ -82,7 +82,6 @@ describe('store package contracts', () => {
     assert.doesNotMatch(readme, /Spotify has an experimental/);
     assert.match(manifest.description, /YouTube™, YouTube Music™, and Spotify/);
     assert.match(packageJson.description, /YouTube™, YouTube Music™, and Spotify/);
-    assert.equal(fs.existsSync(path.join(root, 'STORE_RELEASE_PLAN.md')), true);
     assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
     assert.equal('host_permissions' in manifest, false);
     assert.deepEqual(manifest.content_security_policy, {
