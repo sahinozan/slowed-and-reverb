@@ -26,8 +26,9 @@ if (!TARGETS.has(target)) {
 }
 
 const root = path.join(__dirname, '..');
+const sourceDir = path.join(root, 'extension');
 const outDir = path.join(root, 'dist', target);
-const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(path.join(sourceDir, 'manifest.json'), 'utf8'));
 const assetFiles = [
   ...new Set([
     ...Object.values(manifest.action.default_icon),
@@ -39,11 +40,11 @@ fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(path.join(outDir, 'assets'), { recursive: true });
 
 for (const file of SOURCE_FILES) {
-  fs.copyFileSync(path.join(root, file), path.join(outDir, file));
+  fs.copyFileSync(path.join(sourceDir, file), path.join(outDir, file));
 }
 
 for (const file of assetFiles) {
-  fs.copyFileSync(path.join(root, file), path.join(outDir, file));
+  fs.copyFileSync(path.join(sourceDir, file), path.join(outDir, file));
 }
 
 if (target === 'firefox') {

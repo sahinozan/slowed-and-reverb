@@ -4,7 +4,7 @@
 //
 // Visual system
 //   Type      Futura (display) + Menlo, the extension's own UI face.
-//   Colour    Theme tokens read straight from popup.css. Nothing invented.
+//   Colour    Theme tokens read straight from extension/popup.css. Nothing invented.
 //   Edges     Square. Chromium popups have no rounded chrome, so nothing here
 //             adds any. Solid blocks instead of glows and translucent borders.
 //   Motif     Bar spacing produced by integrating a playback-rate ramp, so the
@@ -30,7 +30,7 @@ const SLIDE_W = 1280;
 const SLIDE_H = 800;
 const SUPERSAMPLE = 2;
 
-// popup.css theme tokens.
+// extension/popup.css theme tokens.
 const INK = '#12060d';
 const OXBLOOD = '#2f0a14';
 const HOT = '#e8597f';

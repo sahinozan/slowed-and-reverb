@@ -180,7 +180,7 @@ async function createContentHarness(options = {}) {
     }
   };
 
-  const source = fs.readFileSync(`${root}/content.js`, 'utf8');
+  const source = fs.readFileSync(`${root}/extension/content.js`, 'utf8');
   window.eval(source);
   await flushPromises();
   await flushPromises();

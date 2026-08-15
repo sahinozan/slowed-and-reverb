@@ -4,8 +4,8 @@
 //
 // The site shows the real interface rather than store screenshots: those exist
 // because Chrome and Firefox require them, and at page size the popup inside
-// them is unreadable. Each capture here is the shipping popup.html, popup.css,
-// and popup.js driven by the shared stub in popup-preview.js.
+// them is unreadable. Each capture here uses the shipping popup files from
+// extension/, driven by the shared stub in popup-preview.js.
 //
 // Panels people are meant to read render at 3x; the theme row is a colour
 // comparison at thumbnail size, so 2x is enough for it.

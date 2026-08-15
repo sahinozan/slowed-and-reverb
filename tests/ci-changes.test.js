@@ -25,11 +25,11 @@ describe('CI change classification', () => {
 
   test('runs browser smoke tests for extension runtime and dependency changes', () => {
     for (const file of [
-      'background.js',
-      'popup.css',
-      'manifest.json',
+      'extension/background.js',
+      'extension/popup.css',
+      'extension/manifest.json',
       'package-lock.json',
-      'assets/icon128.png',
+      'extension/assets/icon128.png',
       'e2e/extension.spec.js'
     ]) {
       assert.deepEqual(classifyFiles([file]), { full: true, browser: true }, file);
@@ -42,7 +42,7 @@ describe('CI change classification', () => {
   });
 
   test('uses the highest required tier for mixed changes', () => {
-    assert.deepEqual(classifyFiles(['README.md', 'content.js']), {
+    assert.deepEqual(classifyFiles(['README.md', 'extension/content.js']), {
       full: true,
       browser: true
     });

@@ -35,7 +35,7 @@ function setup(options = {}) {
   window.webkitAudioContext = FakeAudioContext;
   window.console.warn = (...args) => warnings.push(args);
   window.postMessage = (message) => statusMessages.push(message);
-  window.eval(fs.readFileSync(`${root}/spotify-main.js`, 'utf8'));
+  window.eval(fs.readFileSync(`${root}/extension/spotify-main.js`, 'utf8'));
 
   const media = window.document.createElement('audio');
   Object.defineProperties(media, {

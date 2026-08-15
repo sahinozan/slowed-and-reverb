@@ -9,8 +9,9 @@ const path = require('path');
 const { chromium } = require('@playwright/test');
 
 const root = path.join(__dirname, '..');
-const assetsDir = path.join(root, 'assets');
-const popupFile = path.join(root, 'popup.html');
+const extensionDir = path.join(root, 'extension');
+const assetsDir = path.join(extensionDir, 'assets');
+const popupFile = path.join(extensionDir, 'popup.html');
 
 // Five symmetric bars on a 128 grid. Bar edges stay on multiples of 8 so the
 // 8:1 reduction to 16 px lands on whole pixels and the sides render crisp.
@@ -151,7 +152,7 @@ async function main() {
   }
 
   const changed = updatePopup('          ');
-  console.log(`Wrote 2 SVGs and ${PNG_SIZES.length * 2} PNGs to assets/`);
+  console.log(`Wrote 2 SVGs and ${PNG_SIZES.length * 2} PNGs to extension/assets/`);
   console.log(changed ? 'Updated the popup header mark' : 'Popup header mark already current');
 }
 

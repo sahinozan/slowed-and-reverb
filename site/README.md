@@ -24,7 +24,7 @@ requests.
 ## Assets
 
 `assets/popup-*.png` are captures of the shipping popup, produced by loading
-the real `popup.html`, `popup.css`, and `popup.js` in a headless browser:
+the real files from `extension/` in a headless browser:
 
 ```sh
 npm run site:assets

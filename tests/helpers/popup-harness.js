@@ -7,7 +7,7 @@ const { createBrowserApi, flushPromises } = require('./browser-api');
 const { loadScript, root } = require('./load-script');
 
 async function createPopupHarness(options = {}) {
-  const html = fs.readFileSync(`${root}/popup.html`, 'utf8');
+  const html = fs.readFileSync(`${root}/extension/popup.html`, 'utf8');
   const dom = new JSDOM(html, {
     url: 'https://extension.invalid/popup.html',
     runScripts: 'outside-only'
@@ -38,8 +38,8 @@ async function createPopupHarness(options = {}) {
     return 1;
   };
 
-  loadScript('background.js', { chrome: harness.api });
-  const source = fs.readFileSync(`${root}/popup.js`, 'utf8');
+  loadScript('extension/background.js', { chrome: harness.api });
+  const source = fs.readFileSync(`${root}/extension/popup.js`, 'utf8');
   window.eval(source);
   for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
 

@@ -22,11 +22,11 @@ module.exports = [
   },
   {
     files: [
-      'background.js',
-      'content.js',
-      'popup.js',
-      'spotify-bridge.js',
-      'spotify-main.js'
+      'extension/background.js',
+      'extension/content.js',
+      'extension/popup.js',
+      'extension/spotify-bridge.js',
+      'extension/spotify-main.js'
     ],
     languageOptions: {
       ecmaVersion: 2022,

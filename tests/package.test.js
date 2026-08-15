@@ -10,6 +10,7 @@ const { JSDOM } = require('jsdom');
 const { popupBlock } = require('../scripts/render-icons');
 
 const { root } = require('./helpers/load-script');
+const extensionRoot = path.join(root, 'extension');
 const SOURCE_FILES = [
   'background.js',
   'content.js',
@@ -66,7 +67,7 @@ function manifestPaths(manifest) {
 
 describe('store package contracts', () => {
   test('keeps the Chromium manifest minimal and internally consistent', () => {
-    const manifest = readJson('manifest.json');
+    const manifest = readJson('extension/manifest.json');
     const packageJson = readJson('package.json');
 
     assert.equal(manifest.manifest_version, 3);
@@ -98,13 +99,17 @@ describe('store package contracts', () => {
     ]);
 
     for (const file of manifestPaths(manifest)) {
-      assert.equal(fs.existsSync(path.join(root, file)), true, `Missing manifest file: ${file}`);
+      assert.equal(
+        fs.existsSync(path.join(extensionRoot, file)),
+        true,
+        `Missing manifest file: ${file}`
+      );
     }
   });
 
   test('keeps popup JavaScript element references synchronized with the HTML', () => {
-    const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
-    const source = fs.readFileSync(path.join(root, 'popup.js'), 'utf8');
+    const html = fs.readFileSync(path.join(extensionRoot, 'popup.html'), 'utf8');
+    const source = fs.readFileSync(path.join(extensionRoot, 'popup.js'), 'utf8');
     const document = new JSDOM(html).window.document;
     const ids = [...source.matchAll(/\bel\('([^']+)'\)/g)].map((match) => match[1]);
 
@@ -115,8 +120,8 @@ describe('store package contracts', () => {
   });
 
   test('keeps the generated popup logo and theme color tokens synchronized', () => {
-    const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
-    const css = fs.readFileSync(path.join(root, 'popup.css'), 'utf8');
+    const html = fs.readFileSync(path.join(extensionRoot, 'popup.html'), 'utf8');
+    const css = fs.readFileSync(path.join(extensionRoot, 'popup.css'), 'utf8');
     const generatedBlock = html.match(/<!-- icon:start -->[\s\S]*?<!-- icon:end -->/);
 
     assert.ok(generatedBlock, 'popup.html is missing its generated icon block');
@@ -139,7 +144,7 @@ describe('store package contracts', () => {
   });
 
   test('uses a real repository URL and valid PNG icon dimensions', () => {
-    const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
+    const html = fs.readFileSync(path.join(extensionRoot, 'popup.html'), 'utf8');
     const document = new JSDOM(html).window.document;
     assert.equal(
       document.querySelector('.github-link').href,
@@ -147,7 +152,7 @@ describe('store package contracts', () => {
     );
 
     for (const [file, expectedSize] of PNG_DIMENSIONS) {
-      const png = fs.readFileSync(path.join(root, file));
+      const png = fs.readFileSync(path.join(extensionRoot, file));
       assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
       assert.equal(png.readUInt32BE(16), expectedSize, `${file} width`);
       assert.equal(png.readUInt32BE(20), expectedSize, `${file} height`);
@@ -185,14 +190,14 @@ describe('store package contracts', () => {
   });
 
   test('ships no remote code or extension-originated network clients', () => {
-    const html = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
+    const html = fs.readFileSync(path.join(extensionRoot, 'popup.html'), 'utf8');
     const document = new JSDOM(html).window.document;
     for (const script of document.querySelectorAll('script[src]')) {
       assert.equal(new URL(script.src, 'https://extension.invalid/').origin, 'https://extension.invalid');
     }
 
     for (const file of SOURCE_FILES.filter((source) => source.endsWith('.js'))) {
-      const source = fs.readFileSync(path.join(root, file), 'utf8');
+      const source = fs.readFileSync(path.join(extensionRoot, file), 'utf8');
       assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource)\b/, file);
       assert.doesNotMatch(source, /\b(?:RTCPeerConnection|RTCDataChannel)\b/, file);
       assert.doesNotMatch(source, /\b(?:unload|beforeunload)\b/, file);
@@ -204,7 +209,7 @@ describe('store package contracts', () => {
     run(process.execPath, ['scripts/build-extension.js', 'chromium']);
     run(process.execPath, ['scripts/build-extension.js', 'firefox']);
 
-    const chromium = readJson('manifest.json');
+    const chromium = readJson('extension/manifest.json');
     const builtChromium = readJson('dist/chromium/manifest.json');
     const firefox = readJson('dist/firefox/manifest.json');
     assert.deepEqual(builtChromium, chromium);
@@ -227,7 +232,7 @@ describe('store package contracts', () => {
     for (const target of ['chromium', 'firefox']) {
       for (const file of SOURCE_FILES) {
         assert.equal(
-          fs.readFileSync(path.join(root, file), 'utf8'),
+          fs.readFileSync(path.join(extensionRoot, file), 'utf8'),
           fs.readFileSync(path.join(root, 'dist', target, file), 'utf8'),
           `${target} build changed ${file}`
         );
