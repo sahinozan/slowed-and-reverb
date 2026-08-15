@@ -265,6 +265,10 @@ describe('store package contracts', () => {
     assert.match(workflow, /npm@11\.19\.0/);
     assert.match(workflow, /os:\s+\[ubuntu-latest, windows-latest\]/);
     assert.match(workflow, /npm run test:e2e/);
+    assert.match(workflow, /push:\s+branches:\s+\[main\]/);
+    assert.match(workflow, /node scripts\/classify-ci-changes\.js/);
+    assert.match(workflow, /name:\s+Lint, test, and package/);
+    assert.match(workflow, /needs:\s+\[classify, repository-checks, browser-smoke\]/);
     assert.equal(fs.existsSync(path.join(root, '.github/dependabot.yml')), true);
   });
 

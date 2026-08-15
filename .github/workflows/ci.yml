@@ -2,6 +2,7 @@ name: Checks
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -9,12 +10,64 @@ permissions:
   contents: read
 
 concurrency:
-  group: checks-${{ github.workflow }}-${{ github.ref }}
+  group: checks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  checks:
-    name: Lint, test, and package
+  classify:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.changes.outputs.full }}
+      browser: ${{ steps.changes.outputs.browser }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.19.0
+
+      - name: Classify changed paths
+        id: changes
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "browser=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            range="$BASE_SHA...$HEAD_SHA"
+          elif git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+            range="$BEFORE_SHA..$HEAD_SHA"
+          else
+            range="$HEAD_SHA^..$HEAD_SHA"
+          fi
+
+          git diff --check "$range"
+          git diff --name-only -z "$range" |
+            node scripts/classify-ci-changes.js >> "$GITHUB_OUTPUT"
+
+  repository-checks:
+    name: Repository checks
+    needs: classify
+    if: needs.classify.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -46,6 +99,8 @@ jobs:
 
   browser-smoke:
     name: Browser smoke (${{ matrix.os }})
+    needs: classify
+    if: needs.classify.outputs.browser == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -87,3 +142,36 @@ jobs:
             test-results/
           if-no-files-found: warn
           retention-days: 14
+
+  required-gate:
+    name: Lint, test, and package
+    needs: [classify, repository-checks, browser-smoke]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every applicable check
+        shell: bash
+        env:
+          BROWSER_REQUIRED: ${{ needs.classify.outputs.browser }}
+          BROWSER_RESULT: ${{ needs.browser-smoke.result }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          FULL_REQUIRED: ${{ needs.classify.outputs.full }}
+          FULL_RESULT: ${{ needs.repository-checks.result }}
+        run: |
+          set -euo pipefail
+
+          [[ "$CLASSIFY_RESULT" == "success" ]]
+
+          if [[ "$FULL_REQUIRED" == "true" ]]; then
+            [[ "$FULL_RESULT" == "success" ]]
+          else
+            [[ "$FULL_RESULT" == "skipped" ]]
+          fi
+
+          if [[ "$BROWSER_REQUIRED" == "true" ]]; then
+            [[ "$BROWSER_RESULT" == "success" ]]
+          else
+            [[ "$BROWSER_RESULT" == "skipped" ]]
+          fi
