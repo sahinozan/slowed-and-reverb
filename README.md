@@ -113,8 +113,6 @@ npm run site:assets       # re-render the popup images used by the website
 The public website lives in [site/](site/README.md): static HTML, CSS, and one
 small script, served at [slowedreverbapp.com](https://slowedreverbapp.com).
 
-Publication preparation is tracked in [STORE_RELEASE_PLAN.md](STORE_RELEASE_PLAN.md).
-
 The root manifest targets Chromium. Target builds emit clean, allowlisted
 directories under `dist/`; `npm run package` creates one upload ZIP per store in
 `dist/packages/`. The Firefox version receives Firefox's MV3 background
