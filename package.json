@@ -20,7 +20,7 @@
     "test:watch": "node --test --test-concurrency=1 --watch"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.0",
+    "@playwright/test": "1.62.1",
     "adm-zip": "0.6.0",
     "eslint": "10.8.0",
     "jsdom": "30.0.1",
