@@ -40,6 +40,13 @@ does not need the Chrome promotional images.
 
 `qa/icon-light-dark.png` is an internal contrast check, not a store upload.
 
+## Original captures
+
+The four unmodified 5120 × 2880 screenshots from August 11, 2026 are archived in
+[`originals/2026-08-11/`](originals/2026-08-11/). The archive README records their
+original filenames and SHA-256 checksums. Keep these tracked originals for future
+marketing work; `source-captures/` remains an ignored local renderer input folder.
+
 ## Rebuilding
 
 Place the three full-resolution, signed-out source captures at:
