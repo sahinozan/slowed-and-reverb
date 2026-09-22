@@ -474,7 +474,7 @@ async function cleanupSpotifyPermission() {
 async function cleanupYouTubePermissions(removedOrigins) {
   const pageOrigins = new Set(
     [...removedOrigins]
-      .map((origin) => getOrigin(origin.replace('*', '')))
+      .map((origin) => getOrigin(origin.replaceAll('*', '')))
       .filter(Boolean)
   );
   const storedTabs = await storedTabStatesForOrigins(pageOrigins);

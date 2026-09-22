@@ -298,7 +298,7 @@
     if (media.readyState >= HAVE_METADATA && !Number.isFinite(media.duration)) return true;
     // YouTube DVR streams report a finite duration; this class marks the live head.
     return (
-      location.hostname.endsWith('youtube.com') &&
+      (location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com') &&
       document.querySelector('.ytp-live-badge-is-livehead') !== null
     );
   }
