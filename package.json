@@ -23,7 +23,7 @@
     "@playwright/test": "1.63.0",
     "adm-zip": "0.6.1",
     "eslint": "10.10.0",
-    "jsdom": "30.0.1",
+    "jsdom": "30.1.0",
     "web-ext": "10.7.0"
   },
   "engines": {
