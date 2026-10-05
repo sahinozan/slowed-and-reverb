@@ -13,18 +13,21 @@ const browserGlobals = {
   URL: 'readonly',
   Float32Array: 'readonly',
   chrome: 'readonly',
-  browser: 'readonly'
+  browser: 'readonly',
+  importScripts: 'readonly',
+  SlowedReverbSettings: 'readonly'
 };
 
 module.exports = [
   {
     // The site embeds a verbatim copy of the popup, linted at its source.
-    ignores: ['dist/**', 'site/popup/popup.js']
+    ignores: ['dist/**', 'site/popup/popup.js', 'site/popup/settings.js']
   },
   {
     files: [
       'extension/background.js',
       'extension/content.js',
+      'extension/settings.js',
       'extension/popup.js',
       'extension/spotify-bridge.js',
       'extension/spotify-main.js'
@@ -119,6 +122,7 @@ module.exports = [
         __dirname: 'readonly',
         clearTimeout: 'readonly',
         console: 'readonly',
+        fetch: 'readonly',
         process: 'readonly',
         setImmediate: 'readonly',
         setTimeout: 'readonly',

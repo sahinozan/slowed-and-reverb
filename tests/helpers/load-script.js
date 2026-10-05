@@ -6,6 +6,10 @@ const vm = require('vm');
 
 const root = path.join(__dirname, '..', '..');
 
+function runFile(context, file) {
+  vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context, { filename: file });
+}
+
 function loadScript(file, globals = {}) {
   const context = vm.createContext({
     console,
@@ -14,8 +18,11 @@ function loadScript(file, globals = {}) {
     URL,
     ...globals
   });
-  const source = fs.readFileSync(path.join(root, file), 'utf8');
-  vm.runInContext(source, context, { filename: file });
+  // Like a service worker, scripts can load files next to themselves.
+  context.importScripts = (...names) => {
+    for (const name of names) runFile(context, path.join(path.dirname(file), name));
+  };
+  runFile(context, file);
   return context;
 }
 

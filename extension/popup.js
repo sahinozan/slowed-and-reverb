@@ -1,20 +1,7 @@
 const api = typeof browser !== 'undefined' ? browser : chrome;
 
-const DEFAULT_SETTINGS = Object.freeze({
-  speed: 1.0,
-  reverb: 0,
-  echo: 0,
-  pan: 0,
-  width: 100,
-  keepPitch: false,
-  saturation: 0,
-  eqLow: 0,
-  eqMid: 0,
-  eqHigh: 0
-});
-
-const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS);
-const SPEED_EPSILON = 0.001;
+// Defaults, presets and comparison come from settings.js, loaded before this file.
+const { DEFAULTS: DEFAULT_SETTINGS, match: settingsMatch } = SlowedReverbSettings;
 const SPOTIFY_HOST = 'open.spotify.com';
 const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';
 const IS_FIREFOX = Boolean(api.runtime.getManifest?.().browser_specific_settings?.gecko);
@@ -29,10 +16,13 @@ const FIREFOX_YOUTUBE_PERMISSIONS = Object.freeze({
   }
 });
 
-const PRESETS = Object.freeze({
-  slowed: Object.freeze({ name: 'Slowed + Reverb', ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 }),
-  nightcore: Object.freeze({ name: 'Nightcore', ...DEFAULT_SETTINGS, speed: 1.2 })
-});
+// The built-in presets, with the names the popup shows.
+const PRESETS = Object.freeze(Object.fromEntries(
+  Object.entries(SlowedReverbSettings.PRESETS).map(([id, settings]) => [
+    id,
+    Object.freeze({ name: SlowedReverbSettings.PRESET_NAMES[id], ...settings })
+  ])
+));
 
 const ICONS = {
   on: { 16: 'assets/icon16.png', 48: 'assets/icon48.png', 128: 'assets/icon128.png' },
@@ -77,14 +67,6 @@ const el = (id) => document.getElementById(id);
 const toInt = (value) => Number.parseInt(value, 10);
 const percent = (value) => `(${value}%)`;
 
-function settingsMatch(a, b) {
-  return SETTING_KEYS.every((key) => {
-    const left = a[key] ?? DEFAULT_SETTINGS[key];
-    const right = b[key] ?? DEFAULT_SETTINGS[key];
-    return key === 'speed' ? Math.abs(left - right) < SPEED_EPSILON : left === right;
-  });
-}
-
 async function recallTabState(tabId, url) {
   return api.runtime
     .sendMessage({ type: 'GET_TAB_STATE', tabId, url })
@@ -98,7 +80,7 @@ async function getActiveTab() {
 
 async function ensureContentScript(tabId) {
   try {
-    await api.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    await api.scripting.executeScript({ target: { tabId }, files: ['settings.js', 'content.js'] });
     return true;
   } catch {
     return false;

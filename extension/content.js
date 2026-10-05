@@ -5,18 +5,9 @@
 
   const api = typeof browser !== 'undefined' ? browser : chrome;
 
-  const NEUTRAL_SETTINGS = Object.freeze({
-    speed: 1.0,
-    reverb: 0,
-    echo: 0,
-    pan: 0,
-    width: 100,
-    keepPitch: false,
-    saturation: 0,
-    eqLow: 0,
-    eqMid: 0,
-    eqHigh: 0
-  });
+  // The defaults from settings.js, which is injected before this file; they also
+  // mean "effect off".
+  const NEUTRAL_SETTINGS = SlowedReverbSettings.DEFAULTS;
 
   const EQ_LOW_FREQUENCY = 200;
   const EQ_MID_FREQUENCY = 1000;

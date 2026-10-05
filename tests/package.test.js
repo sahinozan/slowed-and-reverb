@@ -13,6 +13,7 @@ const { visibleBounds } = require('./helpers/png');
 const { root } = require('./helpers/load-script');
 const extensionRoot = path.join(root, 'extension');
 const SOURCE_FILES = [
+  'settings.js',
   'background.js',
   'content.js',
   'spotify-bridge.js',
@@ -239,7 +240,7 @@ describe('store package contracts', () => {
     const builtChromium = readJson('dist/chromium/manifest.json');
     const firefox = readJson('dist/firefox/manifest.json');
     assert.deepEqual(builtChromium, chromium);
-    assert.deepEqual(firefox.background, { scripts: ['background.js'] });
+    assert.deepEqual(firefox.background, { scripts: ['settings.js', 'background.js'] });
     assert.equal('service_worker' in firefox.background, false);
     assert.deepEqual(firefox.browser_specific_settings.gecko.data_collection_permissions, {
       required: ['none']

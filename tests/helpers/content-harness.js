@@ -180,6 +180,8 @@ async function createContentHarness(options = {}) {
     }
   };
 
+  // The background script injects settings.js before content.js.
+  window.eval(fs.readFileSync(`${root}/extension/settings.js`, 'utf8'));
   const source = fs.readFileSync(`${root}/extension/content.js`, 'utf8');
   window.eval(source);
   await flushPromises();
