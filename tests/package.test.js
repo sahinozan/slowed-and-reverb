@@ -30,10 +30,10 @@ const PNG_DIMENSIONS = new Map([
 ]);
 const STORE_ASSET_DIMENSIONS = new Map([
   ['store-assets/screenshots/01-youtube.png', [1280, 800]],
-  ['store-assets/screenshots/02-youtube-music.png', [1280, 800]],
-  ['store-assets/screenshots/03-spotify.png', [1280, 800]],
-  ['store-assets/screenshots/04-controls.png', [1280, 800]],
-  ['store-assets/screenshots/05-themes.png', [1280, 800]],
+  ['store-assets/screenshots/02-spotify.png', [1280, 800]],
+  ['store-assets/screenshots/03-advanced.png', [1280, 800]],
+  ['store-assets/screenshots/04-presets.png', [1280, 800]],
+  ['store-assets/screenshots/05-privacy.png', [1280, 800]],
   ['store-assets/chrome/promotional-tile-440x280.png', [440, 280]],
   ['store-assets/chrome/marquee-1400x560.png', [1400, 560]]
 ]);
@@ -183,7 +183,11 @@ describe('store package contracts', () => {
       '01-youtube-basic.png',
       '02-youtube-music-eq.png',
       '03-spotify-web-player.png',
-      '04-presets-controls.png'
+      '04-presets-controls.png',
+      '02-youtube-music.png',
+      '03-spotify.png',
+      '04-controls.png',
+      '05-themes.png'
     ]) {
       assert.equal(fs.existsSync(path.join(root, 'store-assets/screenshots', legacyName)), false);
     }

@@ -101,6 +101,16 @@ describe('website', () => {
     assert.ok(fs.existsSync(path.join(siteRoot, 'assets', 'audio', 'CREDITS.txt')));
   });
 
+  test('the social preview image matches what the pages declare', () => {
+    const png = fs.readFileSync(path.join(siteRoot, 'assets', 'og-card.png'));
+    const size = [png.readUInt32BE(16), png.readUInt32BE(20)];
+    for (const page of PAGES.filter((name) => name !== '404.html')) {
+      const document = parse(page);
+      const meta = (property) => Number(document.querySelector(`meta[property="${property}"]`).getAttribute('content'));
+      assert.deepEqual([meta('og:image:width'), meta('og:image:height')], size, page);
+    }
+  });
+
   test('pages link to clean addresses, not .html files', () => {
     for (const page of PAGES) {
       for (const { value } of references(parse(page))) {

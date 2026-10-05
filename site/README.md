@@ -80,8 +80,8 @@ Using another weight or axis value in `styles.css` means making the file again.
 
 `assets/icon.svg` is a copy of the shipped extension icon. `assets/brand/` holds
 the Chrome and Firefox logos used inside the store buttons, with their sources
-in `NOTICE.txt`. `assets/og-card.png` is the social preview image; it is the
-store marquee, so it changes when the store art does.
+in `NOTICE.txt`. `assets/og-card.png` is the 1200 × 630 social preview image,
+drawn by `npm run store:assets` together with the store art.
 
 ## Deploying
 
