@@ -2,11 +2,11 @@
 
 // Shared plumbing for rendering the production popup outside the browser.
 //
-// Both the store art (scripts/render-store-assets.js) and the site art
-// (scripts/render-site-assets.js) load the real popup.html, popup.css, and
-// popup.js over a local server with a stubbed extension API, so every image is
-// the shipping UI rather than a mockup of it. The stub lives here once: it has
-// to match what popup.js asks of chrome.*, and two copies would drift.
+// The store art (scripts/render-store-assets.js) loads the real popup.html,
+// popup.css, and popup.js over a local server with a stubbed extension API, so
+// every image is the shipping UI rather than a mockup of it. The stub has to
+// match what popup.js asks of chrome.*. (The website runs the popup live with
+// its own small host, site/popup/popup-host.js.)
 
 const fs = require('fs');
 const http = require('http');

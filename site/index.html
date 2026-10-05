@@ -1,321 +1,218 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="pink">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Slowed &amp; Reverb: free, open-source audio effects for YouTube, YouTube Music, and Spotify</title>
-<meta name="description" content="A browser extension that slows, reverbs, and reshapes audio in real time on YouTube, YouTube Music, and the Spotify web player. Every control unlocked, MIT licensed, processed on your device.">
-<meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#12060d">
-<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<title>Slowed &amp; Reverb – a free Slowed + Reverb extension for YouTube and Spotify</title>
+<meta name="description" content="A free browser extension that slows down songs on YouTube, YouTube Music and Spotify and adds reverb while they play. Nothing to download, no account and no ads.">
 <link rel="canonical" href="https://slowedreverbapp.com/">
-<link rel="stylesheet" href="styles.css">
-
-<!-- Social crawlers ignore relative paths, so these stay absolute. -->
+<meta name="theme-color" content="#000000">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="Slowed &amp; Reverb">
 <meta property="og:url" content="https://slowedreverbapp.com/">
 <meta property="og:title" content="Slowed &amp; Reverb">
-<meta property="og:description" content="Real-time speed, reverb, EQ, and stereo effects for YouTube, YouTube Music, and Spotify. Free, open source, no paid tier.">
+<meta property="og:description" content="A free browser extension that slows down songs on YouTube, YouTube Music and Spotify and adds reverb while they play. Nothing to download, no account and no ads.">
 <meta property="og:image" content="https://slowedreverbapp.com/assets/og-card.png">
+<meta property="og:image:width" content="1400">
+<meta property="og:image:height" content="560">
 <meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<script src="site.js"></script>
 </head>
 <body>
 
+<svg hidden aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="g-github" viewBox="0 0 24 24"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></symbol>
+</svg>
 <a class="skip" href="#main">Skip to content</a>
-
-<header class="masthead">
-  <a class="lockup" href="#main" aria-label="Slowed &amp; Reverb, home">
-    <img class="mark" src="assets/icon.svg" alt="" width="26" height="26">
-    <span>Slowed &amp; Reverb</span>
-  </a>
-  <nav aria-label="Sections">
-    <a href="#why">Why</a>
-    <a href="#controls">Controls</a>
-    <a href="#privacy">Privacy</a>
-    <a href="https://github.com/sahinozan/slowed-and-reverb">Source</a>
-  </nav>
+<header class="top wrap">
+  <span class="lockup"><svg class="mark" viewBox="0 0 128 128" aria-hidden="true"><defs><linearGradient id="mark-fill" gradientUnits="userSpaceOnUse" x1="8" y1="64" x2="120" y2="64"><stop class="mark-light" offset="0"/><stop class="mark-middle" offset="0.5"/><stop class="mark-dark" offset="1"/></linearGradient><linearGradient id="mark-shine" gradientUnits="userSpaceOnUse" x1="64" y1="4" x2="64" y2="124"><stop offset="0" stop-color="#ffffff" stop-opacity="0.34"/><stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/></linearGradient></defs><g fill="url(#mark-fill)"><rect x="8" y="40" width="16" height="48" rx="8"/><rect x="32" y="24" width="16" height="80" rx="8"/><rect x="56" y="4" width="16" height="120" rx="8"/><rect x="80" y="24" width="16" height="80" rx="8"/><rect x="104" y="40" width="16" height="48" rx="8"/></g><g class="mark-sheen" fill="url(#mark-shine)"><rect x="8" y="40" width="16" height="48" rx="8"/><rect x="32" y="24" width="16" height="80" rx="8"/><rect x="56" y="4" width="16" height="120" rx="8"/><rect x="80" y="24" width="16" height="80" rx="8"/><rect x="104" y="40" width="16" height="48" rx="8"/></g></svg> Slowed &amp; Reverb</span>
+  <nav aria-label="Pages"><a href="index.html" aria-current="page">Home</a><a href="guide.html">How to use</a><a href="faq.html">Help</a><a href="privacy.html">Privacy</a></nav>
 </header>
-
 <main id="main">
+  <section class="deck wrap">
+    <h1 id="title">Slowed + Reverb for YouTube and Spotify</h1>
+    <p class="lede">
+      Slow down the song you're playing on YouTube, YouTube Music or Spotify and add reverb
+      with one click. It changes the song while it plays, so there's nothing to download or
+      convert.
+    </p>
 
-  <!-- ── Hero ─────────────────────────────────────────────────────────────── -->
-  <section class="hero">
-    <div class="hero-copy">
-      <p class="eyebrow">MIT licensed · No account · No telemetry</p>
-      <h1>Every control. No paid tier.</h1>
-      <p class="lede">
-        Real-time speed, reverb, EQ, and stereo effects for YouTube™, YouTube Music™,
-        and the Spotify web player. The audio never leaves your machine, and there is
-        nothing to unlock.
-      </p>
+    <figure class="cassette" aria-label="A cassette whose reels turn at the chosen speed">
+      <svg viewBox="0 0 720 460" aria-hidden="true">
+        <defs>
+          <clipPath id="label-clip"><rect x="48" y="36" width="624" height="256" rx="10"/></clipPath>
+        </defs>
+        <rect class="shell" x="2" y="2" width="716" height="456" rx="28"/>
+        <rect class="shell-line" x="12" y="12" width="696" height="436" rx="22" fill="none" stroke-width="2"/>
 
-      <div class="actions">
-        <a class="button primary" href="https://chromewebstore.google.com/detail/slowed-reverb/nhndfhonlljbmkpnblndjfdefjoecpoa">Get for Chrome</a>
-        <a class="button" href="https://addons.mozilla.org/firefox/addon/slowed-reverb/">Get for Firefox</a>
-        <a class="button ghost" href="https://github.com/sahinozan/slowed-and-reverb">View on GitHub</a>
-      </div>
-      <p class="note">
-        Available from the Chrome Web Store and Firefox Add-ons.
-      </p>
-    </div>
+        <rect class="label" x="48" y="36" width="624" height="256" rx="10"/>
+        <g clip-path="url(#label-clip)">
+          <g transform="rotate(-9 360 240)">
+            <rect class="stripe-a" x="-40" y="228" width="800" height="30"/>
+            <rect class="stripe-b" x="-40" y="262" width="800" height="30"/>
+            <rect class="stripe-c" x="-40" y="296" width="800" height="30"/>
+          </g>
+        </g>
+        <text class="typed title" x="76" y="88">Slowed &amp; Reverb</text>
+        <line class="label-rule" x1="76" y1="104" x2="644" y2="104" stroke-width="1" stroke-dasharray="1 3"/>
+        <text class="typed sub" x="76" y="134">side A</text>
+        <text class="typed sub" id="label-speed" x="644" y="134" text-anchor="end">speed 0.80×</text>
 
-    <!-- Signature: the bar motif from the store art, wired to a real speed control.
-         Spacing and bar weight are a readout of the rate, exactly as the extension
-         retimes playback. -->
-    <figure class="instrument">
-      <figcaption class="instrument-head">
-        <span class="tag">Speed</span>
-        <output id="readout" for="speed">1.00x <span class="dim">/ 0.0 st</span></output>
-      </figcaption>
-      <div class="field" id="field" aria-hidden="true"></div>
-      <label class="sr-only" for="speed">Demo speed</label>
-      <input id="speed" type="range" min="0.5" max="1.5" step="0.05" value="0.8">
-      <p class="instrument-foot">
-        Pitch follows speed, like tape. Turn that off and the extension time-stretches instead.
-      </p>
+        <rect class="window" x="150" y="150" width="420" height="128" rx="64"/>
+        <rect class="window-line" x="150" y="150" width="420" height="128" rx="64" fill="none" stroke-width="3"/>
+
+        <circle class="tape" cx="250" cy="214" r="56"/>
+        <circle class="tape" cx="470" cy="214" r="38"/>
+        <line class="tape-line" x1="250" y1="270" x2="470" y2="270" stroke-width="3"/>
+
+        <g id="reel-left">
+          <circle class="hub" cx="250" cy="214" r="26"/>
+          <circle class="hub-hole" cx="250" cy="214" r="9"/>
+          <g class="teeth">
+            <rect x="247" y="190" width="6" height="10" rx="1"/>
+            <rect x="247" y="228" width="6" height="10" rx="1"/>
+            <rect x="247" y="190" width="6" height="10" rx="1" transform="rotate(60 250 214)"/>
+            <rect x="247" y="228" width="6" height="10" rx="1" transform="rotate(60 250 214)"/>
+            <rect x="247" y="190" width="6" height="10" rx="1" transform="rotate(120 250 214)"/>
+            <rect x="247" y="228" width="6" height="10" rx="1" transform="rotate(120 250 214)"/>
+          </g>
+        </g>
+        <g id="reel-right">
+          <circle class="hub" cx="470" cy="214" r="26"/>
+          <circle class="hub-hole" cx="470" cy="214" r="9"/>
+          <g class="teeth">
+            <rect x="467" y="190" width="6" height="10" rx="1"/>
+            <rect x="467" y="228" width="6" height="10" rx="1"/>
+            <rect x="467" y="190" width="6" height="10" rx="1" transform="rotate(60 470 214)"/>
+            <rect x="467" y="228" width="6" height="10" rx="1" transform="rotate(60 470 214)"/>
+            <rect x="467" y="190" width="6" height="10" rx="1" transform="rotate(120 470 214)"/>
+            <rect x="467" y="228" width="6" height="10" rx="1" transform="rotate(120 470 214)"/>
+          </g>
+        </g>
+
+        <path class="plate" d="M148 458 L176 322 H544 L572 458 Z"/>
+        <g class="holes">
+          <circle cx="212" cy="400" r="13"/><circle cx="508" cy="400" r="13"/>
+          <circle cx="298" cy="412" r="9"/><circle cx="422" cy="412" r="9"/>
+          <rect x="338" y="386" width="44" height="34" rx="4"/>
+        </g>
+        <g class="screws" stroke-width="1.5">
+          <circle cx="26" cy="26" r="6"/><circle cx="694" cy="26" r="6"/>
+          <circle cx="26" cy="434" r="6"/><circle cx="694" cy="434" r="6"/>
+        </g>
+      </svg>
     </figure>
+
+    <div class="transport">
+      <button class="play" id="play" type="button" aria-pressed="false" aria-label="Play the demo song">
+        <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>
+        <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>
+      </button>
+      <label for="speed">Speed</label>
+      <input id="speed" type="range" min="0.5" max="1.5" step="0.05" value="0.8" aria-valuetext="0.80×">
+      <span id="speed-out">0.80×</span>
+    </div>
+    <p class="play-error" id="play-error" role="alert" hidden></p>
+    <p class="transport-note">Press play to hear a short clip, then drag the slider. The song is <a href="https://ccmixter.org/files/AlexBeroza/31670">“Start Again”</a> by Alex Beroza featuring Snowflake &amp; Subliminal (<a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>), shortened to 24 seconds and made quieter.</p>
+
+    <div class="actions">
+      <a class="button brand-chrome" href="https://chromewebstore.google.com/detail/slowed-reverb/nhndfhonlljbmkpnblndjfdefjoecpoa">
+        <img class="ico ico-color" src="assets/brand/chrome-color.svg" alt="" width="20" height="20">
+        <span class="label">Add to Chrome</span>
+      </a>
+      <a class="button brand-firefox" href="https://addons.mozilla.org/firefox/addon/slowed-reverb/">
+        <img class="ico ico-color" src="assets/brand/firefox-color.svg" alt="" width="20" height="20">
+        <span class="label">Add to Firefox</span>
+      </a>
+    </div>
+    <p class="actions-note">Using Edge or Brave? Use the Chrome button.</p>
   </section>
 
-  <!-- ── Thesis ───────────────────────────────────────────────────────────── -->
-  <section class="band" id="why">
-    <div class="wrap">
-      <p class="eyebrow">Why it exists</p>
-      <h2>The effect is not a premium feature.</h2>
-      <p class="prose">
-        Audio effects for the browser usually arrive half-locked: a couple of sliders to
-        try, the interesting ones waiting behind a purchase. Slowed &amp; Reverb was built
-        the other way round. Everything it can do is available the moment you install it,
-        and it stays that way.
+  <section class="real"><div class="wrap real-grid">
+    <div class="copy">
+      <h2>Try it here</h2>
+      <p>
+        This is the same panel that opens when you click the extension's icon in your
+        browser. It works on this page too, so press play above and try the presets and
+        sliders on the song.
       </p>
+      <p>
+        Slowed + Reverb and Nightcore are built in. When you find a sound you like, you can
+        save it under My Presets and use it again later. The palette icon changes the colors
+        of the panel and of this page.
+      </p>
+      <p><a href="guide.html">See what every button and slider does</a></p>
+    </div>
+    <figure class="panel">
+      <div class="popup-fit"><iframe id="popup" src="popup/popup.html" title="The Slowed &amp; Reverb panel" width="340" height="492" scrolling="no"></iframe></div>
+    </figure>
+  </div></section>
 
-      <ul class="claims">
+  <section class="proof"><div class="wrap proof-grid">
+    <div>
+      <h2 id="start">Getting started</h2>
+      <ol class="steps">
+        <li>Add it to Chrome or Firefox with one of the buttons above.</li>
         <li>
-          <h3>Everything unlocked</h3>
-          <p>
-            No trial, no upgrade prompt, no effect saved for a paid version. What you see
-            on install is the whole thing.
-          </p>
+          Pin it so it's easy to find. Click the puzzle-piece icon next to the address bar.
+          In Chrome, click the pin next to Slowed &amp; Reverb. In Firefox, click the gear next
+          to it and choose Pin to Toolbar.
         </li>
         <li>
-          <h3>Nothing tracked</h3>
-          <p>
-            No account, no analytics, no ads. Your music is processed on your own computer
-            and is never uploaded anywhere.
-          </p>
+          Play a song on YouTube, YouTube Music or Spotify in your browser, then click the
+          Slowed &amp; Reverb icon. Slowed + Reverb turns on right away.
         </li>
-        <li>
-          <h3>Open to read</h3>
-          <p>
-            The complete source is public under the MIT license, so anyone can check what
-            it does or build their own version.
-          </p>
-        </li>
-      </ul>
-      <p class="prose after-claims">
-        <a href="https://github.com/sahinozan/slowed-and-reverb">View the repository</a>
-      </p>
-    </div>
-  </section>
-
-  <!-- ── Screens ──────────────────────────────────────────────────────────── -->
-  <section class="shots" id="screens">
-    <div class="wrap">
-      <p class="eyebrow">What it looks like</p>
-      <h2>One popup, on the tab you are already playing.</h2>
-
-      <!-- Every frame below is the real popup, rendered from popup.html at 3x by
-           `npm run site:assets`. Update the width and height attributes from that
-           command's output when a panel changes size. -->
-      <div class="showcase">
-        <img class="popup" src="assets/popup-basic.png" width="1020" height="1476"
-             alt="The Slowed &amp; Reverb popup with the Slowed + Reverb preset applied: speed at 0.80x, reverb at 40%, and a flat EQ." decoding="async">
-        <div class="showcase-copy">
-          <p>
-            Everything the extension does fits in one panel. Presets sit at the top, speed
-            and reverb under them, and the three bands of EQ at the bottom can be dragged
-            into shape while the track keeps playing.
-          </p>
-          <p>
-            The switch in the header turns the effect off for that tab, and the palette
-            icon beside it changes the look.
-          </p>
-        </div>
-      </div>
-
-      <ul class="frames">
-        <li>
-          <img class="popup" src="assets/popup-advanced.png" width="1020" height="1164"
-               alt="The Advanced tab of the popup, showing echo, pan, width, and saturation sliders." loading="lazy" decoding="async">
-          <p>
-            <strong>Advanced</strong> adds echo, panning, stereo width, and saturation,
-            plus the option to slow a track down without the pitch dropping.
-          </p>
-        </li>
-        <li>
-          <img class="popup" src="assets/popup-presets.png" width="1020" height="1710"
-               alt="The My Presets tab of the popup with two saved presets, Dreamy Wide and Night Drive." loading="lazy" decoding="async">
-          <p>
-            <strong>My Presets</strong> saves a mix you like under a name. It is stored on
-            your computer and is one click away the next time.
-          </p>
-        </li>
-      </ul>
-
-      <div class="themes">
-        <p class="eyebrow small">Four themes</p>
-        <ul>
-          <li>
-            <img class="popup" src="assets/popup-theme-terminal.png" width="680" height="984" alt="The popup in the Terminal theme, pink on black." loading="lazy" decoding="async">
-            <span>Terminal</span>
-          </li>
-          <li>
-            <img class="popup" src="assets/popup-theme-midnight.png" width="680" height="984" alt="The popup in the Midnight theme, green on deep purple." loading="lazy" decoding="async">
-            <span>Midnight</span>
-          </li>
-          <li>
-            <img class="popup" src="assets/popup-theme-paper.png" width="680" height="984" alt="The popup in the Paper theme, purple on off-white." loading="lazy" decoding="async">
-            <span>Paper</span>
-          </li>
-          <li>
-            <img class="popup" src="assets/popup-theme-frost.png" width="680" height="984" alt="The popup in the Frost theme, blue on pale grey." loading="lazy" decoding="async">
-            <span>Frost</span>
-          </li>
-        </ul>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Controls ─────────────────────────────────────────────────────────── -->
-  <section class="band" id="controls">
-    <div class="wrap">
-      <p class="eyebrow">Controls</p>
-      <h2>Start quickly. Fine-tune when you want.</h2>
-
-      <div class="tables">
-        <table>
-          <caption>Basic</caption>
-          <thead><tr><th scope="col">Control</th><th scope="col">Range</th></tr></thead>
-          <tbody>
-            <tr><th scope="row">Speed</th><td>0.5x – 1.5x <span class="dim">the pitch drops with it, the way tape does</span></td></tr>
-            <tr><th scope="row">Reverb</th><td>0 – 100% <span class="dim">from a small room to a long, washed-out tail</span></td></tr>
-            <tr><th scope="row">EQ</th><td>bass, mid, treble <span class="dim">drag the curve, or nudge it with the arrow keys</span></td></tr>
-          </tbody>
-        </table>
-
-        <table>
-          <caption>Advanced</caption>
-          <thead><tr><th scope="col">Control</th><th scope="col">Range</th></tr></thead>
-          <tbody>
-            <tr><th scope="row">Keep original pitch</th><td>on / off <span class="dim">slow the track down without the pitch dropping</span></td></tr>
-            <tr><th scope="row">Echo</th><td>0 – 100% <span class="dim">separate repeats, rather than reverb's wash</span></td></tr>
-            <tr><th scope="row">Pan</th><td>left – right <span class="dim">move the sound to one side</span></td></tr>
-            <tr><th scope="row">Width</th><td>0 – 200% <span class="dim">from mono to wider than your speakers</span></td></tr>
-            <tr><th scope="row">Saturation</th><td>0 – 100% <span class="dim">a warm tape and vinyl edge</span></td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <p class="prose tight">
-        Push the sliders as far as you like: a limiter runs quietly underneath to keep extreme
-        settings from distorting. Two presets are built in, your own mixes can be saved and
-        renamed, and keyboard shortcuts are there if you want them, with no keys assigned
-        until you choose them.
-      </p>
-    </div>
-  </section>
-
-  <!-- ── Scope ────────────────────────────────────────────────────────────── -->
-  <section class="scope" id="sites">
-    <div class="wrap">
-      <p class="eyebrow">Where it works</p>
-      <h2>Works where you already listen.</h2>
-    </div>
-    <div class="wrap split">
-      <div>
-        <ul class="list yes">
-          <li>YouTube™</li>
-          <li>YouTube Music™</li>
-          <li>Spotify web player <span class="dim">after you allow it</span></li>
-        </ul>
-        <p class="prose tight">
-          On any other website the extension stays off and changes nothing. More players
-          may be added later.
-        </p>
-      </div>
-      <div>
-        <p class="eyebrow small">Good to know</p>
-        <p class="prose tight">
-          Live streams can use every effect except speed, since the player keeps correcting
-          its own timing. Each tab remembers its own settings, so a newly opened one starts
-          clean.
-        </p>
-        <p class="prose tight">
-          Runs on desktop Chrome, Edge, Brave, and other Chromium browsers, plus Firefox 142
-          and later.
-        </p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Privacy ──────────────────────────────────────────────────────────── -->
-  <section class="band" id="privacy">
-    <div class="wrap">
-      <p class="eyebrow">Privacy</p>
-      <h2>It asks for access only when you use it.</h2>
-      <p class="prose">
-        Installing the extension grants it nothing. Access to a site begins the first time you
-        open the popup there, and Spotify is left alone until you choose to allow it. Your
-        music is processed on your own computer and your presets are saved there too, so
-        neither is ever sent anywhere. Anything you allow can be taken back at any time in
-        your browser's extension settings.
-      </p>
-      <p class="prose tight">
-        <a href="https://github.com/sahinozan/slowed-and-reverb/blob/main/PRIVACY.md">Full privacy policy</a> ·
-        <a href="https://github.com/sahinozan/slowed-and-reverb/blob/main/SECURITY.md">Security policy</a>
-      </p>
-    </div>
-  </section>
-
-  <!-- ── Close ────────────────────────────────────────────────────────────── -->
-  <section class="close" id="get">
-    <div class="wrap">
-      <h2>Free, and staying that way.</h2>
-      <div class="actions">
-        <a class="button primary" href="https://chromewebstore.google.com/detail/slowed-reverb/nhndfhonlljbmkpnblndjfdefjoecpoa">Get for Chrome</a>
-        <a class="button" href="https://addons.mozilla.org/firefox/addon/slowed-reverb/">Get for Firefox</a>
-        <a class="button ghost" href="https://github.com/sahinozan/slowed-and-reverb">View on GitHub</a>
-      </div>
+        <li>Change anything you like. The switch at the top turns it off again.</li>
+      </ol>
       <p class="note">
-        Install from the Chrome Web Store on Chrome, Edge, Brave, and other Chromium
-        browsers, or from Firefox Add-ons on desktop Firefox 142 and later.
+        On Spotify, the first time you use it, the panel shows an Allow on Spotify button.
+        Click it and accept your browser's question, and Spotify reloads once. Firefox asks the
+        same way for YouTube.
       </p>
     </div>
-  </section>
+    <div>
+      <h2>Free to use</h2>
+      <p>
+        There's no paid version and no account to make. The extension doesn't collect
+        anything about you or what you listen to, and it doesn't show ads. It only changes the
+        sound inside your browser. The code is public on GitHub if you'd like to check.
+      </p>
+      <p class="links">
+        <a href="privacy.html">Privacy policy</a>
+        <a class="brand-github" href="https://github.com/sahinozan/slowed-and-reverb"><svg class="ico ico-mono" aria-hidden="true"><use href="#g-github"/></svg><span class="label">Source code on GitHub</span></a>
+      </p>
 
+      <h2 class="later">Why I made it</h2>
+      <p>
+        I made this because the slowed + reverb extensions I tried were closed source and kept
+        their best features behind a subscription. I wanted one I could trust and just use.
+        So the code is public, it asks for as little access to your browser as it can, and
+        every feature is free.
+      </p>
+    </div>
+  </div></section>
 </main>
 
 <footer>
-  <div class="wrap foot">
-    <div class="lockup">
-      <img class="mark" src="assets/icon.svg" alt="" width="22" height="22">
-      <span>Slowed &amp; Reverb <span class="dim">1.0.0</span></span>
-    </div>
-    <nav aria-label="Project links">
-      <a href="https://github.com/sahinozan/slowed-and-reverb">GitHub</a>
-      <a href="https://github.com/sahinozan/slowed-and-reverb/issues">Report an issue</a>
-      <a href="https://github.com/sahinozan/slowed-and-reverb/blob/main/SUPPORT.md">Support</a>
-      <a href="https://github.com/sahinozan/slowed-and-reverb/blob/main/PRIVACY.md">Privacy</a>
-      <a href="https://github.com/sahinozan/slowed-and-reverb/blob/main/LICENSE">MIT License</a>
-    </nav>
-    <p class="fine">
-      Independently developed. Not affiliated with, endorsed by, or sponsored by Google or
-      Spotify. YouTube and YouTube Music are trademarks of Google LLC. Spotify is a trademark
-      of Spotify AB. Use of the extension remains subject to the terms of service of the sites
-      it runs on.
-    </p>
+  <div class="wrap">
+  <p class="links">
+    <span>Slowed &amp; Reverb 1.0.0</span>
+    <a href="changelog.html">Changelog</a>
+    <a href="faq.html#support">Help and bug reports</a>
+    <a class="brand-github" href="https://github.com/sahinozan/slowed-and-reverb"><svg class="ico ico-mono" aria-hidden="true"><use href="#g-github"/></svg><span class="label">Source code on GitHub</span></a>
+  </p>
+  <p>Works on computers in Chrome, Edge, Brave and other Chrome-based browsers, and in Firefox 142 or newer.</p>
+  <p>Made independently. Not affiliated with, endorsed by or sponsored by Google, Mozilla or Spotify.
+    YouTube, YouTube Music and Chrome are trademarks of Google LLC. Firefox is a trademark of the Mozilla
+    Foundation. Spotify is a trademark of Spotify AB.</p>
   </div>
 </footer>
 
+
+<script src="demo-audio.js"></script>
+<script src="popup-embed.js"></script>
 <script src="app.js" defer></script>
 </body>
 </html>

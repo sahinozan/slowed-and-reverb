@@ -10,6 +10,9 @@
   "name": "slowed-and-reverb",
   "compatibility_date": "2026-08-12",
   "assets": {
-    "directory": "./site"
+    "directory": "./site",
+    // Unknown addresses get site/404.html with a 404 status. Pages are served
+    // without ".html" (/guide), and site/.assetsignore keeps README.md private.
+    "not_found_handling": "404-page"
   }
 }

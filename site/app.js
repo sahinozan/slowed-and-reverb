@@ -1,94 +1,74 @@
 'use strict';
 
-// The hero field is a readout, not decoration: bar spacing and weight are
-// driven by the speed control the same way the extension retimes playback.
-// Slower rate means fewer, heavier bars. Without this script the CSS leaves an
-// evenly spaced field, which is exactly the 1.00x state.
+// The cassette, the fader and the popup are one instrument. The fader pushes
+// its value into the popup's own speed slider, so the popup stays the single
+// source of truth; whatever the popup applies drives the loop, the reels and
+// the headline.
 
 (function () {
-  const field = document.getElementById('field');
-  const slider = document.getElementById('speed');
-  const readout = document.getElementById('readout');
-  if (!field || !slider || !readout) return;
+  const frame = document.getElementById('popup');
+  const play = document.getElementById('play');
+  const speed = document.getElementById('speed');
+  const speedOut = document.getElementById('speed-out');
+  const label = document.getElementById('label-speed');
+  const playError = document.getElementById('play-error');
+  const reels = [
+    [document.getElementById('reel-left'), 250],
+    [document.getElementById('reel-right'), 470]
+  ];
 
-  const SVG_NS = 'http://www.w3.org/2000/svg';
-  const BASE_STEP = 26;
+  const DEGREES_PER_SECOND = 110;
+  const PLAY_ERRORS = {
+    blocked: 'Your browser blocked the sound. Press play again.',
+    failed: 'The demo song couldn\'t play in this browser.'
+  };
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let revealed = reduceMotion;
+  let rate = 0.8;
+  let angle = 0;
+  let last = null;
 
-  const barWidth = (rate) => Math.max(3, 3 + (1.5 - rate) * 9);
+  function show(settings, enabled) {
+    rate = enabled ? settings.speed : 1;
+    speedOut.textContent = `${rate.toFixed(2)}×`;
+    if (Math.abs(Number(speed.value) - rate) > 0.001) speed.value = String(rate);
+    speed.setAttribute('aria-valuetext', `${rate.toFixed(2)}×`);
+    label.textContent = `speed ${rate.toFixed(2)}×`;
+  }
 
-  function draw(rate) {
-    const width = field.clientWidth;
-    const height = field.clientHeight;
-    if (!width || !height) return;
-
-    const svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-    svg.setAttribute('width', width);
-    svg.setAttribute('height', height);
-
-    // Same ramp as the extension icon, so the field and the mark share one ink.
-    const defs = document.createElementNS(SVG_NS, 'defs');
-    const ramp = document.createElementNS(SVG_NS, 'linearGradient');
-    ramp.setAttribute('id', 'field-ramp');
-    ramp.setAttribute('gradientUnits', 'userSpaceOnUse');
-    ramp.setAttribute('x1', '0');
-    ramp.setAttribute('x2', String(width));
-    for (const [offset, colour] of [['0', '#ff9ab8'], ['0.5', '#e8597f'], ['1', '#b32a58']]) {
-      const stop = document.createElementNS(SVG_NS, 'stop');
-      stop.setAttribute('offset', offset);
-      stop.setAttribute('stop-color', colour);
-      ramp.append(stop);
+  function frameTick(now) {
+    const playing = SRDemo.state.playing;
+    if (last !== null && playing) {
+      angle = (angle + ((now - last) / 1000) * DEGREES_PER_SECOND * rate) % 360;
+      for (const [reel, cx] of reels) reel.setAttribute('transform', `rotate(${angle.toFixed(2)} ${cx} 214)`);
     }
-    defs.append(ramp);
-    svg.append(defs);
+    last = now;
+    requestAnimationFrame(frameTick);
+  }
 
-    const w = barWidth(rate);
-    const step = BASE_STEP / rate;
-    let index = 0;
-    for (let x = 0; x < width; x += step) {
-      const bar = document.createElementNS(SVG_NS, 'rect');
-      bar.setAttribute('x', x.toFixed(2));
-      bar.setAttribute('y', '0');
-      bar.setAttribute('width', Math.min(w, width - x).toFixed(2));
-      bar.setAttribute('height', height);
-      bar.setAttribute('fill', 'url(#field-ramp)');
-      if (!revealed) {
-        bar.style.transformOrigin = 'center';
-        bar.style.animation = `rise 420ms cubic-bezier(.2,.7,.3,1) ${index * 24}ms both`;
-      }
-      svg.append(bar);
-      index += 1;
+  const popup = SRPopupEmbed(frame, {
+    onSettings: (settings, enabled) => {
+      SRDemo.apply(settings, enabled);
+      show(settings, enabled);
     }
+  });
 
-    field.replaceChildren(svg);
-    field.classList.add('is-live');
-    revealed = true;
-  }
+  speed.addEventListener('input', () => {
+    // Prefer the popup's slider so its UI, presets and readout stay in step.
+    if (!popup.setControl('speed-slider', speed.value)) {
+      SRDemo.apply({ ...SRDemo.state.settings, speed: Number(speed.value) }, true);
+      show(SRDemo.state.settings, true);
+    }
+  });
 
-  function update() {
-    const rate = Number(slider.value);
-    const semitones = 12 * Math.log2(rate);
-    const sign = semitones > 0.05 ? '+' : semitones < -0.05 ? '−' : '';
-    readout.innerHTML =
-      `${rate.toFixed(2)}x <span class="dim">/ ${sign}${Math.abs(semitones).toFixed(1)} st</span>`;
-    draw(rate);
-  }
+  SRDemo.subscribe((state) => {
+    play.setAttribute('aria-pressed', String(state.playing));
+    play.disabled = state.loading;
+    play.setAttribute('aria-label', state.playing ? 'Pause the demo song' : 'Play the demo song');
+    playError.textContent = PLAY_ERRORS[state.error] || '';
+    playError.hidden = !state.error;
+  });
+  play.addEventListener('click', () => SRDemo.toggle());
 
-  slider.addEventListener('input', update);
-
-  // The field is measured in real pixels, so it is redrawn when its box changes.
-  if ('ResizeObserver' in window) {
-    let width = 0;
-    new ResizeObserver(() => {
-      if (field.clientWidth === width) return;
-      width = field.clientWidth;
-      draw(Number(slider.value));
-    }).observe(field);
-  } else {
-    window.addEventListener('resize', () => draw(Number(slider.value)));
-  }
-
-  update();
+  show({ speed: 0.8 }, true);
+  if (!reduceMotion) requestAnimationFrame(frameTick);
 }());
