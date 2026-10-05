@@ -20,6 +20,10 @@ of them from `scripts/render-store-assets.js`. The listing text is in
   1280 × 800
 - `chrome/promotional-tile-440x280.png`: required Chrome promotional tile
 - `chrome/marquee-1400x560.png`: optional Chrome marquee image
+- `chrome/store-icon-128.png`: the Chrome store icon. The extension's own icons
+  fill their 128px square; Google asks for the store icon's artwork to fit
+  96 × 96 with transparent space around it, so this copy is scaled to 3/4.
+  `npm run icons` builds it with the other icons.
 
 Firefox can reuse the five screenshots and `extension/assets/icon128.png`; it
 does not need the Chrome promotional images. The same run also writes

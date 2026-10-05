@@ -35,7 +35,8 @@ const STORE_ASSET_DIMENSIONS = new Map([
   ['store-assets/screenshots/04-presets.png', [1280, 800]],
   ['store-assets/screenshots/05-privacy.png', [1280, 800]],
   ['store-assets/chrome/promotional-tile-440x280.png', [440, 280]],
-  ['store-assets/chrome/marquee-1400x560.png', [1400, 560]]
+  ['store-assets/chrome/marquee-1400x560.png', [1400, 560]],
+  ['store-assets/chrome/store-icon-128.png', [128, 128]]
 ]);
 const PACKAGE_FILES = [...SOURCE_FILES, 'manifest.json', ...PNG_DIMENSIONS.keys()].sort();
 
@@ -173,6 +174,11 @@ describe('store package contracts', () => {
       assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
       assert.equal(png.readUInt32BE(16), width, `${file} width`);
       assert.equal(png.readUInt32BE(20), height, `${file} height`);
+      // Chrome takes screenshots and promo images only as 24-bit PNG without
+      // alpha: 8 bits per channel, color type 2. The icon keeps its transparency.
+      if (!file.endsWith('store-icon-128.png')) {
+        assert.deepEqual([png[24], png[25]], [8, 2], `${file} must be 24-bit RGB with no alpha`);
+      }
       assert.ok(
         assetReadme.includes(`\`${file.replace('store-assets/', '')}\``),
         `${file} is missing from store-assets/README.md`

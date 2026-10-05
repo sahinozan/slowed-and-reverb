@@ -1,8 +1,9 @@
 'use strict';
 
 // Regenerates every icon artefact from the single geometry definition below:
-// the two source SVGs, the six store PNGs, and the inline mark in the popup
-// header. Run `npm run icons` after changing anything in this file.
+// the two source SVGs, the six extension PNGs, the Chrome Web Store icon, and
+// the inline mark in the popup header. Run `npm run icons` after changing
+// anything in this file.
 
 const fs = require('fs');
 const path = require('path');
@@ -12,6 +13,7 @@ const root = path.join(__dirname, '..');
 const extensionDir = path.join(root, 'extension');
 const assetsDir = path.join(extensionDir, 'assets');
 const popupFile = path.join(extensionDir, 'popup.html');
+const storeIconFile = path.join(root, 'store-assets', 'chrome', 'store-icon-128.png');
 
 // Five symmetric bars on a 128 grid. Bar edges stay on multiples of 8 so the
 // 8:1 reduction to 16 px lands on whole pixels and the sides render crisp.
@@ -29,6 +31,12 @@ const RAMPS = {
 const SHEEN = [['0', '#ffffff', '0.34'], ['0.55', '#ffffff', '0']];
 
 const PNG_SIZES = [16, 48, 128];
+
+// The extension's own icons fill the 128 grid. Google asks for the store icon's
+// artwork to fit 96x96 with transparent padding around it, so the store copy is
+// scaled by 3/4 about the centre: every bar edge still lands on a whole pixel,
+// and the 112x120 mark becomes 84x90.
+const STORE_ICON_SCALE = 0.75;
 const LOGO_START = '<!-- icon:start -->';
 const LOGO_END = '<!-- icon:end -->';
 
@@ -69,6 +77,16 @@ function markup(prefix, state, indent = '  ') {
 function svg(prefix, state) {
   return `<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
 ${markup(prefix, state)}
+</svg>
+`;
+}
+
+function storeSvg() {
+  const offset = CENTRE_Y * (1 - STORE_ICON_SCALE);
+  return `<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(${offset} ${offset}) scale(${STORE_ICON_SCALE})">
+${markup('sr-store', 'on', '    ')}
+  </g>
 </svg>
 `;
 }
@@ -134,25 +152,27 @@ async function main() {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ deviceScaleFactor: 1 });
+    const renderPng = async (source, size, file) => {
+      await page.setViewportSize({ width: size, height: size });
+      await page.setContent(
+        '<style>html,body{margin:0;padding:0;background:transparent}svg{display:block}</style>' +
+        source.replace('width="128" height="128"', `width="${size}" height="${size}"`)
+      );
+      await page.screenshot({ path: file, omitBackground: true });
+    };
     for (const [suffix, source] of Object.entries(sources)) {
       for (const size of PNG_SIZES) {
-        await page.setViewportSize({ width: size, height: size });
-        await page.setContent(
-          '<style>html,body{margin:0;padding:0;background:transparent}svg{display:block}</style>' +
-          source.replace('width="128" height="128"', `width="${size}" height="${size}"`)
-        );
-        await page.screenshot({
-          path: path.join(assetsDir, `icon${size}${suffix}.png`),
-          omitBackground: true
-        });
+        await renderPng(source, size, path.join(assetsDir, `icon${size}${suffix}.png`));
       }
     }
+    await renderPng(storeSvg(), 128, storeIconFile);
   } finally {
     await browser.close();
   }
 
   const changed = updatePopup('          ');
   console.log(`Wrote 2 SVGs and ${PNG_SIZES.length * 2} PNGs to extension/assets/`);
+  console.log(`Wrote the store icon to ${path.relative(root, storeIconFile)}`);
   console.log(changed ? 'Updated the popup header mark' : 'Popup header mark already current');
 }
 
