@@ -71,9 +71,14 @@ function startServer(extraRoutes = new Map()) {
 }
 
 // Serialized into the page before popup.js runs.
-function installPopupBrowserMock({ theme, settings, customPresets = [] }) {
+// `url` sets the page the popup thinks it is on; `siteAccess: false` shows the
+// popup before optional site access is granted (the Spotify opt-in step).
+function installPopupBrowserMock({
+  theme, settings, customPresets = [],
+  url = 'https://www.youtube.com/watch?v=store-preview', siteAccess = true
+}) {
   const localData = { uiTheme: theme, customPresets, ...settings };
-  const activeTab = { id: 9, url: 'https://www.youtube.com/watch?v=store-preview' };
+  const activeTab = { id: 9, url };
   const tabState = { enabled: true, settings, blocked: false, live: false };
 
   const storageGet = (defaults) => {
@@ -90,7 +95,7 @@ function installPopupBrowserMock({ theme, settings, customPresets = [] }) {
 
   window.chrome = {
     action: { setIcon: async () => {} },
-    permissions: { contains: async () => true, request: async () => true },
+    permissions: { contains: async () => siteAccess, request: async () => true },
     runtime: {
       id: 'store-preview-extension',
       getManifest: () => ({}),
@@ -134,9 +139,11 @@ async function renderPopup(browser, baseUrl, variant, { file, scale = 3 }) {
   else if (variant.panel === 'custom') await page.locator('#tab-custom').click();
 
   await page.waitForTimeout(400);
-  const height = await page.evaluate(
-    () => Math.ceil(document.body.getBoundingClientRect().height)
-  );
+  // `cropBelow` keeps only the top of the popup, down to just below that element.
+  const height = await page.evaluate((selector) => {
+    if (selector) return Math.ceil(document.querySelector(selector).getBoundingClientRect().bottom + 16);
+    return Math.ceil(document.body.getBoundingClientRect().height);
+  }, variant.cropBelow ?? null);
 
   await page.screenshot({ path: file, clip: { x: 0, y: 0, width: POPUP_W, height } });
   await context.close();
