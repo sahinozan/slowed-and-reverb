@@ -210,7 +210,7 @@ describe('store package contracts', () => {
 
     // 3/4 of the extension's own mark, so a copied, unscaled icon fails too.
     assert.deepEqual([icon.width, icon.height], [extensionIcon.width * 0.75, extensionIcon.height * 0.75]);
-    assert.deepEqual([icon.left + icon.right, icon.top + icon.bottom], [127, 127], 'centred');
+    assert.deepEqual([icon.left + icon.right, icon.top + icon.bottom], [127, 127], 'centered');
     assert.ok(icon.left >= 16 && icon.top >= 16 && icon.right <= 111 && icon.bottom <= 111,
       `artwork ${icon.left},${icon.top} to ${icon.right},${icon.bottom} leaves less than 16px of transparent space`);
   });

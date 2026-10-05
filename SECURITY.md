@@ -17,7 +17,7 @@ Do not open a public issue for a suspected vulnerability. Email
 - any proof of concept with secrets and personal data removed.
 
 Please allow time to investigate before disclosing the issue publicly. You will
-receive an acknowledgement, followed by an assessment or a request for additional
+receive an acknowledgment, followed by an assessment or a request for additional
 information. This project does not currently operate a paid bug-bounty program.
 
 For ordinary bugs and feature requests, use the public issue tracker described in

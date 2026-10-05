@@ -92,8 +92,9 @@ browser's own toolbar, `cropSide` the window border. Captures are full-screen
 personal details visible, and with the extension popup closed.
 
 The captures in use are archived, unmodified, in `originals/` with their
-original filenames and SHA-256 checksums. Keep these tracked originals; new
-captures go into a new dated folder there, and `CAPTURES` points at them.
+original filenames and SHA-256 checksums. New captures go into a new dated
+folder there and `CAPTURES` points at them; then delete the folder they
+replace, which stays in the git history.
 
 ## Fonts
 
@@ -101,5 +102,3 @@ Headings use `site/assets/fonts/fraunces.woff2`, the same file as the website.
 Body text uses Avenir Next and the cassette label uses Menlo, both of which ship
 with macOS, so the checked-in PNG files are the canonical release assets and
 reproducing them exactly needs a Mac.
-
-`qa/icon-light-dark.png` is an internal contrast check, not a store upload.
