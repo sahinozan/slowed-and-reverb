@@ -1,14 +1,27 @@
 # Site
 
-The public page for the extension. Three files and a folder of assets, with no
-build step, no framework, and no third-party request at runtime.
+The public website for the extension, served at
+[slowedreverbapp.com](https://slowedreverbapp.com). Plain HTML, CSS, and a few
+small scripts, with no build step, no framework, and no third-party request at
+runtime.
 
 ```text
 site/
-  index.html      the whole page
-  styles.css      the visual system, tokens at the top
-  app.js          only the hero speed readout; the page works without it
-  assets/         popup renders, icon, motif, and the display font
+  index.html        home: what it does, the demo, getting started
+  guide.html        how to use: every control, next to the live popup
+  faq.html          help
+  changelog.html    release notes
+  privacy.html      privacy policy, with a technical section for store reviewers
+  404.html          served for unknown addresses
+  styles.css        everything visual; theme tokens at the top
+  site.js           applies the popup's theme to the page and the favicon
+  app.js            home page: cassette, speed fader, demo controls
+  guide.js          guide page: switches the popup's tab as you scroll
+  demo-audio.js     the demo's audio chain, mirroring extension/content.js
+  popup-embed.js    talks to the popup iframe
+  popup/            a copy of the shipping popup, plus popup-host.js
+  assets/           icon, social image, font, brand logos, demo audio
+  robots.txt, sitemap.xml
 ```
 
 ## Preview locally
@@ -17,68 +30,84 @@ site/
 python3 -m http.server 8080 --directory site
 ```
 
-Then open `http://localhost:8080/`. Serve it rather than opening `index.html`
-over `file://`, because the font and the popup renders are loaded as normal
-requests.
+Then open `http://localhost:8080/`. Serve it rather than opening the files over
+`file://`, because the popup, the font, and the demo audio are loaded as normal
+requests. Links point at `guide.html` and so on, which works on both this
+server and Cloudflare (Cloudflare redirects them to `/guide`).
 
-## Assets
+## The popup on the page
 
-`assets/popup-*.png` are captures of the shipping popup, produced by loading
-the real files from `extension/` in a headless browser:
+The home and guide pages run the real extension popup in an iframe. `popup/`
+holds copies of `extension/popup.html`, `popup.css`, and `popup.js`; the only
+change is one extra script tag in `popup.html` that loads `popup-host.js`, which
+stands in for the extension API and tells the page what the popup applied.
+After any change to the popup, copy it again:
 
 ```sh
-npm run site:assets
+npm run site:popup
 ```
 
-Panels people read render at 3x; the theme thumbnails render at 2x. The command
-prints each file's pixel size, which is what the `width` and `height` attributes
-in `index.html` must say. Update them when a panel changes size, otherwise the
-page reserves the wrong space while images load. `scripts/popup-preview.js` holds
-the extension-API stub the renders run against, shared with the store art so
-there is only one copy to keep working.
+`tests/site.test.js` fails while the copy is out of date, and also checks that
+every local link and anchor exists, that no page loads anything from another
+website, and that the demo song is credited.
 
-The store screenshots under `store-assets/` are not used here. They exist
-because Chrome and Firefox require them, and at page size the popup inside them
-is unreadable.
+## Demo audio
 
-`assets/icon.svg` is a copy of the shipped extension icon. `assets/rate-field.svg`
-is the bar motif, its spacing produced by the same rate-ramp integration as
-`rateBars()` in `scripts/render-store-assets.js`. `assets/og-card.png` is the
-store marquee, reused as the social preview image.
+`assets/audio/start-again-loop.mp3` is 24 seconds of "Start Again" by Alex
+Beroza featuring Snowflake & Subliminal, licensed CC BY 3.0. The license needs
+the credit and a note that the clip was changed, so both pages that play it
+carry a credit line with links to the source and the license. The exact edit
+is described in `assets/audio/CREDITS.txt`. `demo-audio.js` decodes the file and
+loops it as WAV, because an `<audio>` element does not loop MP3 without a gap.
 
-`assets/jost-700-latin.woff2` is Jost 700, latin subset, under the SIL Open Font
-License in `assets/jost-OFL.txt`. It is self-hosted because the store art is set
-in Futura, which ships only on macOS: without it, half the audience would see
-the headlines in a fallback face. Replacing it means replacing both files and
-the `@font-face` block at the top of `styles.css`.
+## Font
+
+`assets/fonts/fraunces.woff2` is Fraunces, under the SIL Open Font License in
+`assets/fonts/fraunces-OFL.txt`, cut down to what the site uses: weight 600, the
+optical size axis, SOFT from 0 to 60, WONK fixed at 1, and Latin characters. It
+was made with fontTools from the full variable font:
+
+```sh
+fonttools varLib.instancer Fraunces.ttf wght=600 WONK=1 SOFT=0:60 -o fraunces-instanced.ttf
+pyftsubset fraunces-instanced.ttf --unicodes="U+0020-007E,U+00A0-00FF,U+2010-2027,U+2030-203A,U+2122,U+2212" --layout-features='*' --flavor=woff2 --output-file=fraunces.woff2
+```
+
+Using another weight or axis value in `styles.css` means making the file again.
+
+## Other assets
+
+`assets/icon.svg` is a copy of the shipped extension icon. `assets/brand/` holds
+the Chrome and Firefox logos used inside the store buttons, with their sources
+in `NOTICE.txt`. `assets/og-card.png` is the social preview image; it is the
+store marquee, so it changes when the store art does.
 
 ## Deploying
 
-The site is served at `slowedreverbapp.com` by Cloudflare, connected to this
-repository. `wrangler.jsonc` in the repository root points Cloudflare at this
-folder and is the entire configuration: there is no build step, no Worker
-script, and no build command. Wrangler runs in Cloudflare's build container, so
-it is not a dependency here.
+Cloudflare serves this folder at `slowedreverbapp.com`, connected to this
+repository. `wrangler.jsonc` in the repository root is the whole
+configuration: no build step, no Worker script. Wrangler runs in Cloudflare's
+build container, so it is not a dependency here.
 
-Cloudflare redeploys on every push to `main`, and gives each other branch a
-preview URL. The domain is registered in the same Cloudflare account, so
-attaching it to the project creates the DNS record automatically; no record
-needs writing by hand and no `CNAME` file belongs in this folder.
+- Cloudflare redeploys on every push to `main` and gives other branches a
+  preview URL.
+- Pages are served without `.html` (`/guide`, `/privacy`). The canonical and
+  Open Graph URLs in each page's `<head>` and `sitemap.xml` use those addresses;
+  they are the only places the domain is written out.
+- Unknown addresses get `404.html` with a 404 status. That page can be served
+  at any depth, so its links start with `/`.
+- `.assetsignore` keeps this README off the website.
 
-The absolute URLs in the `<head>` of `index.html` (canonical and Open Graph)
-point at that domain. They are the only place the domain is hard-coded.
+Both store dashboards should list `https://slowedreverbapp.com` as the homepage
+and `https://slowedreverbapp.com/privacy` as the privacy policy.
 
-The Chrome and Firefox buttons point at their published store listings. Both
-store dashboards should list `https://slowedreverbapp.com` as the homepage.
+## Writing for the site
 
-## Editing rules
-
-- Hot pink `#e8597f` is for rules, fills, and the motif only. It fails contrast
-  as small text on both grounds; rose and bone carry words.
-- Square corners everywhere, and depth is a hard offset block rather than a blur.
-- Write for listeners, not developers. Permission names, file names, `iframe`,
-  `storage.local`, and anything else from the codebase belong in the repository
-  docs instead. If a limitation cannot be explained in plain words, leave it out.
-- No horizontal scrolling. Everything reads in the normal page scroll.
-- Show the real interface. Every frame on the page is a render of the popup, not
-  a mockup or a marketing composite.
+- Write for listeners, not developers. Plain words, "you", and contractions.
+  Permission names and other codebase terms belong in the repository docs or
+  in the technical section of the privacy page.
+- American spelling.
+- No slogans. A heading says what the section is about.
+- The privacy page must keep every fact in `PRIVACY.md`.
+- Show the real interface. The popup on the page is the shipping popup, not a
+  picture of it.
+- Nothing is loaded from another website.

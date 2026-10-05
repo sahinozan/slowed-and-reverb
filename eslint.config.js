@@ -18,8 +18,8 @@ const browserGlobals = {
 
 module.exports = [
   {
-    // The prototypes embed a verbatim copy of the popup, linted at its source.
-    ignores: ['dist/**', 'site/prototypes/shared/popup/popup.js']
+    // The site embeds a verbatim copy of the popup, linted at its source.
+    ignores: ['dist/**', 'site/popup/popup.js']
   },
   {
     files: [

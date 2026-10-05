@@ -107,11 +107,12 @@ npm run build:firefox     # emit dist/firefox/
 npm run package           # build allowlisted ZIPs for both stores
 npm run lint:firefox      # build, then validate with web-ext
 npm run check             # run every required local and store-package check
-npm run site:assets       # re-render the popup images used by the website
+npm run site:popup        # copy the current popup into the website after popup changes
 ```
 
-The public website lives in [site/](site/README.md): static HTML, CSS, and one
-small script, served at [slowedreverbapp.com](https://slowedreverbapp.com).
+The public website lives in [site/](site/README.md): static HTML, CSS, and a
+few small scripts, with no build step, served at
+[slowedreverbapp.com](https://slowedreverbapp.com).
 
 The extension source lives in [extension/](extension/). Its manifest targets
 Chromium. Target builds emit clean, allowlisted

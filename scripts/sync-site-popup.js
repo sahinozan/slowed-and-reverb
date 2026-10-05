@@ -1,16 +1,17 @@
 'use strict';
 
-// Copies the shipping popup into the site prototypes so the page can run the
-// real interface. The only change is one extra script tag, loading the host
+// Copies the shipping popup into site/popup/ so the website can run the real
+// interface. The only change is one extra script tag, loading the host
 // that stands in for the extension API. Run after any change to
-// extension/popup.html, popup.css, or popup.js.
+// extension/popup.html, popup.css, or popup.js (npm run site:popup); the
+// site tests fail until the copy matches again.
 
 const fs = require('fs');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
 const source = path.join(root, 'extension');
-const out = path.join(root, 'site', 'prototypes', 'shared', 'popup');
+const out = path.join(root, 'site', 'popup');
 
 fs.mkdirSync(out, { recursive: true });
 for (const file of ['popup.css', 'popup.js']) {

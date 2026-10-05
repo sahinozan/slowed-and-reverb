@@ -54,8 +54,8 @@ window.SRDemo = (function () {
   // 24 seconds (8 bars at 80 bpm) of "Start Again" by Alex Beroza featuring
   // Snowflake & Subliminal, CC BY 3.0, https://ccmixter.org/files/AlexBeroza/31670.
   // Cut from 2:29.46 to 2:53.46, level reduced, with the first 20 ms crossfaded
-  // into what follows the cut so the seam is silent. See audio/CREDITS.txt.
-  const LOOP_SRC = new URL('audio/start-again-loop.mp3', document.currentScript.src).href;
+  // into what follows the cut so the seam is silent. See assets/audio/CREDITS.txt.
+  const LOOP_SRC = new URL('assets/audio/start-again-loop.mp3', document.currentScript.src).href;
 
   // Decoded and rewritten as WAV because an <audio> element loops a WAV
   // without a gap, which it does not promise for MP3.
