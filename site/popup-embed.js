@@ -9,6 +9,10 @@
 // column narrower than its fixed width instead of being cropped, and the box
 // keeps the tallest height seen so far, so switching tabs does not move the
 // page around it.
+//
+// The frame may finish loading before this runs, and what it reported then is
+// gone. So once listening, this asks the frame to send its state again, now
+// and whenever the frame (re)loads.
 
 window.SRPopupEmbed = function mount(frame, { onSettings, onTheme } = {}) {
   const POPUP_WIDTH = 340;
@@ -31,7 +35,7 @@ window.SRPopupEmbed = function mount(frame, { onSettings, onTheme } = {}) {
   }
 
   window.addEventListener('message', (event) => {
-    if (event.source !== frame.contentWindow) return;
+    if (event.source !== frame.contentWindow || event.origin !== location.origin) return;
     const message = event.data;
     if (!message || message.source !== 'sr-popup') return;
     if (message.type === 'height') {
@@ -45,6 +49,12 @@ window.SRPopupEmbed = function mount(frame, { onSettings, onTheme } = {}) {
       if (onSettings) onSettings(message.settings, message.enabled);
     }
   });
+
+  const requestState = () => {
+    if (frame.contentWindow) frame.contentWindow.postMessage({ source: 'sr-page', type: 'sync' }, location.origin);
+  };
+  frame.addEventListener('load', requestState);
+  requestState();
 
   return {
     click(id) {

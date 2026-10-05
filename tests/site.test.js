@@ -88,9 +88,10 @@ describe('website', () => {
     for (const page of DEMO_PAGES) {
       const text = parse(page).body.textContent.replace(/\s+/g, ' ');
       assert.match(text, /“Start Again” by Alex Beroza featuring Snowflake & Subliminal \(CC BY 3\.0\)/, page);
-      const links = references(parse(page)).map(({ value }) => value);
-      assert.ok(links.includes('https://ccmixter.org/files/AlexBeroza/31670'), `${page} links the source`);
-      assert.ok(links.includes('https://creativecommons.org/licenses/by/3.0/'), `${page} links the license`);
+      // Whole addresses, compared exactly.
+      const links = new Set(references(parse(page)).map(({ value }) => value));
+      assert.ok(links.has('https://ccmixter.org/files/AlexBeroza/31670'), `${page} links the source`);
+      assert.ok(links.has('https://creativecommons.org/licenses/by/3.0/'), `${page} links the license`);
     }
     assert.ok(fs.existsSync(path.join(siteRoot, 'assets', 'audio', 'start-again-loop.mp3')));
     assert.ok(fs.existsSync(path.join(siteRoot, 'assets', 'audio', 'CREDITS.txt')));

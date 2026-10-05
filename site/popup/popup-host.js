@@ -4,10 +4,14 @@
 // extension API it expects, backed by memory, and tells the page what the
 // popup does: settings for the audio demo, theme for the page, height for the
 // frame. Nothing here touches the network.
+//
+// The page's script can start listening after this frame has already loaded
+// and reported, so it asks for a replay ('sync') once it is ready, and the
+// current state is sent again.
 
 (function () {
   const host = window.parent !== window ? window.parent : null;
-  const post = (message) => host && host.postMessage({ source: 'sr-popup', ...message }, '*');
+  const post = (message) => host && host.postMessage({ source: 'sr-popup', ...message }, location.origin);
 
   const SLOWED = Object.freeze({
     speed: 0.8, reverb: 40, echo: 0, pan: 0, width: 100,
@@ -68,14 +72,26 @@
     }
   };
 
-  document.addEventListener('DOMContentLoaded', () => {
-    for (const link of document.querySelectorAll('a[href^="http"]')) link.target = '_blank';
-    const report = () => post({
-      type: 'height', height: Math.ceil(document.body.getBoundingClientRect().height)
-    });
-    new ResizeObserver(report).observe(document.body);
-    report();
+  let ready = false;
+  const reportHeight = () => post({
+    type: 'height', height: Math.ceil(document.body.getBoundingClientRect().height)
+  });
+  function announce() {
+    reportHeight();
     post({ type: 'theme', theme: localData.uiTheme });
     post({ type: 'settings', settings: tabState.settings, enabled: tabState.enabled });
+  }
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== host || event.origin !== location.origin) return;
+    const message = event.data;
+    if (ready && message && message.source === 'sr-page' && message.type === 'sync') announce();
+  });
+
+  document.addEventListener('DOMContentLoaded', () => {
+    for (const link of document.querySelectorAll('a[href^="http"]')) link.target = '_blank';
+    new ResizeObserver(reportHeight).observe(document.body);
+    ready = true;
+    announce();
   });
 }());
