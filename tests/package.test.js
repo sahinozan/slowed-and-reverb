@@ -81,8 +81,8 @@ describe('store package contracts', () => {
     assert.match(readme, /Node >= 24\.19/);
     assert.match(readme, /YouTube, YouTube Music, and\s+Spotify are supported/);
     assert.doesNotMatch(readme, /Spotify has an experimental/);
-    assert.match(manifest.description, /YouTube™, YouTube Music™, and Spotify/);
-    assert.match(packageJson.description, /YouTube™, YouTube Music™, and Spotify/);
+    assert.match(manifest.description, /YouTube™, YouTube Music™ and Spotify/);
+    assert.equal(packageJson.description, manifest.description);
     assert.deepEqual(manifest.permissions, ['activeTab', 'scripting', 'storage']);
     assert.equal('host_permissions' in manifest, false);
     assert.deepEqual(manifest.content_security_policy, {

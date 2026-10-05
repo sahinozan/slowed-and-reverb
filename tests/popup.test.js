@@ -65,7 +65,7 @@ describe('popup behavior', () => {
     const document = harness.window.document;
 
     assert.equal(document.getElementById('blocked-banner').hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /not officially supported/);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /isn't supported/);
     assert.equal(document.getElementById('power-toggle').disabled, true);
     assert.equal(document.getElementById('reverb-slider').disabled, true);
     assert.equal(document.getElementById('eq-handle-low').getAttribute('tabindex'), '-1');
@@ -200,7 +200,7 @@ describe('popup behavior', () => {
 
     assert.deepEqual(harness.calls.permissionRequests, [['https://www.youtube.com/*']]);
     assert.equal(document.getElementById('youtube-permission-panel').hidden, false);
-    assert.match(document.getElementById('youtube-permission-status').textContent, /not granted/);
+    assert.match(document.getElementById('youtube-permission-status').textContent, /Not allowed/);
     assert.equal(harness.calls.executeScript.length, 0);
 
     close(harness);
@@ -262,7 +262,7 @@ describe('popup behavior', () => {
     assert.equal(harness.registeredContentScripts.size, 0);
     assert.match(
       harness.window.document.getElementById('spotify-permission-status').textContent,
-      /not granted/
+      /Not allowed/
     );
 
     close(harness);
@@ -416,7 +416,7 @@ describe('popup behavior', () => {
     const document = harness.window.document;
 
     assert.equal(document.getElementById('blocked-banner').hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /not available/);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /can't reach the player/);
     assert.equal(document.getElementById('power-toggle').checked, false);
     assert.equal(document.getElementById('power-toggle').disabled, true);
     assert.equal(audioUpdates(harness).length, 0);
