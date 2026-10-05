@@ -8,6 +8,7 @@ const { describe, test } = require('node:test');
 const AdmZip = require('adm-zip');
 const { JSDOM } = require('jsdom');
 const { popupBlock } = require('../scripts/render-icons');
+const { visibleBounds } = require('./helpers/png');
 
 const { root } = require('./helpers/load-script');
 const extensionRoot = path.join(root, 'extension');
@@ -197,6 +198,19 @@ describe('store package contracts', () => {
     ]) {
       assert.equal(fs.existsSync(path.join(root, 'store-assets/screenshots', legacyName)), false);
     }
+  });
+
+  test('keeps the store icon artwork inside the 96 x 96 area Google asks for', () => {
+    // visibleBounds only reads 8-bit RGBA, so an icon flattened onto a background
+    // fails here, as does one with opaque padding (its bounds would be the canvas).
+    const icon = visibleBounds(fs.readFileSync(path.join(root, 'store-assets/chrome/store-icon-128.png')));
+    const extensionIcon = visibleBounds(fs.readFileSync(path.join(root, 'extension/assets/icon128.png')));
+
+    // 3/4 of the extension's own mark, so a copied, unscaled icon fails too.
+    assert.deepEqual([icon.width, icon.height], [extensionIcon.width * 0.75, extensionIcon.height * 0.75]);
+    assert.deepEqual([icon.left + icon.right, icon.top + icon.bottom], [127, 127], 'centred');
+    assert.ok(icon.left >= 16 && icon.top >= 16 && icon.right <= 111 && icon.bottom <= 111,
+      `artwork ${icon.left},${icon.top} to ${icon.right},${icon.bottom} leaves less than 16px of transparent space`);
   });
 
   test('ships no remote code or extension-originated network clients', () => {
