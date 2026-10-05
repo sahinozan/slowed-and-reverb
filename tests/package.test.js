@@ -37,7 +37,9 @@ const STORE_ASSET_DIMENSIONS = new Map([
   ['store-assets/screenshots/05-privacy.png', [1280, 800]],
   ['store-assets/chrome/promotional-tile-440x280.png', [440, 280]],
   ['store-assets/chrome/marquee-1400x560.png', [1400, 560]],
-  ['store-assets/chrome/store-icon-128.png', [128, 128]]
+  ['store-assets/chrome/store-icon-128.png', [128, 128]],
+  ...['01-youtube', '02-spotify', '03-advanced', '04-presets', '05-privacy']
+    .map((name) => [`store-assets/firefox/screenshots/${name}.png`, [2400, 1500]])
 ]);
 const PACKAGE_FILES = [...SOURCE_FILES, 'manifest.json', ...PNG_DIMENSIONS.keys()].sort();
 
