@@ -69,9 +69,21 @@ const COLOR = Object.freeze({
   label: 'hsl(343 66% 11%)',
   body: '#dcdce2'
 });
-// Promo images fill their area with a saturated deep pink, so their edges read
-// on the store's light gray and dark cards alike.
-const PROMO_BG = 'radial-gradient(120% 120% at 30% 20%, #5a1530 0%, #34091a 55%, #1d0510 100%)';
+// Promo images use the website's glow: a near-black cherry ground with blurred
+// pink and violet light behind the cassette (site/styles.css, Terminal theme),
+// a little stronger than on the site so it still shows at store size.
+const GLOW_GROUND = '#0f0308';
+const GLOW_LIGHT = [
+  'radial-gradient(40% 50% at 35% 45%, rgba(232,89,127,.85), transparent 70%)',
+  'radial-gradient(35% 45% at 68% 60%, rgba(150,40,140,.72), transparent 70%)',
+  'radial-gradient(50% 40% at 50% 85%, rgba(120,20,60,.7), transparent 70%)'
+].join(', ');
+
+function glow({ x, y, width, height, blur }) {
+  return `<div style="position:absolute;inset:0;background:${GLOW_GROUND}"></div>
+    <div style="position:absolute;left:${x - width / 2}px;top:${y - height / 2}px;width:${width}px;height:${height}px;
+         filter:blur(${blur}px);background:${GLOW_LIGHT}"></div>`;
+}
 
 const POPUP_VARIANTS = Object.freeze({
   slowed: { theme: 'pink', settings: { ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 } },
@@ -191,6 +203,9 @@ const page = (width, height, body) => `<!doctype html><html><head><meta charset=
   .headline { font-size:${HEADLINE}px; line-height:1.06; text-wrap:balance; }
   .subline { font-size:${SUBLINE}px; line-height:1.38; color:${G.body}; margin-top:18px; text-wrap:pretty; }
   .lift { box-shadow:${G.lift}; }
+  /* Fraunces draws a curly "&" at display sizes; ss01 picks its plain one,
+     which the site's font file already includes. */
+  .amp { font-feature-settings:"ss01"; }
   ${CASSETTE_CSS}
 </style></head><body>${body}</body></html>`;
 
@@ -294,7 +309,7 @@ const themeRow = () => `
 // --- promo images ----------------------------------------------------------
 function promoTile() {
   return page(440, 280, `
-    <div style="position:absolute;inset:0;background:${PROMO_BG}"></div>
+    ${glow({ x: 220, y: 150, width: 520, height: 360, blur: 28 })}
     <div class="cassette" style="position:absolute;left:30px;top:15px;width:380px;
          filter:drop-shadow(0 14px 22px rgba(0,0,0,.45))">${nameOnlyCassette()}</div>`);
 }
@@ -304,12 +319,12 @@ function banner(width, height) {
   const tape = Math.round(Math.min(height * 0.96, width * 0.42));
   const name = Math.round(Math.min(height * 0.11, width * 0.044));
   return page(width, height, `
-    <div style="position:absolute;inset:0;background:${PROMO_BG}"></div>
+    ${glow({ x: Math.round(width * 0.055) + tape / 2 + 60, y: height / 2, width: tape * 1.8, height: height * 1.4, blur: 55 })}
     <div class="cassette" style="position:absolute;left:${Math.round(width * 0.055)}px;top:50%;transform:translateY(-50%);
          width:${tape}px;filter:drop-shadow(0 26px 44px rgba(0,0,0,.5))">${cassetteMarkup()}</div>
     <div style="position:absolute;left:${Math.round(width * 0.055) + tape + 64}px;right:${MARGIN}px;top:50%;transform:translateY(-50%)">
       <div class="display" style="display:flex;align-items:center;gap:18px;font-size:${name}px;line-height:1;white-space:nowrap">
-        ${mark(Math.round(name * 0.97))}<span>Slowed &amp; Reverb</span></div>
+        ${mark(Math.round(name * 0.97))}<span>Slowed <span class="amp">&amp;</span> Reverb</span></div>
       <div style="font-size:${Math.round(height * 0.046)}px;line-height:1.4;color:${COLOR.body};margin-top:26px">
         Slow down the song you’re playing on YouTube, YouTube Music or Spotify and add reverb.</div>
       <div style="font-size:${Math.round(height * 0.039)}px;color:${COLOR.light};margin-top:22px">Free for Chrome and Firefox</div>
