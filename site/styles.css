@@ -319,3 +319,33 @@ footer p + p { margin-top: 10px; }
     clip-path: inset(50%); white-space: nowrap;
   }
 }
+
+/* ---- Terminal theme: glow ------------------------------------------------- */
+/* A near-black cherry ground with soft pink and violet light behind the
+   cassette, the popup, and the top of each subpage, like the blurred pages in
+   the store screenshots. Only the default theme; the others keep their grounds. */
+:root[data-theme="pink"] {
+  --bg: #0f0308;
+  --shade: rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="pink"] :is(.deck, .real, .page) { position: relative; isolation: isolate; }
+:root[data-theme="pink"] :is(.deck, .real, .page)::before {
+  content: ""; position: absolute; z-index: -1; pointer-events: none; filter: blur(60px);
+}
+:root[data-theme="pink"] .deck::before {
+  inset: 18% 12% 10% 12%;
+  background:
+    radial-gradient(40% 50% at 35% 45%, rgba(232, 89, 127, 0.62), transparent 70%),
+    radial-gradient(35% 45% at 68% 60%, rgba(150, 40, 140, 0.52), transparent 70%),
+    radial-gradient(50% 40% at 50% 85%, rgba(120, 20, 60, 0.55), transparent 70%);
+}
+:root[data-theme="pink"] .real::before {
+  inset: 0 0 0 40%;
+  background:
+    radial-gradient(45% 55% at 60% 45%, rgba(232, 89, 127, 0.5), transparent 70%),
+    radial-gradient(40% 40% at 80% 70%, rgba(140, 40, 150, 0.46), transparent 70%);
+}
+:root[data-theme="pink"] .page::before {
+  inset: -10% 10% auto 30%; height: 520px;
+  background: radial-gradient(50% 50% at 60% 40%, rgba(232, 89, 127, 0.36), transparent 70%);
+}
