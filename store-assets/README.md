@@ -62,10 +62,13 @@ Check new art at that size before uploading, not only at full size.
   `scripts/popup-preview.js`. Nothing in it is mocked up.
 - The cassette is read from `site/index.html`, so the store art and the site
   share one drawing.
-- Promo images fill their area with a saturated deep pink so their edges read on
-  the store's light gray and dark cards. The promo tile shows the cassette with
-  only its name on the label; Google asks for no text on promotional images, and
-  the label is part of the drawing rather than a caption.
+- Promo images use the website's glow: a near-black cherry ground with blurred
+  pink and violet light behind the cassette, as on the home page. The promo
+  tile shows the cassette with only its name on the label; Google asks for no
+  text on promotional images, and the label is part of the drawing rather than
+  a caption.
+- The name in Fraunces uses its plain "&" (the `ss01` alternate) rather than
+  the curly one it draws at display sizes.
 - Google and Spotify logos are not used in the promotional images, and
   compatibility wording does not imply affiliation or endorsement.
 
