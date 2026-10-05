@@ -29,10 +29,16 @@ const hidden = new Set(
 );
 
 function fileFor(pathname) {
-  const relative = decodeURIComponent(pathname).replace(/^\/+/, '');
-  if (relative.split('/').includes('..') || hidden.has(relative)) return null;
+  let relative;
+  try {
+    relative = decodeURIComponent(pathname).replace(/^\/+/, '');
+  } catch {
+    return null; // malformed percent escape
+  }
+  if (relative.split(/[\\/]/).includes('..') || hidden.has(relative)) return null;
   for (const candidate of [relative, `${relative}.html`, path.join(relative, 'index.html')]) {
-    const file = path.join(siteRoot, candidate);
+    const file = path.resolve(siteRoot, candidate);
+    if (!file.startsWith(siteRoot + path.sep)) continue;
     if (fs.existsSync(file) && fs.statSync(file).isFile()) return file;
   }
   return null;
