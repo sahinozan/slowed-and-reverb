@@ -40,14 +40,14 @@ const ICONS = {
 };
 
 const BLOCKED_TEXT = {
-  drm: "This page's audio looks copy-protected (DRM), so effects can't be applied here.",
+  drm: "This audio is copy-protected, so the effects can't work here.",
   unsupportedSite:
-    'This website is not officially supported yet. Try YouTube, YouTube Music, or Spotify.',
-  unsupported: "This page's player is not available to the extension.",
-  noPlayer: "Waiting for this site's supported audio player...",
-  loadingPlayer: 'The audio player is still loading. Effects will start when it is ready.',
+    "This site isn't supported. It works on YouTube, YouTube Music and Spotify.",
+  unsupported: "The extension can't reach the player on this page.",
+  noPlayer: 'Waiting for the song to load…',
+  loadingPlayer: "The player is still loading. The effect starts as soon as it's ready.",
   spotifyEffects:
-    'Spotify speed is available, but this browser did not expose its audio to the filters.'
+    "Speed works here, but this browser doesn't let the other effects reach Spotify's audio."
 };
 
 const THEMES = [
@@ -325,11 +325,11 @@ function showSpotifyPermissionPanel(mode) {
 
   if (mode === 'reload') {
     els.spotifyPermissionText.textContent =
-      'Spotify access is enabled. Reload the page so the audio hook can start before its player.';
+      "Allowed. Reload Spotify once and it's ready.";
     els.spotifyPermissionBtn.textContent = 'Reload Spotify';
   } else {
     els.spotifyPermissionText.textContent =
-      'Spotify needs optional site access so the audio hook can start before its hidden player. Processing stays on this device.';
+      "To work on Spotify, the extension has to load before Spotify's player does, so your browser asks you once.";
     els.spotifyPermissionBtn.textContent = 'Allow on Spotify';
   }
 }
@@ -342,7 +342,7 @@ function hideSpotifyPermissionPanel() {
 function showYouTubePermissionPanel(permission) {
   youtubePermission = permission;
   els.youtubePermissionPanel.hidden = false;
-  els.youtubePermissionTitle.textContent = `Enable ${permission.name} support?`;
+  els.youtubePermissionTitle.textContent = `Use it on ${permission.name}?`;
   els.youtubePermissionBtn.textContent = `Allow on ${permission.name}`;
   els.youtubePermissionStatus.textContent = '';
 }
@@ -363,14 +363,14 @@ async function handleYouTubePermissionAction() {
     // the button's user action.
     const granted = await api.permissions.request({ origins: [permission.origin] });
     if (!granted) {
-      els.youtubePermissionStatus.textContent = 'Permission was not granted.';
+      els.youtubePermissionStatus.textContent = 'Not allowed. You can try again any time.';
       return;
     }
 
     await syncWithActiveTab();
   } catch {
     els.youtubePermissionStatus.textContent =
-      `Permission request failed. You can also enable ${permission.name} in the browser extension settings.`;
+      `That didn't work. You can also allow ${permission.name} in your browser's extension settings.`;
   } finally {
     els.youtubePermissionBtn.disabled = false;
   }
@@ -425,7 +425,7 @@ async function handleSpotifyPermissionAction() {
       const granted = await api.permissions.request({ origins: [SPOTIFY_ORIGIN] });
       if (!granted) {
         permissionReloadWatcher?.cancel();
-        els.spotifyPermissionStatus.textContent = 'Permission was not granted.';
+        els.spotifyPermissionStatus.textContent = 'Not allowed. You can try again any time.';
         return;
       }
 
@@ -446,7 +446,7 @@ async function handleSpotifyPermissionAction() {
   } catch {
     permissionReloadWatcher?.cancel();
     els.spotifyPermissionStatus.textContent =
-      'Permission request failed. You can also enable Spotify in the browser extension settings.';
+      "That didn't work. You can also allow Spotify in your browser's extension settings.";
   } finally {
     els.spotifyPermissionBtn.disabled = false;
   }

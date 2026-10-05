@@ -76,10 +76,10 @@
       </div>
 
       <section id="spotify-permission-panel" class="site-permission-panel" hidden>
-        <div class="site-permission-title">Enable Spotify support?</div>
+        <div class="site-permission-title">Use it on Spotify?</div>
         <p id="spotify-permission-text">
-          Spotify needs optional site access so the audio hook can start before its hidden player.
-          Processing stays on this device.
+          To work on Spotify, the extension has to load before Spotify's player does, so your
+          browser asks you once.
         </p>
         <button type="button" id="spotify-permission-btn" class="action-btn">
           Allow on Spotify
@@ -88,10 +88,9 @@
       </section>
 
       <section id="youtube-permission-panel" class="site-permission-panel" hidden>
-        <div id="youtube-permission-title" class="site-permission-title">Enable YouTube support?</div>
+        <div id="youtube-permission-title" class="site-permission-title">Use it on YouTube?</div>
         <p>
-          Firefox needs optional site access to restore effects after a reload.
-          Processing stays on this device.
+          Firefox asks once so the effect can come back after you reload the page.
         </p>
         <button type="button" id="youtube-permission-btn" class="action-btn">
           Allow on YouTube
@@ -159,7 +158,7 @@
           <div class="control-group eq-group">
             <div class="eq-labels">
               <div class="eq-label-col">
-                <span class="eq-label-name">Low</span>
+                <span class="eq-label-name">Bass</span>
                 <span class="eq-label-value" id="eq-low-value">0dB</span>
               </div>
               <div class="eq-label-col">
@@ -167,7 +166,7 @@
                 <span class="eq-label-value" id="eq-mid-value">0dB</span>
               </div>
               <div class="eq-label-col">
-                <span class="eq-label-name">High</span>
+                <span class="eq-label-name">Treble</span>
                 <span class="eq-label-value" id="eq-high-value">0dB</span>
               </div>
             </div>
@@ -175,11 +174,11 @@
               <line class="eq-zero-line" x1="0" y1="42" x2="300" y2="42"></line>
               <path id="eq-curve-path" class="eq-curve-path" d=""></path>
               <circle id="eq-handle-low" class="eq-handle" data-band="low" cx="40" cy="42" r="8"
-                tabindex="0" role="slider" aria-label="Low" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"></circle>
+                tabindex="0" role="slider" aria-label="Bass" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"></circle>
               <circle id="eq-handle-mid" class="eq-handle" data-band="mid" cx="150" cy="42" r="8"
                 tabindex="0" role="slider" aria-label="Mid" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"></circle>
               <circle id="eq-handle-high" class="eq-handle" data-band="high" cx="260" cy="42" r="8"
-                tabindex="0" role="slider" aria-label="High" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"></circle>
+                tabindex="0" role="slider" aria-label="Treble" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="0"></circle>
             </svg>
           </div>
         </div>

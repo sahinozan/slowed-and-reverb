@@ -89,10 +89,15 @@ body {
   box-shadow: 0 0 10px hsl(var(--accent-hsl) / 0.45);
 }
 
-/* Gecko popups have rounded panel chrome; Chromium popups are square. */
+/* Gecko popups have rounded panel chrome; Chromium popups are square. Firefox's
+   current panel corners are about 24px (measured on macOS from a 2x screenshot),
+   so the container is rounded to that minus the 4px frame: the frame then follows
+   the panel's curve at an even width instead of being clipped away at the
+   corners. With smaller panel corners (older Firefox) the frame is only thicker
+   at the corners. */
 @supports (-moz-appearance: none) {
   .container {
-    border-radius: 6px;
+    border-radius: 20px;
   }
 }
 

@@ -2,7 +2,7 @@
 
 Effective date: August 11, 2026
 
-This policy applies to version `1.0.0` of the Slowed & Reverb browser extension
+This policy applies to versions `1.0.0` and `1.0.1` of the Slowed & Reverb browser extension
 for Chromium-based browsers and Firefox.
 
 ## Summary

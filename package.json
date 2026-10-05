@@ -1,7 +1,7 @@
 {
   "name": "slowed-reverb-extension",
-  "version": "1.0.0",
-  "description": "Real-time speed, reverb, EQ, and stereo effects for YouTube\u2122, YouTube Music\u2122, and Spotify. Processing stays on your device.",
+  "version": "1.0.1",
+  "description": "Slowed + Reverb and Nightcore for YouTube\u2122, YouTube Music\u2122 and Spotify. Change the speed, reverb, bass and more. Free and private.",
   "private": true,
   "scripts": {
     "build:chromium": "node scripts/build-extension.js chromium",
