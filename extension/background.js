@@ -1,22 +1,10 @@
 const api = typeof browser !== 'undefined' ? browser : chrome;
 
-const DEFAULT_SETTINGS = Object.freeze({
-  speed: 1.0,
-  reverb: 0,
-  echo: 0,
-  pan: 0,
-  width: 100,
-  keepPitch: false,
-  saturation: 0,
-  eqLow: 0,
-  eqMid: 0,
-  eqHigh: 0
-});
+// Chromium runs this file as a service worker, which loads settings.js here;
+// the Firefox build lists settings.js before this file instead.
+if (typeof importScripts === 'function') importScripts('settings.js');
 
-const PRESETS = Object.freeze({
-  slowed: Object.freeze({ ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 }),
-  nightcore: Object.freeze({ ...DEFAULT_SETTINGS, speed: 1.2 })
-});
+const { PRESETS, normalize: normalizeSettings, match: settingsMatch } = SlowedReverbSettings;
 
 const COMMAND_PRESETS = {
   'toggle-slowed-reverb': PRESETS.slowed,
@@ -28,18 +16,6 @@ const ICONS = {
   off: { 16: 'assets/icon16-off.png', 48: 'assets/icon48-off.png', 128: 'assets/icon128-off.png' }
 };
 
-const SPEED_EPSILON = 0.001;
-const SETTING_BOUNDS = Object.freeze({
-  speed: Object.freeze([0.5, 1.5]),
-  reverb: Object.freeze([0, 100]),
-  echo: Object.freeze([0, 100]),
-  pan: Object.freeze([-100, 100]),
-  width: Object.freeze([0, 200]),
-  saturation: Object.freeze([0, 100]),
-  eqLow: Object.freeze([-12, 12]),
-  eqMid: Object.freeze([-12, 12]),
-  eqHigh: Object.freeze([-12, 12])
-});
 const RESTORABLE_URL = /^https?:\/\//i;
 const TAB_STATE_PREFIX = 'tabState:';
 const tabApplyQueues = new Map();
@@ -53,20 +29,6 @@ const YOUTUBE_PERMISSION_ORIGINS = Object.freeze({
   'music.youtube.com': 'https://music.youtube.com/*'
 });
 let spotifyRegistrationQueue = Promise.resolve();
-
-function normalizeSettings(settings) {
-  const normalized = { ...DEFAULT_SETTINGS };
-  if (!settings || typeof settings !== 'object') return normalized;
-
-  for (const [key, [minimum, maximum]] of Object.entries(SETTING_BOUNDS)) {
-    const value = settings[key];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      normalized[key] = Math.min(maximum, Math.max(minimum, value));
-    }
-  }
-  normalized.keepPitch = settings.keepPitch === true;
-  return normalized;
-}
 
 function isExtensionPageSender(sender) {
   if (sender.id !== api.runtime.id) return false;
@@ -159,14 +121,6 @@ async function enableSpotifyForActiveTab() {
   if (tab?.id !== undefined && isSpotifyUrl(tab.url)) await api.tabs.reload(tab.id);
 }
 
-function settingsMatch(a, b) {
-  return Object.keys(DEFAULT_SETTINGS).every((key) => {
-    const left = a[key] ?? DEFAULT_SETTINGS[key];
-    const right = b[key] ?? DEFAULT_SETTINGS[key];
-    return key === 'speed' ? Math.abs(left - right) < SPEED_EPSILON : left === right;
-  });
-}
-
 function getOrigin(url) {
   try {
     return new URL(url).origin;
@@ -223,7 +177,7 @@ async function setTabIcon(tabId, enabled) {
 
 async function ensureContentScript(tabId) {
   try {
-    await api.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    await api.scripting.executeScript({ target: { tabId }, files: ['settings.js', 'content.js'] });
     return true;
   } catch {
     return false;

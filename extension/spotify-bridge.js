@@ -4,6 +4,9 @@
 
   const api = typeof browser !== 'undefined' ? browser : chrome;
   const CHANNEL = 'SLOWED_REVERB_SPOTIFY';
+  // A copy of SlowedReverbSettings.DEFAULTS (settings.js). This script stays
+  // self-contained because its registration outlives extension updates;
+  // tests/settings.test.js keeps the copy equal.
   const NEUTRAL_SETTINGS = Object.freeze({
     speed: 1,
     reverb: 0,

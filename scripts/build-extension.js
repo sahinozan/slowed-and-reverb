@@ -5,6 +5,7 @@ const path = require('path');
 
 const TARGETS = new Set(['chromium', 'firefox']);
 const SOURCE_FILES = [
+  'settings.js',
   'background.js',
   'content.js',
   'spotify-bridge.js',
@@ -49,7 +50,7 @@ for (const file of assetFiles) {
 
 if (target === 'firefox') {
   // Firefox MV3 uses background.scripts; Chromium requires background.service_worker.
-  manifest.background = { scripts: ['background.js'] };
+  manifest.background = { scripts: ['settings.js', 'background.js'] };
   manifest.optional_host_permissions = [
     ...manifest.optional_host_permissions,
     ...FIREFOX_YOUTUBE_ORIGINS

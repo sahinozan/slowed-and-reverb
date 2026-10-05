@@ -37,7 +37,7 @@ Never edit these by hand. Change the source, then regenerate:
 | Files | Source | Command |
 | --- | --- | --- |
 | `dist/` | `extension/` | `npm run build:chromium`, `npm run build:firefox`, `npm run package` |
-| `site/popup/popup.*` | `extension/popup.*` | `npm run site:popup` |
+| `site/popup/popup.*`, `site/popup/settings.js` | `extension/popup.*`, `extension/settings.js` | `npm run site:popup` |
 | `?v=` stamps in `site/*.html` | `site/styles.css`, `site/*.js` | `npm run site:stamp` |
 | `extension/assets/icon*`, `store-assets/chrome/store-icon-128.png`, the popup's header mark | `scripts/render-icons.js` | `npm run icons` |
 | `store-assets/screenshots/`, `store-assets/firefox/`, the promo tile and marquee in `store-assets/chrome/`, `site/assets/og-card.png` | `scripts/render-store-assets.js`, the popup, the captures in `store-assets/originals/`, the cassette in `site/index.html`, `site/assets/fonts/fraunces.woff2` | `npm run store:assets` (needs macOS fonts) |
@@ -46,6 +46,13 @@ The tests fail when the site's popup copy or stamps are out of date.
 
 ## Rules
 
+- **Settings:** the defaults, ranges and built-in presets live in
+  `extension/settings.js`. The background script, the popup and `content.js`
+  load it first, so every injection of `content.js` lists `settings.js` before
+  it (a test checks this). `spotify-bridge.js` keeps its own copy of the
+  defaults, because Spotify's registered scripts are kept across updates; a
+  test keeps the copy equal. A new setting goes in `settings.js`, the bridge's
+  copy, the popup's controls and `content.js`'s audio graph.
 - **Privacy:** the extension makes no network requests and has no analytics,
   telemetry or remote code. Don't add permissions; the optional site
   permissions are requested only when the user asks. The website loads

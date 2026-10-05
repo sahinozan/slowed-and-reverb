@@ -36,7 +36,7 @@ function isExternal(value) {
 
 describe('website', () => {
   test('the embedded popup is the shipping popup', () => {
-    for (const file of ['popup.js', 'popup.css']) {
+    for (const file of ['popup.js', 'popup.css', 'settings.js']) {
       assert.equal(
         fs.readFileSync(path.join(siteRoot, 'popup', file), 'utf8'),
         fs.readFileSync(path.join(root, 'extension', file), 'utf8'),

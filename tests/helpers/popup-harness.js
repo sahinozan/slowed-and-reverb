@@ -39,8 +39,9 @@ async function createPopupHarness(options = {}) {
   };
 
   loadScript('extension/background.js', { chrome: harness.api });
-  const source = fs.readFileSync(`${root}/extension/popup.js`, 'utf8');
-  window.eval(source);
+  // popup.html loads settings.js before popup.js.
+  window.eval(fs.readFileSync(`${root}/extension/settings.js`, 'utf8'));
+  window.eval(fs.readFileSync(`${root}/extension/popup.js`, 'utf8'));
   for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
 
   return { ...harness, dom, window };
