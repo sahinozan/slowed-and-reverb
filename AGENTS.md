@@ -25,8 +25,10 @@ covers the features and development commands in full.
   real extension in Chromium.
 - Check popup changes in both engines. Firefox draws the popup inside rounded
   panel corners (see the `@supports (-moz-appearance: none)` rule in
-  `popup.css`) and needs a manual look; Chromium can be checked headlessly
-  with `scripts/popup-preview.js`.
+  `popup.css`) and needs a manual look. In Chromium, `npm run test:e2e` opens
+  the real popup, checks its size and saves a screenshot; for other states,
+  render it with the helpers in `scripts/popup-preview.js`, as the store-art
+  script does.
 
 ## Generated files
 
@@ -34,11 +36,11 @@ Never edit these by hand. Change the source, then regenerate:
 
 | Files | Source | Command |
 | --- | --- | --- |
-| `dist/` | `extension/` | `npm run build:chromium`, `build:firefox`, `package` |
+| `dist/` | `extension/` | `npm run build:chromium`, `npm run build:firefox`, `npm run package` |
 | `site/popup/popup.*` | `extension/popup.*` | `npm run site:popup` |
 | `?v=` stamps in `site/*.html` | `site/styles.css`, `site/*.js` | `npm run site:stamp` |
 | `extension/assets/icon*`, `store-assets/chrome/store-icon-128.png`, the popup's header mark | `scripts/render-icons.js` | `npm run icons` |
-| `store-assets/screenshots/`, `store-assets/firefox/`, the promo tile and marquee in `store-assets/chrome/`, `site/assets/og-card.png` | `scripts/render-store-assets.js`, the popup, `site/index.html` | `npm run store:assets` (needs macOS fonts) |
+| `store-assets/screenshots/`, `store-assets/firefox/`, the promo tile and marquee in `store-assets/chrome/`, `site/assets/og-card.png` | `scripts/render-store-assets.js`, the popup, the captures in `store-assets/originals/`, the cassette in `site/index.html`, `site/assets/fonts/fraunces.woff2` | `npm run store:assets` (needs macOS fonts) |
 
 The tests fail when the site's popup copy or stamps are out of date.
 
