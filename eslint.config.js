@@ -18,7 +18,8 @@ const browserGlobals = {
 
 module.exports = [
   {
-    ignores: ['dist/**']
+    // The prototypes embed a verbatim copy of the popup, linted at its source.
+    ignores: ['dist/**', 'site/prototypes/shared/popup/popup.js']
   },
   {
     files: [
@@ -77,7 +78,26 @@ module.exports = [
       globals: {
         document: 'readonly',
         window: 'readonly',
-        ResizeObserver: 'readonly'
+        console: 'readonly',
+        location: 'readonly',
+        requestAnimationFrame: 'readonly',
+        ResizeObserver: 'readonly',
+        Audio: 'readonly',
+        AudioContext: 'readonly',
+        OfflineAudioContext: 'readonly',
+        fetch: 'readonly',
+        Blob: 'readonly',
+        Event: 'readonly',
+        URL: 'readonly',
+        Float32Array: 'readonly',
+        DataView: 'readonly',
+        ArrayBuffer: 'readonly',
+        URLSearchParams: 'readonly',
+        IntersectionObserver: 'readonly',
+        sessionStorage: 'readonly',
+        history: 'readonly',
+        SRDemo: 'readonly',
+        SRPopupEmbed: 'readonly'
       }
     },
     rules: {

@@ -1,0 +1,3 @@
+chrome-color.svg   Google Chrome logo, Google LLC trademark. Used unaltered to refer to the Chrome Web Store listing.
+firefox-color.svg  Firefox logo, Mozilla Foundation trademark. Used unaltered to refer to the Firefox Add-ons listing.
+Monochrome glyphs inlined in the pages come from Simple Icons (CC0 1.0). The marks themselves remain their owners' trademarks.

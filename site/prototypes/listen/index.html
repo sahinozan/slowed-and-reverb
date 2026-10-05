@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slowed &amp; Reverb: hear what it does</title>
+<meta name="description" content="A browser extension that slows down and adds reverb to YouTube, YouTube Music and Spotify. Press play and hear it before you install.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="../../assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="lockup" href="#top"><img src="../../assets/icon.svg" alt="" width="22" height="22"> Slowed &amp; Reverb</a>
+  <nav aria-label="Links">
+    <a href="https://chromewebstore.google.com/detail/slowed-reverb/nhndfhonlljbmkpnblndjfdefjoecpoa">Chrome</a>
+    <a href="https://addons.mozilla.org/firefox/addon/slowed-reverb/">Firefox</a>
+    <a href="https://github.com/sahinozan/slowed-and-reverb">Source</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="player" aria-label="Demo player">
+    <div class="head">
+      <div class="readout" aria-live="off">
+        <output class="rate" id="rate" for="speed">0.80×</output>
+        <p class="detail"><span id="semitones">−3.9 semitones</span><span id="bpm">74 bpm</span></p>
+      </div>
+      <button class="play" id="play" type="button" aria-pressed="false">
+        <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>
+        <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>
+        <span id="play-label">Play the loop</span>
+      </button>
+    </div>
+
+    <div class="fader">
+      <label class="sr-only" for="speed">Speed</label>
+      <input id="speed" type="range" min="0.5" max="1.5" step="0.01" value="0.8">
+      <svg class="ruler" id="ruler" aria-hidden="true"></svg>
+    </div>
+
+    <div class="reverb">
+      <label for="reverb">Reverb</label>
+      <input id="reverb" type="range" min="0" max="100" step="1" value="40">
+      <output id="reverb-out" for="reverb">40%</output>
+    </div>
+
+    <div class="foot">
+      <p class="lede">
+        That is the whole idea. The extension does this to whatever is playing on YouTube,
+        YouTube Music or the Spotify web player, live, on your own computer. Pitch follows
+        speed the way tape does. Free and open source, with nothing to unlock.
+      </p>
+      <div class="actions">
+        <a class="button primary" href="https://chromewebstore.google.com/detail/slowed-reverb/nhndfhonlljbmkpnblndjfdefjoecpoa">Get for Chrome</a>
+        <a class="button" href="https://addons.mozilla.org/firefox/addon/slowed-reverb/">Get for Firefox</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="more">
+    <img class="popup" src="../../assets/popup-basic.png" width="340" height="492"
+         alt="The extension popup: presets at the top, speed and reverb sliders, and a three-band EQ curve.">
+    <div class="copy">
+      <h2>The rest lives in one small panel.</h2>
+      <p>
+        Open it on the tab you are playing. Speed and reverb are the two sliders you just used.
+        Under them, a three-band EQ you drag into shape. An Advanced tab adds echo, pan,
+        stereo width, saturation, and a switch that keeps the original pitch while the track
+        slows down. A limiter runs underneath so extreme settings never distort.
+      </p>
+      <p>
+        Two presets come built in, Slowed + Reverb and Nightcore. Save your own under a name,
+        give the three commands keyboard shortcuts if you like, and pick one of four looks.
+      </p>
+      <p class="quiet">
+        The extension asks for access to a site the first time you open the popup there.
+        Spotify stays untouched until you allow it. Nothing is sent anywhere, and there is no
+        account, no analytics and no ads. <a href="https://github.com/sahinozan/slowed-and-reverb/blob/main/PRIVACY.md">Privacy policy</a>
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p>Slowed &amp; Reverb 1.0.0. MIT License.
+    <a href="https://github.com/sahinozan/slowed-and-reverb">GitHub</a>,
+    <a href="https://github.com/sahinozan/slowed-and-reverb/issues">report an issue</a>,
+    <a href="https://github.com/sahinozan/slowed-and-reverb/blob/main/SUPPORT.md">support</a>.
+    Runs on desktop Chrome, Edge, Brave and other Chromium browsers, and Firefox 142 or later.</p>
+  <p>Independently developed. Not affiliated with, endorsed by, or sponsored by Google or Spotify.
+    YouTube and YouTube Music are trademarks of Google LLC. Spotify is a trademark of Spotify AB.
+    The demo loop is synthesised in your browser; nothing is downloaded.</p>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

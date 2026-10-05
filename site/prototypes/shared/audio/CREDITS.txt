@@ -1,0 +1,14 @@
+start-again-loop.mp3
+
+"Start Again" by Alex Beroza featuring Snowflake & Subliminal
+https://ccmixter.org/files/AlexBeroza/31670
+Licensed under Creative Commons Attribution 3.0 (CC BY 3.0)
+https://creativecommons.org/licenses/by/3.0/
+
+Changes: excerpt from 2:29.46 to 2:53.46 (24 s, 8 bars at 80 bpm), level
+reduced by 8 dB, the first 20 ms crossfaded with the audio that follows the
+excerpt so the loop seam is smooth, re-encoded as 160 kbps MP3. On the site the
+excerpt is played through the extension's effects, which change it further.
+
+Samples credited by the track's page, both CC BY 3.0:
+"The Swing State" by Subliminal; "Give it Up (Start Again)" by Snowflake.
