@@ -29,11 +29,19 @@ const { DEFAULT_SETTINGS, POPUP_W, renderPopup, startServer } = require('./popup
 
 const root = path.join(__dirname, '..');
 const shotDir = path.join(root, 'store-assets', 'screenshots');
+// Firefox takes screenshots up to 2400 x 1800 and shows them full size when
+// clicked, so it gets the same slides at 2400 x 1500 (Chrome only takes 1280 x 800).
+const firefoxShotDir = path.join(root, 'store-assets', 'firefox', 'screenshots');
 const chromeDir = path.join(root, 'store-assets', 'chrome');
 const ogCard = path.join(root, 'site', 'assets', 'og-card.png');
 const popupDir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-store-popups-'));
 
 const SUPERSAMPLE = 2;
+const FIREFOX_SCALE = 2400 / 1280;
+// Popup captures: 3x covers the largest panel on the 1280 slides; the Firefox
+// slides are 1.875x larger, so their panels are captured at 6x.
+const POPUP_SCALE = 3;
+const FIREFOX_POPUP_SCALE = 6;
 const SLIDE_W = 1280;
 const SLIDE_H = 800;
 const MARGIN = 56;
@@ -209,9 +217,12 @@ const page = (width, height, body) => `<!doctype html><html><head><meta charset=
   ${CASSETTE_CSS}
 </style></head><body>${body}</body></html>`;
 
+// Which set of popup captures the slides being built use: '/popups' or '/popups-hi'.
+let popupRoute = '/popups';
+
 function popup(name, width) {
   const height = Math.round(popupHeights.get(name) * width / POPUP_W);
-  return `<img src="/popups/${name}.png" style="display:block;width:${width}px;height:${height}px" alt="">`;
+  return `<img src="${popupRoute}/${name}.png" style="display:block;width:${width}px;height:${height}px" alt="">`;
 }
 
 // A plain toolbar: window controls, navigation, the address, the extensions
@@ -332,8 +343,9 @@ function banner(width, height) {
 }
 
 // Renders at SUPERSAMPLE, then downsamples, so thin lines and small type stay crisp.
-async function renderScaled(browser, baseUrl, target, html, width, height) {
-  const big = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: SUPERSAMPLE });
+// `scale` enlarges the output: a 1280 x 800 layout at 1.875 is written as 2400 x 1500.
+async function renderScaled(browser, baseUrl, target, html, width, height, scale = 1) {
+  const big = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: SUPERSAMPLE * scale });
   await big.goto(`${baseUrl}/blank`).catch(() => {});
   await big.setContent(html.replaceAll('src="/', `src="${baseUrl}/`).replaceAll('url(/', `url(${baseUrl}/`),
     { waitUntil: 'networkidle' });
@@ -341,7 +353,7 @@ async function renderScaled(browser, baseUrl, target, html, width, height) {
   const buffer = await big.screenshot();
   await big.close();
 
-  const shrink = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+  const shrink = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: scale });
   await shrink.setContent(`<!doctype html><html><head><style>
       html, body { margin:0; width:${width}px; height:${height}px; overflow:hidden; }
       img { display:block; width:${width}px; height:${height}px; }
@@ -358,24 +370,33 @@ async function renderScaled(browser, baseUrl, target, html, width, height) {
 async function main() {
   assertCaptures();
   fs.mkdirSync(shotDir, { recursive: true });
+  fs.mkdirSync(firefoxShotDir, { recursive: true });
   fs.mkdirSync(chromeDir, { recursive: true });
 
   const routes = new Map([['/font/fraunces.woff2', path.join(root, 'site', 'assets', 'fonts', 'fraunces.woff2')]]);
   for (const [name, { file }] of Object.entries(CAPTURES)) routes.set(`/capture/${name}.png`, path.join(root, file));
-  for (const name of Object.keys(POPUP_VARIANTS)) routes.set(`/popups/${name}.png`, path.join(popupDir, `${name}.png`));
+  for (const name of Object.keys(POPUP_VARIANTS)) {
+    routes.set(`/popups/${name}.png`, path.join(popupDir, `${name}.png`));
+    routes.set(`/popups-hi/${name}.png`, path.join(popupDir, `${name}-hi.png`));
+  }
 
   const server = await startServer(routes);
   const browser = await chromium.launch({ headless: true });
-  const render = (target, html, width, height) => renderScaled(browser, server.baseUrl, target, html, width, height);
+  const render = (target, html, width, height, scale) =>
+    renderScaled(browser, server.baseUrl, target, html, width, height, scale);
 
   try {
     for (const [name, variant] of Object.entries(POPUP_VARIANTS)) {
       popupHeights.set(name, await renderPopup(browser, server.baseUrl, variant, {
-        file: path.join(popupDir, `${name}.png`)
+        file: path.join(popupDir, `${name}.png`), scale: POPUP_SCALE
       }));
+      await renderPopup(browser, server.baseUrl, variant, {
+        file: path.join(popupDir, `${name}-hi.png`), scale: FIREFOX_POPUP_SCALE
+      });
     }
 
-    const slides = [
+    // Built per pass, because each pass points the slides at its own popup captures.
+    const slides = () => [
       ['01-youtube.png', siteSlide({
         capture: 'youtube', popupName: 'slowed',
         heading: 'Slow down songs on YouTube and YouTube Music', headingSize: 54,
@@ -404,7 +425,12 @@ async function main() {
         subline: 'It doesn\u2019t collect anything about you or what you listen to. No account needed, and the code is public on GitHub.'
       })]
     ];
-    for (const [file, html] of slides) await render(path.join(shotDir, file), html, SLIDE_W, SLIDE_H);
+    popupRoute = '/popups';
+    for (const [file, html] of slides()) await render(path.join(shotDir, file), html, SLIDE_W, SLIDE_H);
+    popupRoute = '/popups-hi';
+    for (const [file, html] of slides()) {
+      await render(path.join(firefoxShotDir, file), html, SLIDE_W, SLIDE_H, FIREFOX_SCALE);
+    }
 
     await render(path.join(chromeDir, 'promotional-tile-440x280.png'), promoTile(), 440, 280);
     await render(path.join(chromeDir, 'marquee-1400x560.png'), banner(1400, 560), 1400, 560);

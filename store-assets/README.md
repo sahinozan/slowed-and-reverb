@@ -25,8 +25,19 @@ of them from `scripts/render-store-assets.js`. The listing text is in
   96 × 96 with transparent space around it, so this copy is scaled to 3/4.
   `npm run icons` builds it with the other icons.
 
-Firefox can reuse the five screenshots and `extension/assets/icon128.png`; it
-does not need the Chrome promotional images. The same run also writes
+Firefox uses the same five slides rendered at 2400 × 1500, its largest size at
+this shape, because it shows a screenshot full size when it's clicked and a
+1280 × 800 image looks soft on a high-resolution screen:
+
+- `firefox/screenshots/01-youtube.png`
+- `firefox/screenshots/02-spotify.png`
+- `firefox/screenshots/03-advanced.png`
+- `firefox/screenshots/04-presets.png`
+- `firefox/screenshots/05-privacy.png`
+
+The panels in them are captured at 6× instead of 3×, so they are sharp at that
+size too. Firefox uses `extension/assets/icon128.png` as its icon and does not
+need the Chrome promotional images. The same run also writes
 `site/assets/og-card.png`, the website's 1200 × 630 social preview.
 
 ## Sizing for the store
