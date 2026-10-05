@@ -3,9 +3,10 @@
 // The effect settings in one place: their defaults (which also mean "effect
 // off"), the range each one is clamped to, the two built-in presets, and how two
 // settings are compared. The background script, the popup and content.js load
-// this file first. spotify-bridge.js keeps its own copy of the defaults, because
-// Spotify's registered content scripts are kept across extension updates; a test
-// keeps that copy equal to this one.
+// this file first. The two Spotify scripts keep their own copies (spotify-bridge.js
+// of the defaults, spotify-main.js of the defaults and ranges), because Spotify's
+// registered content scripts are kept across extension updates; a test keeps
+// those copies equal to this file.
 //
 // content.js can be injected into the same page more than once, so this file
 // declares nothing at the top level and defines its global only once.

@@ -122,6 +122,7 @@ module.exports = [
         __dirname: 'readonly',
         clearTimeout: 'readonly',
         console: 'readonly',
+        fetch: 'readonly',
         process: 'readonly',
         setImmediate: 'readonly',
         setTimeout: 'readonly',

@@ -3,6 +3,9 @@
   window.__slowedReverbSpotifyMain = true;
 
   const CHANNEL = 'SLOWED_REVERB_SPOTIFY';
+  // Copies of SlowedReverbSettings.DEFAULTS and BOUNDS (settings.js). This script
+  // stays self-contained because its registration outlives extension updates;
+  // tests/settings.test.js keeps the copies equal.
   const NEUTRAL_SETTINGS = Object.freeze({
     speed: 1,
     reverb: 0,

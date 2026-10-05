@@ -37,6 +37,7 @@ function startServer(extraRoutes = new Map()) {
     ['/popup.html', path.join(extensionDir, 'popup.html')],
     ['/popup.css', path.join(extensionDir, 'popup.css')],
     ['/popup.js', path.join(extensionDir, 'popup.js')],
+    ['/settings.js', path.join(extensionDir, 'settings.js')],
     ...extraRoutes
   ]);
 

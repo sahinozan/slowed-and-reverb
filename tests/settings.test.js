@@ -64,11 +64,32 @@ describe('shared settings', () => {
     }
   });
 
-  test('the Spotify bridge keeps an exact copy of the defaults', () => {
-    const { DEFAULTS } = loadSettings();
-    const bridge = fs.readFileSync(path.join(root, 'extension/spotify-bridge.js'), 'utf8');
-    const literal = bridge.match(/const NEUTRAL_SETTINGS = Object\.freeze\((\{[\s\S]*?\})\);/);
-    assert.ok(literal, 'spotify-bridge.js no longer defines NEUTRAL_SETTINGS the expected way');
-    assert.deepEqual({ ...vm.runInNewContext(`(${literal[1]})`) }, { ...DEFAULTS });
+  test('the Spotify scripts keep exact copies of the defaults and ranges', () => {
+    const { DEFAULTS, BOUNDS } = loadSettings();
+    // Compared as JSON, so objects from different contexts compare by value.
+    const plain = (value) => JSON.parse(JSON.stringify(value));
+    const copies = [
+      ['spotify-bridge.js', 'NEUTRAL_SETTINGS', DEFAULTS],
+      ['spotify-main.js', 'NEUTRAL_SETTINGS', DEFAULTS],
+      ['spotify-main.js', 'SETTING_BOUNDS', BOUNDS]
+    ];
+    for (const [file, name, expected] of copies) {
+      const source = fs.readFileSync(path.join(root, 'extension', file), 'utf8');
+      const literal = source.match(new RegExp(`const ${name} = Object\\.freeze\\((\\{[\\s\\S]*?\\})\\);`));
+      assert.ok(literal, `${file} no longer defines ${name} the expected way`);
+      assert.deepEqual(plain(vm.runInNewContext(`(${literal[1]})`)), plain(expected), `${file} ${name}`);
+    }
+  });
+
+  test('the store-art preview server serves settings.js for the popup', async () => {
+    const { startServer } = require('../scripts/popup-preview');
+    const server = await startServer();
+    try {
+      const response = await fetch(`${server.baseUrl}/settings.js`);
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), settingsSource);
+    } finally {
+      await server.close();
+    }
   });
 });

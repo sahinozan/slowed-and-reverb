@@ -49,10 +49,12 @@ The tests fail when the site's popup copy or stamps are out of date.
 - **Settings:** the defaults, ranges and built-in presets live in
   `extension/settings.js`. The background script, the popup and `content.js`
   load it first, so every injection of `content.js` lists `settings.js` before
-  it (a test checks this). `spotify-bridge.js` keeps its own copy of the
-  defaults, because Spotify's registered scripts are kept across updates; a
-  test keeps the copy equal. A new setting goes in `settings.js`, the bridge's
-  copy, the popup's controls and `content.js`'s audio graph.
+  it (a test checks this). The two Spotify scripts keep their own copies,
+  because Spotify's registered scripts are kept across updates:
+  `spotify-bridge.js` of the defaults, `spotify-main.js` of the defaults and
+  ranges. A test keeps those copies equal. A new setting goes in
+  `settings.js`, both Spotify copies, the popup's controls, and the audio
+  graphs in `content.js` and `spotify-main.js`.
 - **Privacy:** the extension makes no network requests and has no analytics,
   telemetry or remote code. Don't add permissions; the optional site
   permissions are requested only when the user asks. The website loads
