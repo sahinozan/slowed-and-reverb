@@ -11,6 +11,8 @@ const NON_BROWSER_PATHS = new Set([
   'scripts/classify-ci-changes.js',
   'scripts/popup-preview.js',
   'scripts/render-icons.js',
+  'scripts/serve-site.js',
+  'scripts/stamp-site-assets.js',
   'scripts/sync-site-popup.js',
   'scripts/render-store-assets.js',
   'wrangler.jsonc'

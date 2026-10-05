@@ -7,6 +7,7 @@ const { describe, test } = require('node:test');
 const { JSDOM } = require('jsdom');
 
 const { root } = require('./helpers/load-script');
+const { STAMPED, stampFor } = require('../scripts/stamp-site-assets');
 const siteRoot = path.join(root, 'site');
 const PAGES = ['index.html', 'guide.html', 'faq.html', 'changelog.html', 'privacy.html', '404.html'];
 const DEMO_PAGES = ['index.html', 'guide.html'];
@@ -59,10 +60,13 @@ describe('website', () => {
     for (const page of PAGES) {
       for (const { value } of references(parse(page))) {
         if (isExternal(value)) continue;
-        const [address, anchor] = value.split('#');
-        // 404.html is served at any depth, so its links are root-relative.
-        const target = address === '' ? page : address.replace(/^\//, '') || 'index.html';
-        assert.ok(fs.existsSync(path.join(siteRoot, target)), `${page} links to missing ${value}`);
+        const [withoutAnchor, anchor] = value.split('#');
+        const address = withoutAnchor.split('?')[0];
+        // Pages are linked at clean addresses (/faq serves faq.html), as Cloudflare serves them.
+        const relative = address.replace(/^\//, '');
+        const target = address === '' ? page
+          : [relative || 'index.html', `${relative}.html`].find((name) => fs.existsSync(path.join(siteRoot, name)));
+        assert.ok(target, `${page} links to missing ${value}`);
         if (anchor && ids.has(target)) {
           assert.ok(ids.get(target).has(anchor), `${page} links to missing anchor ${value}`);
         }
@@ -104,6 +108,33 @@ describe('website', () => {
       const document = parse(page);
       const meta = (property) => Number(document.querySelector(`meta[property="${property}"]`).getAttribute('content'));
       assert.deepEqual([meta('og:image:width'), meta('og:image:height')], size, page);
+    }
+  });
+
+  test('pages link to clean addresses, not .html files', () => {
+    for (const page of PAGES) {
+      for (const { value } of references(parse(page))) {
+        if (isExternal(value)) continue;
+        assert.doesNotMatch(value, /\.html(?:[?#]|$)/, `${page} links to ${value}; Cloudflare would redirect it`);
+      }
+    }
+  });
+
+  test('stylesheets and scripts carry current version stamps', () => {
+    for (const page of PAGES) {
+      for (const { value } of references(parse(page))) {
+        const file = STAMPED.find((name) => value.replace(/^\//, '').split('?')[0] === name);
+        if (!file) continue;
+        assert.ok(value.endsWith(`?v=${stampFor(file)}`), `${page}: ${value} is out of date; run npm run site:stamp`);
+      }
+    }
+  });
+
+  test('only version-stamped files are cached for good', () => {
+    const rules = fs.readFileSync(path.join(siteRoot, '_headers'), 'utf8').split(/\n(?=\/)/);
+    for (const rule of rules.filter((block) => block.includes('immutable'))) {
+      const file = rule.split('\n')[0].trim().replace(/^\//, '');
+      assert.ok(STAMPED.includes(file), `_headers caches ${file} for good, but it has no version stamp`);
     }
   });
 
