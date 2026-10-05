@@ -1,13 +1,13 @@
 # Slowed & Reverb Support
 
-Slowed & Reverb `1.0.0` supports desktop Chromium-based browsers and Firefox 142+
+Slowed & Reverb `1.0.1` supports desktop Chromium-based browsers and Firefox 142+
 on:
 
 - YouTube;
 - YouTube Music; and
 - the Spotify web player after optional Spotify access is granted.
 
-Other websites, including Twitch and SoundCloud, are not supported in `1.0.0`.
+Other websites, including Twitch and SoundCloud, are not supported in `1.0.1`.
 
 ## Before reporting a problem
 
@@ -49,7 +49,7 @@ reporting instructions in the [security policy](SECURITY.md).
 - A newly opened tab starts with effects off because settings are tab-scoped.
 - Embedded media inside inaccessible frames or shadow roots may not be processed.
 - Firefox Android, Twitch, SoundCloud, and other music services are not supported
-  in `1.0.0`.
+  in `1.0.1`.
 
 For information about local processing and permissions, read the
 [privacy policy](PRIVACY.md).
