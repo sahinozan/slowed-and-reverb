@@ -75,30 +75,53 @@ Privacy policy: https://slowedreverbapp.com/privacy
 YouTube and YouTube Music are trademarks of Google LLC, and Spotify is a trademark of Spotify AB. This extension is made independently and isn't affiliated with, endorsed by or sponsored by either company.
 ```
 
-Firefox accepts a few HTML tags (`<b>`, `<ul>`, `<li>`, `<a>`) and ignores
-Markdown, so its copy uses them. It adds the sentence about Firefox's YouTube
-permission and its own browser line.
+Firefox reads Markdown in the description, release notes and privacy policy:
+**bold**, lists, links and `code`. It escapes HTML, so tags show up as text,
+and it drops headings along with their text, so section titles are bold lines.
+Line breaks show as written, so each paragraph is one line. Its copy adds the
+sentence about Firefox's YouTube permission and its own browser line.
 
-```html
+```markdown
 Slow down the song you're playing and add reverb with one click, or speed it up for Nightcore. It works on YouTube™, YouTube Music™ and the Spotify web player, and it changes the song while it plays, so there's nothing to download or convert.
 
 It's free, with no paid version and no account to make. It doesn't collect anything about you or what you listen to, and it doesn't show ads. The code is public on GitHub.
 
 Click the extension's icon while a song plays and Slowed + Reverb turns on right away. Nightcore is right next to it, and you can change everything yourself:
-<ul><li>Speed, from half speed to one and a half times. The pitch goes down and up with it, like a tape. If you only want the speed to change, turn on Keep Original Pitch.</li><li>Reverb</li><li>A three-band equalizer: Bass, Mid and Treble</li><li>Echo, stereo width, pan and saturation on the Advanced tab</li><li>My Presets, to save the settings you like and switch back with one click</li><li>Keyboard shortcuts, once you choose the keys</li><li>Four color themes for the panel</li></ul>
+
+- Speed, from half speed to one and a half times. The pitch goes down and up with it, like a tape. If you only want the speed to change, turn on Keep Original Pitch.
+- Reverb
+- A three-band equalizer: Bass, Mid and Treble
+- Echo, stereo width, pan and saturation on the Advanced tab
+- My Presets, to save the settings you like and switch back with one click
+- Keyboard shortcuts, once you choose the keys
+- Four color themes for the panel
+
 Each tab has its own setting. A new tab starts with the effect off, and a tab keeps its setting when you reload it.
 
 The first time you use it on Spotify, the panel asks you to allow it. Click Allow, accept your browser's question, and the page reloads once. After that it works the same as everywhere else. In Firefox, the other two sites ask the same way once, so the effect can come back after you reload the page.
 
-<b>Why I made it</b>
+**Why I made it**
 The slowed + reverb extensions I tried were closed source and kept their best features behind a subscription. I wanted one I could trust and just use.
 
-<b>Good to know</b>
-<ul><li>It works in Firefox 142 or newer on a computer, not on Android yet.</li><li>It doesn't work in desktop or phone apps, or on other sites.</li><li>It can't download or save the slowed version.</li><li>On live streams the speed can't change, but the other effects still work.</li></ul>
-Help: <a href="https://slowedreverbapp.com/faq">slowedreverbapp.com/faq</a>
-Privacy policy: <a href="https://slowedreverbapp.com/privacy">slowedreverbapp.com/privacy</a>
+**Good to know**
+
+- It works in Firefox 142 or newer on a computer, not on Android yet.
+- It doesn't work in desktop or phone apps, or on other sites.
+- It can't download or save the slowed version.
+- On live streams the speed can't change, but the other effects still work.
+
+Help: https://slowedreverbapp.com/faq
+Privacy policy: https://slowedreverbapp.com/privacy
 
 YouTube and YouTube Music are trademarks of Google LLC, and Spotify is a trademark of Spotify AB. This extension is made independently and isn't affiliated with, endorsed by or sponsored by either company.
+```
+
+Firefox release notes for 1.0.1:
+
+```markdown
+- Clearer wording in the panel, especially when it asks for permission on Spotify, or on YouTube in Firefox.
+- The equalizer's Low and High are now called Bass and Treble.
+- In Firefox, the panel's border is no longer cut off at the corners.
 ```
 
 ## Screenshot captions
