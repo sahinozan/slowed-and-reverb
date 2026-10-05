@@ -1,0 +1,21 @@
+# Response headers Cloudflare adds for site/. See site/README.md.
+
+# Versioned with ?v= by npm run site:stamp: a changed file gets a new address,
+# so browsers can keep these for good instead of re-checking on every page.
+/styles.css
+  Cache-Control: public, max-age=31536000, immutable
+/site.js
+  Cache-Control: public, max-age=31536000, immutable
+/app.js
+  Cache-Control: public, max-age=31536000, immutable
+/guide.js
+  Cache-Control: public, max-age=31536000, immutable
+/demo-audio.js
+  Cache-Control: public, max-age=31536000, immutable
+/popup-embed.js
+  Cache-Control: public, max-age=31536000, immutable
+
+# The font, demo audio and images rarely change: a week. Pages and the popup
+# copy keep Cloudflare's default and are re-checked on every visit.
+/assets/*
+  Cache-Control: public, max-age=604800

@@ -22,18 +22,20 @@ site/
   popup/            a copy of the shipping popup, plus popup-host.js
   assets/           icon, social image, font, brand logos, demo audio
   robots.txt, sitemap.xml
+  _headers          caching rules Cloudflare applies
 ```
 
 ## Preview locally
 
 ```sh
-python3 -m http.server 8080 --directory site
+npm run site:serve
 ```
 
-Then open `http://localhost:8080/`. Serve it rather than opening the files over
-`file://`, because the popup, the font, and the demo audio are loaded as normal
-requests. Links point at `guide.html` and so on, which works on both this
-server and Cloudflare (Cloudflare redirects them to `/guide`).
+Then open `http://localhost:8080/`. The script serves the folder the way
+Cloudflare does: pages at clean addresses (`/guide` serves `guide.html`, and
+`/guide.html` redirects there), `404.html` for unknown addresses, and nothing
+listed in `.assetsignore`. A plain static server will not do, because links
+point at the clean addresses.
 
 ## The popup on the page
 
@@ -96,6 +98,19 @@ build container, so it is not a dependency here.
 - Unknown addresses get `404.html` with a 404 status. That page can be served
   at any depth, so its links start with `/`.
 - `.assetsignore` keeps this README off the website.
+- Links use the clean addresses directly, so a click never waits on a redirect.
+- `_headers` sets caching. The stylesheet and scripts are kept for a year,
+  which is safe only because every page links to them with a version stamp
+  (`styles.css?v=…`, a hash of the file): a changed file gets a new address.
+  After editing any of them, run `npm run site:stamp`; `tests/site.test.js`
+  fails while a stamp is out of date, and also fails if `_headers` gives the
+  long cache to a file without a stamp. The font, audio and images are kept for
+  a week. Pages and the popup copy keep Cloudflare's default and are checked on
+  every visit, so content changes show up immediately.
+- Each page has a speculation rule that fetches a page's HTML when the visitor
+  hovers over a link to it, so clicks feel instant in Chromium browsers. It
+  prefetches only; nothing on the next page runs until the visitor opens it.
+  Other browsers ignore it.
 
 Both store dashboards should list `https://slowedreverbapp.com` as the homepage
 and `https://slowedreverbapp.com/privacy` as the privacy policy.
