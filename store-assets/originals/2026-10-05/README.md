@@ -1,8 +1,9 @@
 # Original marketing captures - October 5, 2026
 
 Unmodified, full-resolution originals behind the store screenshots. They replace the August 11, 2026 captures, which showed search
-results and an unrelated video rather than a song playing. The finished store
-images live in `../../screenshots/`.
+results and an unrelated video rather than a song playing; those were removed
+from the repository and remain in its git history. The finished store images
+live in `../../screenshots/` and `../../firefox/screenshots/`.
 
 All files were copied byte for byte from the original Desktop screenshots.
 Preserve them when producing new crops or compositions.

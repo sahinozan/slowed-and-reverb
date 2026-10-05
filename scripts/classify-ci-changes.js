@@ -20,12 +20,17 @@ const NON_BROWSER_PATHS = new Set([
 
 const NON_BROWSER_DIRECTORIES = ['.github/', 'site/', 'store-assets/', 'tests/'];
 
+// Markdown files the tests read (tests/package.test.js and tests/site.test.js),
+// so editing them needs the full checks even though they are documentation.
+const TESTED_DOCUMENTS = new Set(['README.md', 'site/README.md', 'store-assets/README.md']);
+
 function isDocumentation(file) {
-  return file === 'LICENSE' || file.endsWith('.md');
+  return !TESTED_DOCUMENTS.has(file) && (file === 'LICENSE' || file.endsWith('.md'));
 }
 
 function isKnownNonBrowserChange(file) {
   return (
+    TESTED_DOCUMENTS.has(file) ||
     NON_BROWSER_PATHS.has(file) ||
     NON_BROWSER_DIRECTORIES.some((directory) => file.startsWith(directory))
   );

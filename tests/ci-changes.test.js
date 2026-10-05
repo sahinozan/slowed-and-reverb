@@ -6,10 +6,16 @@ const { classifyFiles } = require('../scripts/classify-ci-changes');
 
 describe('CI change classification', () => {
   test('uses the lightweight path for documentation-only changes', () => {
-    assert.deepEqual(classifyFiles(['README.md', 'site/README.md', 'LICENSE']), {
+    assert.deepEqual(classifyFiles(['SUPPORT.md', 'store-assets/LISTING.md', 'LICENSE']), {
       full: false,
       browser: false
     });
+  });
+
+  test('runs repository checks for the READMEs the tests read', () => {
+    for (const file of ['README.md', 'site/README.md', 'store-assets/README.md']) {
+      assert.deepEqual(classifyFiles([file]), { full: true, browser: false }, file);
+    }
   });
 
   test('runs repository checks without browser smoke tests for tests and tooling', () => {
