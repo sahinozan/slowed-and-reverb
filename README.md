@@ -35,7 +35,7 @@ Chromium keeps using temporary tab access and does not show this additional prom
 | --- | --- | --- |
 | Speed | 0.5x – 1.5x | Pitch shifts with speed by default (the actual tape effect) |
 | Reverb | 0 – 100% | Generated impulse response, no external files |
-| EQ | ±12 dB × 3 bands | Draggable curve; also keyboard-accessible (arrows, Home, End) |
+| Bass, Mid, Treble | ±12 dB each | Draggable EQ curve; also keyboard-accessible (arrows, Home, End) |
 
 **Advanced**
 
@@ -75,9 +75,9 @@ Each toggles off if that exact preset is already what's playing.
 Four themes (Terminal, Midnight, Paper, Frost) behind the palette icon. Purely
 cosmetic and stored globally, not per tab.
 
-## Behaviour worth knowing
+## Behavior worth knowing
 
-- **The `1.0.1` support list is intentionally small.** YouTube, YouTube Music, and
+- **The support list is intentionally small.** YouTube, YouTube Music, and
   Spotify are supported. Other sites, including Twitch and SoundCloud, are left
   untouched and show a clear unsupported-site message.
 - **State is per tab and origin.** Two tabs can run different settings. Enabling
@@ -122,7 +122,7 @@ directories under `dist/`; `npm run package` creates one upload ZIP per store in
 `dist/packages/`. The Firefox version receives Firefox's MV3 background
 configuration and add-on metadata during the build. Its data-collection
 declaration and optional YouTube reload permissions target Firefox desktop 142+.
-Firefox Android is not declared for `1.0.1` because it has not been tested.
+Firefox Android is not declared because it has not been tested.
 
 Needs Node >= 24.19 and npm 11.19. Development tools are exact-versioned in
 `package.json` and `package-lock.json`; use `npm ci` for normal setup rather

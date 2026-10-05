@@ -37,7 +37,7 @@ store-assets/source-captures/
 store-assets/local-preview/
 
 # Local editor and assistant state
-.claude/settings.local.json
+.claude/
 .codex/
 .idea/
 .vscode/

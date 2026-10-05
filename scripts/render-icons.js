@@ -1,6 +1,6 @@
 'use strict';
 
-// Regenerates every icon artefact from the single geometry definition below:
+// Regenerates every icon artifact from the single geometry definition below:
 // the two source SVGs, the six extension PNGs, the Chrome Web Store icon, and
 // the inline mark in the popup header. Run `npm run icons` after changing
 // anything in this file.
@@ -21,7 +21,7 @@ const BAR_WIDTH = 16;
 const BAR_GAP = 8;
 const BAR_HEIGHTS = [48, 80, 120, 80, 48];
 const FIRST_BAR_X = 8;
-const CENTRE_Y = 64;
+const CENTER_Y = 64;
 
 const RAMPS = {
   on: [['0', '#ff9ab8'], ['0.5', '#e8597f'], ['1', '#b32a58']],
@@ -34,7 +34,7 @@ const PNG_SIZES = [16, 48, 128];
 
 // The extension's own icons fill the 128 grid. Google asks for the store icon's
 // artwork to fit 96x96 with transparent padding around it, so the store copy is
-// scaled by 3/4 about the centre: every bar edge still lands on a whole pixel,
+// scaled by 3/4 about the center: every bar edge still lands on a whole pixel,
 // and the 112x120 mark becomes 84x90.
 const STORE_ICON_SCALE = 0.75;
 const LOGO_START = '<!-- icon:start -->';
@@ -44,7 +44,7 @@ function bars(fill, indent, className) {
   const classAttr = className ? ` class="${className}"` : '';
   return BAR_HEIGHTS.map((height, index) => {
     const x = FIRST_BAR_X + index * (BAR_WIDTH + BAR_GAP);
-    const y = CENTRE_Y - height / 2;
+    const y = CENTER_Y - height / 2;
     return `${indent}<rect${classAttr} x="${x}" y="${y}" width="${BAR_WIDTH}" height="${height}" rx="${BAR_WIDTH / 2}" fill="${fill}"/>`;
   }).join('\n');
 }
@@ -82,7 +82,7 @@ ${markup(prefix, state)}
 }
 
 function storeSvg() {
-  const offset = CENTRE_Y * (1 - STORE_ICON_SCALE);
+  const offset = CENTER_Y * (1 - STORE_ICON_SCALE);
   return `<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
   <g transform="translate(${offset} ${offset}) scale(${STORE_ICON_SCALE})">
 ${markup('sr-store', 'on', '    ')}
