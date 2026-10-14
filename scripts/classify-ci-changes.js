@@ -20,6 +20,10 @@ const NON_BROWSER_PATHS = new Set([
 
 const NON_BROWSER_DIRECTORIES = ['.github/', 'site/', 'store-assets/', 'tests/'];
 
+// The workflow that defines the browser smoke tests, so changing it (including
+// Dependabot's action updates) runs them.
+const BROWSER_WORKFLOW = '.github/workflows/ci.yml';
+
 // Markdown files the tests read (tests/package.test.js and tests/site.test.js),
 // so editing them needs the full checks even though they are documentation.
 const TESTED_DOCUMENTS = new Set(['README.md', 'site/README.md', 'store-assets/README.md']);
@@ -29,6 +33,7 @@ function isDocumentation(file) {
 }
 
 function isKnownNonBrowserChange(file) {
+  if (file === BROWSER_WORKFLOW) return false;
   return (
     TESTED_DOCUMENTS.has(file) ||
     NON_BROWSER_PATHS.has(file) ||
