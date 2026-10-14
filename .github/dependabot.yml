@@ -4,10 +4,16 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Match min-release-age in .npmrc.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    # Match min-release-age in .npmrc.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5

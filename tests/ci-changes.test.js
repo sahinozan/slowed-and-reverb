@@ -22,11 +22,15 @@ describe('CI change classification', () => {
     assert.deepEqual(
       classifyFiles([
         'tests/package.test.js',
-        '.github/workflows/ci.yml',
+        '.github/dependabot.yml',
         'scripts/render-store-assets.js'
       ]),
       { full: true, browser: false }
     );
+  });
+
+  test('runs browser smoke tests when the workflow that defines them changes', () => {
+    assert.deepEqual(classifyFiles(['.github/workflows/ci.yml']), { full: true, browser: true });
   });
 
   test('runs browser smoke tests for extension runtime and dependency changes', () => {
