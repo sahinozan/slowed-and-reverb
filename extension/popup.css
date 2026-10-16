@@ -310,12 +310,6 @@ h1 {
   background: hsl(var(--accent-hsl) / 0.08);
 }
 
-.site-permission-title {
-  color: var(--fg);
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .site-permission-panel p,
 .site-permission-status {
   color: color-mix(in srgb, var(--fg) 72%, transparent);
@@ -328,6 +322,11 @@ h1 {
 }
 
 .site-permission-status:empty {
+  display: none;
+}
+
+/* A status line takes the place of the description so the popup never grows a scrollbar. */
+.site-permission-panel:has(.site-permission-status:not(:empty)) p {
   display: none;
 }
 
@@ -632,6 +631,11 @@ input[type="range"]:disabled {
   margin-right: -8px;
   scrollbar-width: thin;
   scrollbar-color: hsl(var(--accent-hsl) / 0.35) transparent;
+}
+
+/* Room for the notice above, so the popup still fits without scrolling. */
+.scroll-area:has(.blocked-banner:not([hidden])) .custom-presets-list {
+  max-height: 44px;
 }
 
 .custom-presets-list.is-editing {

@@ -49,6 +49,10 @@ async function createPopupHarness(options = {}) {
     callback();
     return 1;
   };
+  // jsdom has no layout, so nothing ever resizes.
+  window.ResizeObserver = class {
+    observe() {}
+  };
 
   loadScript('extension/background.js', { chrome: harness.api });
   // popup.html loads settings.js before popup.js.
