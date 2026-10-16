@@ -148,9 +148,26 @@ function recordAudioGraph() {
     sources.set(media, (sources.get(media) ?? 0) + 1);
     return createMediaElementSource.call(this, media);
   };
+  // The engines fade gains to new values on the audio clock, which never
+  // starts on a machine without a sound device (as on CI), so the test reads
+  // the value each gain is heading to rather than where it is now.
+  const targets = new WeakMap();
+  const { linearRampToValueAtTime } = AudioParam.prototype;
+  AudioParam.prototype.linearRampToValueAtTime = function (value, endTime) {
+    targets.set(this, value);
+    return linearRampToValueAtTime.call(this, value, endTime);
+  };
+  const valueProperty = Object.getOwnPropertyDescriptor(AudioParam.prototype, 'value');
+  Object.defineProperty(AudioParam.prototype, 'value', {
+    ...valueProperty,
+    set(value) {
+      targets.set(this, value);
+      valueProperty.set.call(this, value);
+    }
+  });
   window.audioGraph = () => ({
     captures: sources.get(document.getElementById('player')) ?? 0,
-    outputGains: [...outputs].map((node) => node.gain.value)
+    outputGains: [...outputs].map((node) => targets.get(node.gain) ?? node.gain.value)
   });
 }
 

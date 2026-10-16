@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
 
-const { createContentHarness } = require('./helpers/content-harness');
+const { FakeAudioContext, createContentHarness } = require('./helpers/content-harness');
 const { flushPromises } = require('./helpers/browser-api');
 
 const SETTINGS = {
@@ -18,6 +18,28 @@ const SETTINGS = {
   eqMid: -3,
   eqHigh: 4
 };
+
+// The two gains that play to the speakers: the unchanged path, then the effect.
+function outputGains(context) {
+  return context.gains.filter((node) =>
+    node.connections.some((connection) => connection.target === context.destination)
+  );
+}
+
+// Where each recorded change of a setting was heading, and when it got there.
+function ramps(param) {
+  return param.ramps.map(({ to, endTime }) => ({ to, endTime: Math.round(endTime * 1000) / 1000 }));
+}
+
+// The biggest change between two milliseconds: a fade moves a little each
+// millisecond, a jump all at once.
+function largestStep(param, from, to) {
+  let largest = 0;
+  for (let time = from; time < to; time += 0.001) {
+    largest = Math.max(largest, Math.abs(param.valueAt(time + 0.001) - param.valueAt(time)));
+  }
+  return largest;
+}
 
 function close(harness) {
   harness.dom.window.close();
@@ -72,6 +94,145 @@ describe('content script audio processing', () => {
     close(harness);
   });
 
+  test('fades settings instead of switching them', async () => {
+    const harness = await createContentHarness();
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const context = harness.getContext();
+    const processed = outputGains(context)[1];
+
+    await harness.dispatch({
+      type: 'UPDATE_AUDIO',
+      settings: { ...SETTINGS, reverb: 0, speed: 0.9 },
+      enabled: true
+    });
+    // Changes start 20 ms ahead and take 25 ms.
+    assert.deepEqual(ramps(context.gains[2].gain).at(-1), { to: 0, endTime: 1.045 });
+    // Chromium changes speed without a click, so the output carries on.
+    assert.deepEqual(ramps(processed.gain).at(-1), { to: 1, endTime: 1.045 });
+    assert.equal(harness.media.playbackRate, 0.9);
+
+    close(harness);
+  });
+
+  test('stays silent while the player changes its pitch mode', async () => {
+    const harness = await createContentHarness();
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const context = harness.getContext();
+    const [bypass, processed] = outputGains(context);
+
+    const answer = harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: false });
+    // Until the output has faded out, the player keeps its pitch mode.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(harness.media.preservesPitch, true);
+    await answer;
+
+    assert.equal(harness.media.preservesPitch, false);
+    // Both fade out over 10 ms, stay silent 80 ms, then fade to their new level.
+    assert.deepEqual(ramps(bypass.gain).slice(-2), [
+      { to: 0, endTime: 1.03 },
+      { to: 1, endTime: 1.105 }
+    ]);
+    assert.deepEqual(ramps(processed.gain).slice(-2), [
+      { to: 0, endTime: 1.03 },
+      { to: 0, endTime: 1.105 }
+    ]);
+
+    close(harness);
+  });
+
+  test('carries on from a change still under way without jumping', async () => {
+    const harness = await createContentHarness();
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const context = harness.getContext();
+    const wet = context.gains[2].gain;
+
+    // Reverb up, then back down while the first fade is still under way.
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...SETTINGS, reverb: 100 }, enabled: true },
+      { advance: 0 }
+    );
+    context.currentTime = 1.03;
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...SETTINGS, reverb: 0 }, enabled: true },
+      { advance: 0 }
+    );
+
+    assert.equal(wet.valueAt(1.05), 0.7);
+    assert.equal(wet.valueAt(1.2), 0);
+    assert.ok(largestStep(wet, 1, 1.2) < 0.05);
+
+    close(harness);
+  });
+
+  test('keeps a fading-out output silent when another change arrives', async () => {
+    const harness = await createContentHarness();
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const context = harness.getContext();
+    const processed = outputGains(context)[1];
+
+    // A change of pitch mode fades the output out from 1.02 to 1.03 s; a
+    // reverb change arrives halfway through.
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...SETTINGS, keepPitch: false }, enabled: true },
+      { advance: 0 }
+    );
+    context.currentTime = 1.025;
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...SETTINGS, keepPitch: false, reverb: 0 }, enabled: true },
+      { advance: 0 }
+    );
+
+    assert.equal(processed.gain.valueAt(1.05), 0);
+    assert.equal(processed.gain.valueAt(1.2), 1);
+    // The 10 ms fade-out moves 0.1 a millisecond; a jump would be far more.
+    assert.ok(largestStep(processed.gain, 1, 1.2) <= 0.1 + 1e-9);
+
+    close(harness);
+  });
+
+  test('keeps the silence an earlier change needs when a later one is taken back', async () => {
+    const harness = await createContentHarness();
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const context = harness.getContext();
+    const processed = outputGains(context)[1];
+    const withPitch = (keepPitch) => ({
+      type: 'UPDATE_AUDIO',
+      settings: { ...SETTINGS, keepPitch },
+      enabled: true
+    });
+
+    // The player changes its pitch mode at 1.00 s, so its click needs
+    // silence until 1.08 s.
+    await harness.dispatch(withPitch(false), { advance: 0 });
+    // Another change is asked for, then taken back before it happens.
+    const askedFor = harness.dispatch(withPitch(true), { advance: 0 });
+    await harness.dispatch(withPitch(false), { advance: 0 });
+    await askedFor;
+
+    assert.equal(harness.media.preservesPitch, false);
+    assert.equal(processed.gain.valueAt(1.07), 0);
+    assert.equal(processed.gain.valueAt(1.2), 1);
+
+    close(harness);
+  });
+
+  test('stays silent while Firefox changes the speed', async () => {
+    const harness = await createContentHarness({
+      userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
+    });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const processed = outputGains(harness.getContext())[1];
+
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9 }, enabled: true });
+    assert.equal(harness.media.playbackRate, 0.9);
+    assert.deepEqual(ramps(processed.gain).slice(-2), [
+      { to: 0, endTime: 1.03 },
+      { to: 1, endTime: 1.105 }
+    ]);
+
+    close(harness);
+  });
+
   test('returns the graph to neutral values when disabled', async () => {
     const harness = await createContentHarness();
 
@@ -114,6 +275,8 @@ describe('content script audio processing', () => {
     harness.runtimeMessages.length = 0;
     delete harness.window.chrome.runtime.id;
     await new Promise((resolve) => setTimeout(resolve, 300));
+    // Let the fades back to the unchanged path play out.
+    FakeAudioContext.advance(1);
 
     assert.equal(harness.media.playbackRate, 1);
     assert.equal(harness.media.preservesPitch, false);
@@ -151,6 +314,7 @@ describe('content script audio processing', () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
 
     assert.ok(source.connections.length > 0);
+    FakeAudioContext.advance(1);
     const outputGains = harness.context.gains.filter((node) =>
       node.connections.some((connection) => connection.target === harness.context.destination)
     );
@@ -392,6 +556,8 @@ describe('content script audio processing', () => {
       value: Number.POSITIVE_INFINITY
     });
     harness.media.dispatchEvent(new harness.window.Event('play'));
+    // The change of pitch mode waits for the output to fade out.
+    await new Promise((resolve) => setTimeout(resolve, 60));
 
     assert.equal(harness.media.playbackRate, 1);
     assert.equal(harness.media.preservesPitch, false);
