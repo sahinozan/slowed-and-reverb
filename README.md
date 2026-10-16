@@ -140,10 +140,11 @@ into a real browser, renders its popup at production size, applies settings to a
 local audio fixture, checks popup dimensions, and saves a screenshot in the test
 report. The Firefox test runs the Firefox build in the installed Firefox through
 puppeteer-core (set `FIREFOX_BIN` for a Firefox somewhere else), turns the
-effects on for the same fixture, removes the extension, and checks that the audio
-goes back to normal speed; it does the same again after installing it a second
-time. It can't hear the audio, so a doubled or robotic-sounding path is still a
-manual check.
+effects on for the same fixture, turns the extension off through Firefox's add-on
+manager, and checks that each player is back to normal speed, captured once, and
+playing only through the unchanged path; it does the same again after turning
+the extension back on and removing it. It can't hear the audio, so a final
+listen is still a manual check.
 GitHub Actions runs that smoke test on disposable Ubuntu and Windows machines in
 addition to `npm run check`. A final manual smoke test in current Chromium and
 Firefox is still recommended before a store release because browser and media-site

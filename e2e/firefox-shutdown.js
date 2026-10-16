@@ -1,13 +1,9 @@
 'use strict';
 
 // Runs the Firefox build in the installed Firefox, through WebDriver BiDi, and
-// checks that the audio goes back to normal when the extension goes away.
-// Playwright's Firefox cannot load extensions, so this uses puppeteer-core.
-// Set FIREFOX_BIN to use a Firefox other than the usual install.
-//
-// BiDi cannot turn an extension off, only remove it. Firefox shuts the
-// extension's content scripts down the same way for both, so removing it
-// stands in for turning it off in about:addons.
+// checks that the audio goes back to normal when the extension is turned off
+// or removed. Playwright's Firefox cannot load extensions, so this uses
+// puppeteer-core. Set FIREFOX_BIN to use a Firefox other than the usual install.
 
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -99,9 +95,27 @@ before(async () => {
     browser: 'firefox',
     executablePath: firefoxPath(),
     headless: true,
+    // Lets the test use Firefox's add-on manager, as the about:addons switch does.
+    args: ['--remote-allow-system-access'],
     extraPrefsFirefox: { 'media.autoplay.default': 0 }
   });
 });
+
+// BiDi can install and remove an extension but not turn it off, so this asks
+// Firefox's add-on manager directly, from the browser window's own scope.
+async function setExtensionEnabled(enabled) {
+  const tree = await browser.connection.send('browsingContext.getTree', { 'moz:scope': 'chrome' });
+  const { result } = await browser.connection.send('script.evaluate', {
+    expression: `(async () => {
+      const { AddonManager } = ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
+      const addon = await AddonManager.getAddonByID('${EXTENSION_ID}');
+      await addon.${enabled ? 'enable' : 'disable'}();
+    })()`,
+    target: { context: tree.result.contexts[0].context },
+    awaitPromise: true
+  });
+  assert.equal(result.type, 'success', JSON.stringify(result.exceptionDetails));
+}
 
 after(async () => {
   await browser?.close();
@@ -118,8 +132,31 @@ async function waitFor(check, timeout, message) {
   }
 }
 
+// The audio engines run in the page's world, so the page can watch them build
+// their graphs: which players they capture and the gain of every node that
+// plays straight to the speakers (the effect's output and the unchanged path).
+function recordAudioGraph() {
+  const sources = new Map();
+  const outputs = new Set();
+  const { connect } = AudioNode.prototype;
+  AudioNode.prototype.connect = function (target, ...rest) {
+    if (target instanceof AudioDestinationNode && this instanceof GainNode) outputs.add(this);
+    return connect.call(this, target, ...rest);
+  };
+  const { createMediaElementSource } = AudioContext.prototype;
+  AudioContext.prototype.createMediaElementSource = function (media) {
+    sources.set(media, (sources.get(media) ?? 0) + 1);
+    return createMediaElementSource.call(this, media);
+  };
+  window.audioGraph = () => ({
+    captures: sources.get(document.getElementById('player')) ?? 0,
+    outputGains: [...outputs].map((node) => node.gain.value)
+  });
+}
+
 async function openPlayingFixture(name) {
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(recordAudioGraph);
   await page.goto(`${server.url}?${name}`);
   await page.waitForFunction(() => document.getElementById('player').readyState === 4);
   await page.evaluate(async () => {
@@ -161,48 +198,64 @@ async function turnOn(page, site) {
   });
 }
 
-function playbackRate(page) {
-  return page.evaluate(() => document.getElementById('player').playbackRate);
+function playback(page) {
+  return page.evaluate(() => ({
+    rate: document.getElementById('player').playbackRate,
+    ...window.audioGraph()
+  }));
 }
 
-async function expectPlaybackRate(page, site, rate, timeout) {
-  await waitFor(
-    async () => (await playbackRate(page)) === rate,
-    timeout,
-    `${site}: playbackRate stayed at ${rate === 1 ? 'the slowed speed' : 'normal speed'}`
-  );
+// The player plays at the expected speed, through exactly one graph, with only
+// the effect's output (on) or only the unchanged path (off) audible.
+async function expectPlayback(page, site, on, timeout) {
+  const expected = { rate: on ? SETTINGS.speed : 1, captures: 1, outputGains: on ? [0, 1] : [1, 0] };
+  let actual;
+  try {
+    await waitFor(
+      async () => {
+        actual = await playback(page);
+        return JSON.stringify(actual) === JSON.stringify(expected);
+      },
+      timeout,
+      ''
+    );
+  } catch {
+    throw new Error(
+      `${site} with the effect ${on ? 'on' : 'off'}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+    );
+  }
 }
 
-async function installAndTurnOn(pages) {
-  const id = await browser.installExtension(extensionDir);
-  assert.equal(id, EXTENSION_ID);
+async function turnOnEverywhere(pages) {
   for (const [site, page] of Object.entries(pages)) {
     await turnOn(page, site);
-    await expectPlaybackRate(page, site, SETTINGS.speed, 5_000);
+    await expectPlayback(page, site, true, 5_000);
   }
 }
 
 // Checks every page, so a failure names each site that kept the effect.
-async function expectNormalSpeed(pages) {
+async function expectEffectOff(pages) {
   const results = await Promise.allSettled(
-    Object.entries(pages).map(([site, page]) => expectPlaybackRate(page, site, 1, 2_000))
+    Object.entries(pages).map(([site, page]) => expectPlayback(page, site, false, 2_000))
   );
   const failures = results.filter(({ status }) => status === 'rejected');
   assert.deepEqual(failures.map(({ reason }) => reason.message), []);
 }
 
-test('puts the audio back when the extension is turned off in Firefox', async () => {
+test('puts the audio back when the extension is turned off or removed in Firefox', async () => {
   const pages = {
     youtube: await openPlayingFixture('youtube'),
     spotify: await openPlayingFixture('spotify')
   };
 
-  await installAndTurnOn(pages);
-  await browser.uninstallExtension(EXTENSION_ID);
-  await expectNormalSpeed(pages);
+  assert.equal(await browser.installExtension(extensionDir), EXTENSION_ID);
+  await turnOnEverywhere(pages);
+  await setExtensionEnabled(false);
+  await expectEffectOff(pages);
 
   // Turning it back on without reloading picks up the same pages again.
-  await installAndTurnOn(pages);
+  await setExtensionEnabled(true);
+  await turnOnEverywhere(pages);
   await browser.uninstallExtension(EXTENSION_ID);
-  await expectNormalSpeed(pages);
+  await expectEffectOff(pages);
 });
