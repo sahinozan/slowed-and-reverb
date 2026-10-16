@@ -58,8 +58,8 @@ can check whether permission is present, but it does not transmit that status.
   extension. It is used only to start or control audio processing on a supported
   page.
 - `scripting` loads the packaged audio-processing code into the supported tab.
-- `storage` saves local settings and presets and keeps eligible per-tab state for
-  reload restoration during the browser session.
+- `storage` saves local settings, presets, and the rating reminder's day count, and
+  keeps eligible per-tab state for reload restoration during the browser session.
 - Optional access to `https://open.spotify.com/*` lets the packaged Spotify audio
   hook start early enough to process Spotify's web player. It is requested only
   when the user chooses to enable Spotify support and can be revoked at any time.
