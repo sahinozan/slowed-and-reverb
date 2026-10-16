@@ -83,13 +83,15 @@ describe('shared settings', () => {
     }
   });
 
-  test('the Spotify engine reports the version in the manifest', () => {
-    // The bridge keeps an engine from any other version off (spotify-bridge.js).
+  test('the audio engines report the version in the manifest', () => {
+    // The Spotify bridge and content.js keep an engine from any other version off.
     const { version } = JSON.parse(fs.readFileSync(path.join(root, 'extension/manifest.json'), 'utf8'));
-    const source = fs.readFileSync(path.join(root, 'extension/spotify-main.js'), 'utf8');
-    const literal = source.match(/const VERSION = '([^']*)';/);
-    assert.ok(literal, 'spotify-main.js no longer defines VERSION the expected way');
-    assert.equal(literal[1], version);
+    for (const file of ['spotify-main.js', 'youtube-main.js']) {
+      const source = fs.readFileSync(path.join(root, 'extension', file), 'utf8');
+      const literal = source.match(/const VERSION = '([^']*)';/);
+      assert.ok(literal, `${file} no longer defines VERSION the expected way`);
+      assert.equal(literal[1], version, file);
+    }
   });
 
   test('the store-art preview server serves settings.js for the popup', async () => {

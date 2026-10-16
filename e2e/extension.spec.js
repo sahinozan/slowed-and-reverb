@@ -1,6 +1,11 @@
 'use strict';
 
-const { expect, test } = require('./fixtures');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const { prepareTestExtension } = require('./extension-copy');
+const { builtExtensionDir, expect, launchWithExtension, test } = require('./fixtures');
 
 async function fixtureTab(serviceWorker, fixtureUrl) {
   return serviceWorker.evaluate(async (url) => {
@@ -203,6 +208,86 @@ async function playLooped(page) {
     await player.play();
   });
 }
+
+// An update leaves the previous version's engine in an open YouTube tab. When
+// the popup opens, the new version's engine stops at its guard and the new
+// content.js finds the old engine, which works the way its version did, so
+// the popup asks for a reload. This test updates the extension, so it starts
+// a browser of its own.
+test('asks for a reload when an update leaves the old YouTube engine in the page', async ({
+  fixtureUrl
+}) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-update-'));
+  const [older, newer] = ['older', 'newer'].map((name) => {
+    fs.mkdirSync(path.join(tempRoot, name));
+    return prepareTestExtension(path.join(tempRoot, name), builtExtensionDir, 'chromium');
+  });
+  for (const [file, pattern, replacement] of [
+    ['manifest.json', /"version": "[^"]*"/, '"version": "0.0.1"'],
+    ['youtube-main.js', /const VERSION = '[^']*';/, "const VERSION = '0.0.1';"]
+  ]) {
+    const filePath = path.join(older, file);
+    const source = fs.readFileSync(filePath, 'utf8');
+    expect(source, `${file} no longer matches the update test's patch`).toMatch(pattern);
+    fs.writeFileSync(filePath, source.replace(pattern, replacement));
+  }
+  // The browser loads the extension from here; the update replaces its files.
+  const installed = path.join(tempRoot, 'installed');
+  fs.cpSync(older, installed, { recursive: true });
+  const extension = await launchWithExtension(tempRoot, installed);
+
+  try {
+    const url = `${fixtureUrl}?youtube-update`;
+    const page = await extension.context.newPage();
+    await page.goto(url);
+    await expect(page.locator('#player')).toHaveJSProperty('readyState', 4);
+    const tab = await fixtureTab(extension.serviceWorker, url);
+    const before = await openPopupPage(extension, tab.id);
+    await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+    await before.close();
+
+    // A developer's reload from chrome://extensions, after the files changed.
+    // Chromium turns off a reloaded command-line extension unless developer
+    // mode is on.
+    const extensionsPage = await extension.context.newPage();
+    await extensionsPage.goto('chrome://extensions');
+    await extensionsPage.evaluate(() =>
+      chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true })
+    );
+    fs.rmSync(installed, { recursive: true });
+    fs.cpSync(newer, installed, { recursive: true });
+    const updatedWorker = extension.context.waitForEvent('serviceworker');
+    await extensionsPage.evaluate(
+      (id) => chrome.developerPrivate.reload(id, { failQuietly: true }),
+      extension.extensionId
+    );
+    const updated = { ...extension, serviceWorker: await updatedWorker };
+    await extensionsPage.close();
+    expect(await updated.serviceWorker.evaluate(() => chrome.runtime.getManifest().version)).not.toBe(
+      '0.0.1'
+    );
+    // The old engine turns itself off once its content.js is gone.
+    await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 1);
+
+    const popup = await openPopupPage(updated, tab.id);
+    await expect(popup.locator('#reload-panel')).toBeVisible();
+    await expect(popup.locator('#reload-text')).toHaveText(
+      'Reload the page to finish updating the extension.'
+    );
+    await expect(popup.locator('#reload-btn')).toHaveText('Reload page');
+    await expect(popup.getByLabel('Toggle audio effects')).toBeDisabled();
+    await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 1);
+
+    // The reloaded page has this version's engine.
+    await popup.locator('#reload-btn').click();
+    await expect(popup.locator('#reload-panel')).toBeHidden();
+    await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+    await expect(popup.getByText('On', { exact: true })).toBeVisible();
+  } finally {
+    await extension.context.close();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
 
 // This test turns the extension off and on again, which replaces its service
 // worker, so it stays last in the file.

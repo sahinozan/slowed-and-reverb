@@ -351,17 +351,22 @@ function patchFile(dir, file, pattern, replacement) {
   fs.writeFileSync(filePath, source.replace(pattern, replacement));
 }
 
-// An earlier version and this build, which both register Spotify's scripts
-// for the local fixture, as for Spotify.
-function prepareUpdate() {
+// An earlier version and this build. For Spotify, both register Spotify's
+// scripts for the local fixture, as for Spotify.
+function prepareUpdate(site) {
+  const updateRoot = fs.mkdtempSync(path.join(tempRoot, `${site}-update-`));
   return ['older', 'newer'].map((name) => {
-    const versionRoot = path.join(tempRoot, name);
+    const versionRoot = path.join(updateRoot, name);
     fs.mkdirSync(versionRoot);
     const dir = prepareTestExtension(versionRoot, builtExtensionDir, 'firefox');
     addTestDriver(dir);
-    patchFile(dir, 'background.js', /'https:\/\/open\.spotify\.com\/\*'/, "'http://127.0.0.1/*'");
+    if (site === 'spotify') {
+      patchFile(dir, 'background.js', /'https:\/\/open\.spotify\.com\/\*'/, "'http://127.0.0.1/*'");
+    }
     if (name === 'older') {
-      patchFile(dir, 'spotify-main.js', /const VERSION = '[^']*';/, "const VERSION = '0.0.1';");
+      for (const engine of ['spotify-main.js', 'youtube-main.js']) {
+        patchFile(dir, engine, /const VERSION = '[^']*';/, "const VERSION = '0.0.1';");
+      }
       patchFile(dir, 'manifest.json', /"version": "[^"]*"/, '"version": "0.0.1"');
     }
     return dir;
@@ -374,7 +379,7 @@ function prepareUpdate() {
 // without reloading the page. That engine plays the way the old version did
 // (1.1.0's skipped), so it has to stay off until the page is reloaded.
 test('asks for a Spotify reload when an update leaves the old engine in the page', async () => {
-  const [older, newer] = prepareUpdate();
+  const [older, newer] = prepareUpdate('spotify');
   assert.equal(await browser.installExtension(older), EXTENSION_ID);
   const page = await openPlayingFixture('update');
   await turnOn(page, 'spotify-registered');
@@ -407,6 +412,42 @@ test('asks for a Spotify reload when an update leaves the old engine in the page
   await startPlaying(page);
   await turnOn(page, 'spotify-registered');
   await expectPlayback(page, 'spotify', true, 5_000);
+
+  await browser.uninstallExtension(EXTENSION_ID);
+  await page.close();
+});
+
+// On YouTube this needs no turning off and on: when the popup opens, the
+// extension puts the new version's scripts into the page, and the new
+// engine stops at its guard, leaving the new content.js with the old engine.
+test('asks for a YouTube reload when an update leaves the old engine in the page', async () => {
+  const [older, newer] = prepareUpdate('youtube');
+  assert.equal(await browser.installExtension(older), EXTENSION_ID);
+  const page = await openPlayingFixture('youtube-update');
+  await turnOn(page, 'youtube');
+  await expectPlayback(page, 'youtube', true, 5_000);
+
+  assert.equal(await browser.installExtension(newer), EXTENSION_ID);
+  await expectPlayback(page, 'youtube', false, 2_000);
+
+  // The same injection as when the popup opens, then turning the effect on.
+  let reply;
+  await waitFor(
+    async () => {
+      reply = (await drive(page, 'youtube')).result;
+      return reply !== undefined;
+    },
+    5_000,
+    'the new version never reached the page'
+  );
+  assert.deepEqual(reply, { success: false, blocked: true, blockReason: 'outdated' });
+  await expectPlayback(page, 'youtube', false, 2_000);
+
+  // A reload brings in this version's engine.
+  await page.reload();
+  await startPlaying(page);
+  await turnOn(page, 'youtube');
+  await expectPlayback(page, 'youtube', true, 5_000);
 
   await browser.uninstallExtension(EXTENSION_ID);
   await page.close();

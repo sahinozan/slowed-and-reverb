@@ -104,11 +104,13 @@ panel shows, and on My Presets.
   on, the Spotify engine keeps the effect's speed through those writes and lets
   a 0 through, so the player never changes speed and needs no silent gap to
   hide Firefox's click. With the effect off, Spotify's speeds pass through.
-- **An update needs a Spotify reload.** The Spotify engine runs in the page and
-  stays there when the extension is updated, and Firefox puts the new version's
-  scripts next to it when the extension is turned off and on again without a
-  reload. The engine reports its version, so the bridge keeps an engine from
-  another version off and the popup asks for a reload.
+- **An update needs a page reload.** The audio engines run in the page and stay
+  there when the extension is updated. On YouTube, the new version's scripts
+  join the old engine as soon as the popup opens, in both browsers; on Spotify,
+  Firefox puts them next to it when the extension is turned off and on again
+  without a reload. Each engine reports its version, so content.js and the
+  Spotify bridge keep an engine from another version off and the popup asks for
+  a reload.
 - **Embedded players may be unreachable.** Media inside iframes or shadow roots
   is not currently processed. Frame support can require broader permissions,
   and both cases need more complex lifecycle and state handling.
@@ -122,7 +124,7 @@ npm test                  # run service worker, content, popup, and package test
 npm run test:watch        # rerun tests while developing
 npx playwright install --no-shell chromium # one-time local browser install
 npm run test:e2e          # real Chromium extension smoke test
-npm run test:firefox      # real Firefox tests: effects stop when the extension is turned off; Spotify speed resets cause no gaps; an update asks for a Spotify reload
+npm run test:firefox      # real Firefox tests: effects stop when the extension is turned off; Spotify speed resets cause no gaps; an update asks for a reload
 npm run build:chromium    # emit dist/chromium/
 npm run build:firefox     # emit dist/firefox/
 npm run package           # build allowlisted ZIPs for both stores
@@ -158,15 +160,17 @@ blocked and live-media behavior, popup controls and presets, manifest contracts,
 and the Firefox build. The Playwright smoke test loads the built Chromium extension
 into a real browser, renders its popup at production size, applies settings to a
 local audio fixture, checks popup dimensions, and saves a screenshot in the test
-report. The Firefox test runs the Firefox build in the installed Firefox through
-puppeteer-core (set `FIREFOX_BIN` for a Firefox somewhere else), turns the
-effects on for the same fixture, turns the extension off through Firefox's add-on
-manager, and checks that each player is back to normal speed, captured once, and
-playing only through the unchanged path; it does the same again after turning
-the extension back on and removing it. It also updates an earlier version with
-a Spotify page open, turns the extension off and on, and checks that the old
-engine stays off until the page is reloaded. It can't hear the audio, so a final
-listen is still a manual check.
+report. It also updates an earlier version with a YouTube page open and checks
+that the popup asks for a reload and the effect starts after it. The Firefox test
+runs the Firefox build in the installed Firefox through puppeteer-core (set
+`FIREFOX_BIN` for a Firefox somewhere else), turns the effects on for the same
+fixture, turns the extension off through Firefox's add-on manager, and checks
+that each player is back to normal speed, captured once, and playing only
+through the unchanged path; it does the same again after turning the extension
+back on and removing it. It also updates an earlier version with a YouTube page
+open, and with a Spotify page open before turning the extension off and on, and
+checks that each old engine stays off until the page is reloaded. It can't hear
+the audio, so a final listen is still a manual check.
 GitHub Actions runs that smoke test on disposable Ubuntu and Windows machines in
 addition to `npm run check`. A final manual smoke test in current Chromium and
 Firefox is still recommended before a store release because browser and media-site

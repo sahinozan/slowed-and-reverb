@@ -16,6 +16,8 @@ function createEvent() {
 }
 const { root } = require('./load-script');
 
+const { version: VERSION } = JSON.parse(fs.readFileSync(`${root}/extension/manifest.json`, 'utf8'));
+
 // Follows Web Audio's automation rules closely enough to hear a jump: each
 // setting keeps its scheduled events and reports its value at its context's
 // current time. Tests move that clock themselves. `ramps` records each ramp's
@@ -230,10 +232,12 @@ async function createContentHarness(options = {}) {
     media.preservesPitch = true;
   }
 
-  // jsdom leaves event.source unset, which both scripts check. Counts the
-  // messages between the two scripts that haven't arrived yet.
+  // jsdom leaves event.source unset, which both scripts check. Keeps the
+  // messages between the two scripts and counts those that haven't arrived yet.
+  const pageMessages = [];
   let messagesOnTheWay = 0;
   window.postMessage = (data) => {
+    pageMessages.push(data);
     messagesOnTheWay++;
     setTimeout(() => {
       messagesOnTheWay--;
@@ -248,11 +252,12 @@ async function createContentHarness(options = {}) {
   window.document.addEventListener('SLOWED_REVERB_YOUTUBE_CHECK', (event) => bridgeChecks.push(event));
 
   // A new copy of the extension's messaging, as each extension instance has.
-  function connectExtension() {
+  function connectExtension(version) {
     const runtimeMessage = createEvent();
     window.chrome = {
       runtime: {
         id: 'example',
+        getManifest: () => ({ version }),
         onMessage: runtimeMessage,
         async sendMessage(message) {
           runtimeMessages.push(structuredClone(message));
@@ -264,14 +269,23 @@ async function createContentHarness(options = {}) {
     return runtimeMessage;
   }
 
-  // The background script injects the page-world engine, then settings.js and content.js.
-  const engineSource = fs.readFileSync(`${root}/extension/youtube-main.js`, 'utf8');
+  // The background script injects the page-world engine, then settings.js and
+  // content.js. `engineVersion` stands for an engine from another version,
+  // and undefined for one from 1.1.1 or earlier, which reports none.
+  let engineSource = fs.readFileSync(`${root}/extension/youtube-main.js`, 'utf8');
+  if (Object.hasOwn(options, 'engineVersion')) {
+    engineSource = engineSource.replace(
+      /const VERSION = '[^']*';/,
+      `const VERSION = ${JSON.stringify(options.engineVersion) ?? 'undefined'};`
+    );
+  }
   const settingsSource = fs.readFileSync(`${root}/extension/settings.js`, 'utf8');
   const source = fs.readFileSync(`${root}/extension/content.js`, 'utf8');
   let runtimeMessage;
+  let extensionVersion = options.extensionVersion ?? VERSION;
 
   async function inject() {
-    runtimeMessage = connectExtension();
+    runtimeMessage = connectExtension(extensionVersion);
     window.eval(engineSource);
     window.eval(settingsSource);
     window.eval(source);
@@ -325,15 +339,19 @@ async function createContentHarness(options = {}) {
     },
     dispatch,
     dom,
-    // Turns the extension off and on again without reloading the page: the
-    // old content script stays without the extension, as in Chromium, and
-    // a new one is injected, as both browsers do when the popup opens.
-    async reinject() {
+    // Turns the extension off and on again without reloading the page, or
+    // updates it to `version`: the old content script stays without the
+    // extension, as in Chromium, and a new one is injected, as both browsers
+    // do when the popup opens. The engine already in the page stays, and
+    // the new copy stops at its guard.
+    async reinject(version = extensionVersion) {
       await turnOff();
       window.__slowedReverbInjected = false;
+      extensionVersion = version;
       await inject();
     },
     media,
+    pageMessages,
     get runtimeMessage() {
       return runtimeMessage;
     },

@@ -339,6 +339,57 @@ describe('content script audio processing', () => {
     assert.deepEqual(outputGains.map((node) => node.gain.value), [0, 1]);
   });
 
+  // An update leaves the engine in open tabs, and the new version's copy
+  // stops at its guard, so the new content.js finds the previous engine.
+  test("keeps the previous version's engine off after an update", async (t) => {
+    const harness = await createContentHarness({ engineVersion: '1.1.2', extensionVersion: '1.1.2' });
+    t.after(() => close(harness));
+
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+    await harness.reinject('1.2.0');
+    // The player's speed changes back once the output has faded out.
+    await waitFor(() => harness.media.playbackRate === 1);
+
+    const state = await harness.dispatch({ type: 'GET_STATE' });
+    assert.equal(state.enabled, false);
+    assert.equal(state.blocked, true);
+    assert.equal(state.blockReason, 'outdated');
+    const response = await harness.dispatch({
+      type: 'UPDATE_AUDIO',
+      settings: SETTINGS,
+      enabled: true
+    });
+    assert.equal(response.success, false);
+    assert.equal(response.blocked, true);
+    assert.equal(response.blockReason, 'outdated');
+    assert.equal(harness.media.playbackRate, 1);
+    assert.deepEqual(outputGains(harness.context).map((node) => node.gain.value), [1, 0]);
+  });
+
+  test('never turns on an engine from 1.1.1 or earlier, which reports no version', async (t) => {
+    // The remembered state and the popup both ask for the effect before the
+    // engine has answered.
+    const harness = await createContentHarness({
+      engineVersion: undefined,
+      remembered: { enabled: true, settings: SETTINGS, url: 'https://www.youtube.com/watch?v=previous' },
+      settle: false
+    });
+    t.after(() => close(harness));
+
+    const response = await harness.dispatch({
+      type: 'UPDATE_AUDIO',
+      settings: SETTINGS,
+      enabled: true
+    });
+    assert.equal(response.success, false);
+    assert.equal(response.blockReason, 'outdated');
+    assert.equal((await harness.dispatch({ type: 'GET_STATE' })).blockReason, 'outdated');
+    const turnedOn = harness.pageMessages.filter(({ type, enabled }) => type === 'APPLY' && enabled);
+    assert.deepEqual(turnedOn, []);
+    assert.equal(harness.media.playbackRate, 1);
+  });
+
   test('a late answer to the startup request does not undo a newer change', async (t) => {
     // Lets content.js receive the remembered state and ask the engine to
     // apply it, without letting the engine answer yet.
