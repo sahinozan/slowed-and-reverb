@@ -3,6 +3,8 @@
   window.__slowedReverbSpotifyMain = true;
 
   const CHANNEL = 'SLOWED_REVERB_SPOTIFY';
+  const BRIDGE_CHECK_EVENT = `${CHANNEL}_CHECK`;
+  const BRIDGE_CHECK_MS = 250;
   // Copies of SlowedReverbSettings.DEFAULTS and BOUNDS (settings.js). This script
   // stays self-contained because its registration outlives extension updates;
   // tests/settings.test.js keeps the copies equal.
@@ -38,6 +40,7 @@
   let processingUnavailable = false;
   let impulseResponse = null;
   let saturationCurve = null;
+  let bridgeCheckTimer = null;
 
   function normalizeSettings(candidate) {
     const normalized = { ...NEUTRAL_SETTINGS };
@@ -335,17 +338,44 @@
     });
   }
 
+  function applyToAll(nextSettings, nextEnabled) {
+    settings = normalizeSettings(nextSettings);
+    enabled = nextEnabled === true;
+    for (const media of mediaElements) applySettings(media);
+    notifyStatus();
+  }
+
+  // The extension's bridge cancels this event while the extension is running.
+  // When the extension is turned off, removed or updated, Firefox removes the
+  // bridge and Chromium leaves it running without access to the extension,
+  // and this engine stays in the page either way. Dispatching an event is
+  // synchronous, so a slow or throttled tab cannot miss an answer.
+  function bridgeAnswers() {
+    return !document.dispatchEvent(new Event(BRIDGE_CHECK_EVENT, { cancelable: true }));
+  }
+
+  function watchBridge() {
+    if (bridgeCheckTimer !== null) return;
+    bridgeCheckTimer = window.setInterval(() => {
+      if (bridgeAnswers()) return;
+
+      window.clearInterval(bridgeCheckTimer);
+      bridgeCheckTimer = null;
+      applyToAll(NEUTRAL_SETTINGS, false);
+    }, BRIDGE_CHECK_MS);
+  }
+
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.channel !== CHANNEL) return;
 
     if (event.data.type === 'BRIDGE_READY') {
-      window.postMessage({ channel: CHANNEL, type: 'READY' }, '*');
+      // Also a bridge that Firefox injects again when the extension comes back.
+      watchBridge();
+      window.postMessage({ channel: CHANNEL, type: 'READY', bridgeCheck: true }, '*');
       notifyStatus();
     } else if (event.data.type === 'APPLY') {
-      settings = normalizeSettings(event.data.settings);
-      enabled = event.data.enabled === true;
-      for (const media of mediaElements) applySettings(media);
-      notifyStatus();
+      watchBridge();
+      applyToAll(event.data.settings, event.data.enabled);
     }
   });
 
@@ -354,6 +384,6 @@
   });
 
   for (const media of document.querySelectorAll('audio, video')) registerMedia(media);
-  window.postMessage({ channel: CHANNEL, type: 'READY' }, '*');
+  window.postMessage({ channel: CHANNEL, type: 'READY', bridgeCheck: true }, '*');
   notifyStatus();
 })();

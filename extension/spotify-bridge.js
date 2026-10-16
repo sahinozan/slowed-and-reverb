@@ -4,7 +4,7 @@
 
   const api = typeof browser !== 'undefined' ? browser : chrome;
   const CHANNEL = 'SLOWED_REVERB_SPOTIFY';
-  const SHUTDOWN_CHECK_MS = 250;
+  const BRIDGE_CHECK_EVENT = `${CHANNEL}_CHECK`;
   // A copy of SlowedReverbSettings.DEFAULTS (settings.js). This script stays
   // self-contained because its registration outlives extension updates;
   // tests/settings.test.js keeps the copy equal.
@@ -24,6 +24,10 @@
   let settings = { ...NEUTRAL_SETTINGS };
   let enabled = false;
   let engineReady = false;
+  // Engines from before the bridge check stay in open tabs after an update.
+  // Nothing could turn their effects off once the extension is turned off,
+  // so they are kept off until the page is reloaded.
+  let engineOutdated = false;
   let playerDetected = false;
   let effectsUnavailable = false;
   let processingActive = false;
@@ -31,10 +35,12 @@
 
   function applyToEngine() {
     if (!engineReady) return;
+    if (engineOutdated) enabled = false;
     window.postMessage({ channel: CHANNEL, type: 'APPLY', settings, enabled }, '*');
   }
 
   function state() {
+    if (engineOutdated) return { enabled: false, blocked: true, blockReason: 'unsupported' };
     return {
       enabled,
       settings,
@@ -48,10 +54,14 @@
   }
 
   function handleEngineMessage(event) {
+    // Chromium leaves this script running without the extension after it is
+    // turned off, and messaging it then throws.
+    if (!api.runtime?.id) return;
     if (event.source !== window || event.data?.channel !== CHANNEL) return;
 
     if (event.data.type === 'READY') {
       engineReady = true;
+      engineOutdated = event.data.bridgeCheck !== true;
       applyToEngine();
     } else if (event.data.type === 'STATUS') {
       playerDetected = Boolean(event.data.playerDetected);
@@ -79,6 +89,10 @@
       settings = { ...NEUTRAL_SETTINGS, ...message.settings };
       enabled = Boolean(message.enabled);
       applyToEngine();
+      if (engineOutdated) {
+        sendResponse({ success: false, blocked: true, blockReason: 'unsupported' });
+        return true;
+      }
       sendResponse({
         success: true,
         enabled,
@@ -113,17 +127,11 @@
     .sendMessage({ type: 'SPOTIFY_BRIDGE_READY', origin: location.origin })
     .catch(() => {});
 
+  // The page's engine checks with this event that the extension is still
+  // running, and turns itself off when nothing answers (see spotify-main.js).
+  document.addEventListener(BRIDGE_CHECK_EVENT, (event) => {
+    if (api.runtime?.id) event.preventDefault();
+  });
+
   window.postMessage({ channel: CHANNEL, type: 'BRIDGE_READY' }, '*');
-
-  // Turning the extension off, removing it or updating it leaves this script
-  // and the page's audio engine running, and no event says so. Chromium clears
-  // runtime.id when it happens, so check for that and turn the engine off.
-  const shutdownTimer = window.setInterval(() => {
-    if (api.runtime?.id) return;
-
-    window.clearInterval(shutdownTimer);
-    window.removeEventListener('message', handleEngineMessage);
-    enabled = false;
-    applyToEngine();
-  }, SHUTDOWN_CHECK_MS);
 })();

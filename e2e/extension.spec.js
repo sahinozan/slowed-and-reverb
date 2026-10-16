@@ -105,7 +105,9 @@ test('puts the audio back when the extension is turned off in the browser', asyn
   const youtubeTab = await fixtureTab(extension.serviceWorker, youtubeUrl);
   await extension.serviceWorker.evaluate(
     async ({ tabId, settings }) => {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['settings.js', 'content.js'] });
+      const target = { tabId };
+      await chrome.scripting.executeScript({ target, files: ['youtube-main.js'], world: 'MAIN' });
+      await chrome.scripting.executeScript({ target, files: ['settings.js', 'content.js'] });
       await chrome.tabs.sendMessage(tabId, { type: 'UPDATE_AUDIO', enabled: true, settings });
     },
     { tabId: youtubeTab.id, settings }

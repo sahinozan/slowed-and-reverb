@@ -8,6 +8,7 @@ const browserGlobals = {
   setTimeout: 'readonly',
   requestAnimationFrame: 'readonly',
   HTMLMediaElement: 'readonly',
+  Event: 'readonly',
   MutationObserver: 'readonly',
   Node: 'readonly',
   URL: 'readonly',
@@ -30,7 +31,8 @@ module.exports = [
       'extension/settings.js',
       'extension/popup.js',
       'extension/spotify-bridge.js',
-      'extension/spotify-main.js'
+      'extension/spotify-main.js',
+      'extension/youtube-main.js'
     ],
     languageOptions: {
       ecmaVersion: 2022,

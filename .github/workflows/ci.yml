@@ -132,6 +132,10 @@ jobs:
       - name: Run extension browser smoke tests
         run: npm run test:e2e
 
+      # Uses the Firefox already installed on GitHub's runners.
+      - name: Run the Firefox turn-off test
+        run: npm run test:firefox
+
       - name: Upload Playwright report and screenshots
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
