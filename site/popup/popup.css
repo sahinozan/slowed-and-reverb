@@ -327,39 +327,45 @@ h1 {
   align-self: stretch;
 }
 
-/* The one-time rating reminder. It steps aside for notices and panels, and
-   on My Presets, whose list leaves no room for it without scrolling. */
+/* The one-time rating reminder: one quiet line above the footer. It steps
+   aside for notices and panels, and on My Presets, whose list leaves no room
+   for it without scrolling. */
 .rate-prompt {
   display: flex;
-  flex-direction: column;
+  justify-content: center;
+  align-items: baseline;
   gap: 8px;
-  margin-top: 4px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid hsl(var(--accent-hsl) / 0.5);
-  border-radius: var(--radius);
-  background: hsl(var(--accent-hsl) / 0.08);
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
 }
 
 .scroll-area:has(.blocked-banner:not([hidden]), .site-permission-panel:not([hidden]), #panel-custom:not([hidden])) .rate-prompt {
   display: none;
 }
 
-.rate-prompt p {
-  color: color-mix(in srgb, var(--fg) 72%, transparent);
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.rate-prompt-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.rate-prompt-actions .action-btn {
-  flex: 1;
-  text-align: center;
+.rate-prompt a,
+.rate-prompt button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
   text-decoration: none;
+}
+
+.rate-prompt a {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.rate-prompt button {
+  color: inherit;
+}
+
+.rate-prompt a:hover,
+.rate-prompt button:hover {
+  text-decoration: underline;
 }
 
 .site-permission-status:empty {
