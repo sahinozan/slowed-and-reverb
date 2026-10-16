@@ -473,6 +473,21 @@ describe('popup behavior', () => {
     close(harness);
   });
 
+  test('starts on the Glow theme, listed first, until another is picked', async () => {
+    const harness = await createPopupHarness({
+      contentState: { enabled: true, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+    });
+    const document = harness.window.document;
+
+    assert.equal(document.documentElement.getAttribute('data-theme'), 'glow');
+    assert.equal(harness.local.data.uiTheme, undefined);
+    const options = [...document.querySelectorAll('.theme-option')];
+    assert.deepEqual(options.map((option) => option.dataset.theme), ['glow', 'pink', 'midnight', 'paper', 'frost']);
+    assert.ok(options[0].classList.contains('active'));
+
+    close(harness);
+  });
+
   test('persists theme selection and closes the picker with Escape', async () => {
     const harness = await createPopupHarness({
       contentState: { enabled: true, settings: DEFAULT_SETTINGS, blocked: false, live: false }

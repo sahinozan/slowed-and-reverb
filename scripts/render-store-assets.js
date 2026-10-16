@@ -12,7 +12,7 @@
 // Visual system
 //   Type      Fraunces 600 (site/assets/fonts), Avenir Next for body text, and
 //             Menlo inside the popup and on the cassette label.
-//   Color     The site's Terminal tokens: black, white, and the pink accent.
+//   Color     The site's Glow tokens: a cherry-black ground, white, and the pink accent.
 //   Popup     The production popup, rendered at 3x by popup-preview.js.
 //   Cassette  Read from site/index.html, so the store art and the site share
 //             one drawing.
@@ -78,7 +78,7 @@ const COLOR = Object.freeze({
   body: '#dcdce2'
 });
 // Promo images use the website's glow: a near-black cherry ground with blurred
-// pink and violet light behind the cassette (site/styles.css, Terminal theme),
+// pink and violet light behind the cassette (site/styles.css, Glow theme),
 // a little stronger than on the site so it still shows at store size.
 const GLOW_GROUND = '#0f0308';
 const GLOW_LIGHT = [
@@ -94,16 +94,16 @@ function glow({ x, y, width, height, blur }) {
 }
 
 const POPUP_VARIANTS = Object.freeze({
-  slowed: { theme: 'pink', settings: { ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 } },
+  slowed: { theme: 'glow', settings: { ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 } },
   advanced: {
-    theme: 'pink', panel: 'advanced',
+    theme: 'glow', panel: 'advanced',
     settings: {
       ...DEFAULT_SETTINGS, speed: 0.85, reverb: 35, echo: 20, pan: -15,
       width: 130, saturation: 20, eqLow: 4, eqMid: -1, eqHigh: 2
     }
   },
   custom: {
-    theme: 'pink', panel: 'custom',
+    theme: 'glow', panel: 'custom',
     settings: {
       ...DEFAULT_SETTINGS, speed: 0.85, reverb: 45, width: 125,
       saturation: 20, eqLow: 2, eqHigh: 3
@@ -119,16 +119,24 @@ const POPUP_VARIANTS = Object.freeze({
       }
     ]
   },
-  nightcore: { theme: 'pink', settings: { ...DEFAULT_SETTINGS, speed: 1.2 } },
+  nightcore: { theme: 'glow', settings: { ...DEFAULT_SETTINGS, speed: 1.2 } },
+  // The other themes, cut below the Reverb slider so four fit beside the big panel.
+  terminal: {
+    theme: 'pink', cropBelow: '#reverb-slider',
+    settings: { ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 }
+  },
   midnight: {
-    theme: 'midnight',
+    theme: 'midnight', cropBelow: '#reverb-slider',
     settings: { ...DEFAULT_SETTINGS, speed: 0.85, reverb: 35, eqLow: 3, eqMid: -2, eqHigh: 4 }
   },
-  paper: { theme: 'paper', settings: { ...DEFAULT_SETTINGS, speed: 1.2 } },
-  frost: { theme: 'frost', settings: { ...DEFAULT_SETTINGS, speed: 0.9, reverb: 25, eqHigh: 3 } },
+  paper: { theme: 'paper', cropBelow: '#reverb-slider', settings: { ...DEFAULT_SETTINGS, speed: 1.2 } },
+  frost: {
+    theme: 'frost', cropBelow: '#reverb-slider',
+    settings: { ...DEFAULT_SETTINGS, speed: 0.9, reverb: 25, eqHigh: 3 }
+  },
   // Just the header and the opt-in box, enlarged so its text reads at store size.
   spotifyAskTop: {
-    theme: 'pink', url: 'https://open.spotify.com/', siteAccess: false, cropBelow: '#spotify-permission-panel',
+    theme: 'glow', url: 'https://open.spotify.com/', siteAccess: false, cropBelow: '#spotify-permission-panel',
     settings: { ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 }
   },
 });
@@ -155,7 +163,7 @@ function cassetteMarkup() {
   return svg[1];
 }
 
-// The site's cassette styles, resolved to the Terminal theme.
+// The site's cassette styles, resolved to the Terminal colors that Glow shares.
 const CASSETTE_CSS = `
   .cassette svg { width:100%; height:auto; display:block; }
   .shell { fill: color-mix(in srgb, #fff 12%, #000); }
@@ -292,7 +300,8 @@ function closeupSlide({ capture, popupName, heading, subline, maxPopup = 600, ex
   const source = CAPTURES[capture];
   const fullWidth = pngWidth(path.join(root, source.file));
   const scale = (SLIDE_W * 1.1) / (fullWidth - 2 * source.cropSide);
-  const popupWidth = Math.min(maxPopup, Math.floor((SLIDE_H - 80) * POPUP_W / popupHeights.get(popupName)));
+  // Kept MARGIN clear of the top and bottom, where the store may crop.
+  const popupWidth = Math.min(maxPopup, Math.floor((SLIDE_H - 2 * MARGIN) * POPUP_W / popupHeights.get(popupName)));
   const popupTop = Math.round((SLIDE_H - popupHeights.get(popupName) * popupWidth / POPUP_W) / 2);
   return page(SLIDE_W, SLIDE_H, `
     <div style="position:absolute;inset:0;overflow:hidden">
@@ -312,10 +321,15 @@ function closeupSlide({ capture, popupName, heading, subline, maxPopup = 600, ex
     </div>`);
 }
 
-const themeRow = () => `
-  <div style="font-size:22px;color:${G.body};margin:40px 0 14px">Choose from four color themes</div>
-  <div style="display:flex;gap:18px">${['midnight', 'paper', 'frost']
-    .map((name) => `<div style="box-shadow:0 0 0 1px ${G.frame}, 0 14px 30px rgba(0,0,0,.35)">${popup(name, 216)}</div>`).join('')}</div>`;
+// The four other themes in a 2 x 2 grid. Each panel is cut below its sliders
+// and fades out there, like the Spotify close-up, so four fit at a readable size.
+const THEME_CARD_W = 252;
+const themeGrid = () => `
+  <div style="font-size:22px;color:${G.body};margin:30px 0 14px">Choose from five color themes</div>
+  <div style="display:grid;grid-template-columns:repeat(2, ${THEME_CARD_W}px);gap:18px">${
+  ['terminal', 'midnight', 'paper', 'frost']
+    .map((name) => `<div style="-webkit-mask-image:linear-gradient(180deg,#000 70%,transparent)">${popup(name, THEME_CARD_W)}</div>`)
+    .join('')}</div>`;
 
 // --- promo images ----------------------------------------------------------
 function promoTile() {
@@ -417,7 +431,7 @@ async function main() {
         capture: 'youtubePlaylist', popupName: 'custom',
         heading: 'Save your favorite settings',
         subline: 'Keep them under My Presets and switch back with one click.',
-        extra: themeRow()
+        extra: themeGrid()
       })],
       ['05-privacy.png', closeupSlide({
         capture: 'spotify', popupName: 'nightcore',

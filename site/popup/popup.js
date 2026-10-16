@@ -40,12 +40,19 @@ const BLOCKED_TEXT = {
 };
 
 const THEMES = [
+  {
+    id: 'glow',
+    name: 'Glow',
+    bg: 'radial-gradient(120% 90% at 15% 0%, rgba(232,89,127,.2), transparent 60%), radial-gradient(110% 90% at 95% 100%, rgba(150,40,140,.2), transparent 65%), #0f0308',
+    fg: '#ffffff',
+    accent: 'hsl(343 66% 63%)'
+  },
   { id: 'pink', name: 'Terminal', bg: '#000000', fg: '#ffffff', accent: 'hsl(343 66% 63%)' },
   { id: 'midnight', name: 'Midnight', bg: '#241b38', fg: '#ffffff', accent: 'hsl(150 45% 68%)' },
   { id: 'paper', name: 'Paper', bg: '#f5f1eb', fg: '#241b2e', accent: 'hsl(259 48% 38%)' },
   { id: 'frost', name: 'Frost', bg: '#eef2f7', fg: '#16202c', accent: 'hsl(205 75% 36%)' }
 ];
-const DEFAULT_THEME = 'pink';
+const DEFAULT_THEME = 'glow';
 
 const THEME_KEY = 'uiTheme';
 const CUSTOM_PRESETS_KEY = 'customPresets';

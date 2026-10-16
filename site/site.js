@@ -11,7 +11,8 @@
 
   // The five bars of assets/icon.svg, filled with the theme's logo colors.
   function paintIcon() {
-    if (!root.dataset.theme || root.dataset.theme === 'pink') {
+    // Glow and Terminal share the logo colors of assets/icon.svg.
+    if (!root.dataset.theme || root.dataset.theme === 'glow' || root.dataset.theme === 'pink') {
       icon.href = defaultIcon;
       return;
     }

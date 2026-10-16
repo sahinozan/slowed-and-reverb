@@ -18,8 +18,8 @@
     keepPitch: false, saturation: 0, eqLow: 0, eqMid: 0, eqHigh: 0
   });
   // The theme chosen in one page's popup carries to the next page of the visit.
-  let rememberedTheme = 'pink';
-  try { rememberedTheme = sessionStorage.getItem('sr-demo-theme') || 'pink'; } catch { /* storage may be unavailable */ }
+  let rememberedTheme = 'glow';
+  try { rememberedTheme = sessionStorage.getItem('sr-demo-theme') || 'glow'; } catch { /* storage may be unavailable */ }
   const localData = { uiTheme: rememberedTheme, customPresets: [], ...SLOWED };
   const tab = { id: 1, url: 'https://www.youtube.com/watch?v=site-demo' };
   const tabState = { enabled: true, settings: { ...SLOWED }, blocked: false, live: false };
