@@ -262,6 +262,8 @@ let presetWriteQueue = Promise.resolve();
 let spotifyPermissionTabId = null;
 let youtubePermission = null;
 let tabSynced = false;
+let processingPending = false;
+let tabReports = 0;
 
 function isSpotifyUrl(url) {
   try {
@@ -290,6 +292,8 @@ function getFirefoxYouTubePermission(url) {
 }
 
 function showProcessingStatus(state) {
+  processingPending = false;
+
   if (state?.effectsUnavailable) {
     els.blockedBannerText.textContent = BLOCKED_TEXT.spotifyEffects;
     els.blockedBanner.hidden = false;
@@ -297,6 +301,7 @@ function showProcessingStatus(state) {
   }
 
   if (state?.pending) {
+    processingPending = true;
     els.blockedBannerText.textContent = state.playerDetected
       ? BLOCKED_TEXT.loadingPlayer
       : BLOCKED_TEXT.noPlayer;
@@ -305,6 +310,33 @@ function showProcessingStatus(state) {
   }
 
   els.blockedBanner.hidden = true;
+}
+
+async function recheckProcessingStatus(tabId) {
+  const state = await api.tabs.sendMessage(tabId, { type: 'GET_STATE' }).catch(() => null);
+  if (!state || state.blocked || !processingPending || blocked) return;
+  showProcessingStatus(state);
+}
+
+// The tab reports when its effect starts, which is often after the popup
+// opened (a page still loading, a song not yet playing). While the popup says
+// it's waiting, ask the tab again on each report.
+async function handleTabReport(message, sender) {
+  if (message?.type !== 'CONTENT_STATE_CHANGED') return;
+  if (sender.id !== api.runtime.id || sender.tab?.id === undefined) return;
+  tabReports++;
+  if (!processingPending || blocked) return;
+
+  const tab = await getActiveTab();
+  if (tab?.id === sender.tab.id) await recheckProcessingStatus(tab.id);
+}
+
+// A report can arrive while the tab's answer is still on its way to the
+// popup, before the popup knows to wait for one. If any did, ask again
+// rather than trust that answer's "waiting".
+function showTabStatus(tabId, state, reportsBefore) {
+  showProcessingStatus(state);
+  if (processingPending && tabReports !== reportsBefore) recheckProcessingStatus(tabId);
 }
 
 function showSpotifyPermissionPanel(mode) {
@@ -513,6 +545,7 @@ async function saveAndApplySettings(enabled) {
   const tab = await getActiveTab();
   if (tab?.id === undefined) return null;
 
+  const reportsBefore = tabReports;
   const result = await api.runtime
     .sendMessage({ type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled: active })
     .catch(() => ({ success: false, blocked: true, blockReason: 'unsupported' }));
@@ -524,7 +557,7 @@ async function saveAndApplySettings(enabled) {
     setPowerUI(false);
     setTabIcon(tab.id, false);
   } else {
-    showProcessingStatus(result);
+    showTabStatus(tab.id, result, reportsBefore);
   }
 
   return result;
@@ -983,6 +1016,10 @@ function bindControls() {
   els.spotifyPermissionBtn.addEventListener('click', handleSpotifyPermissionAction);
   els.youtubePermissionBtn.addEventListener('click', handleYouTubePermissionAction);
   els.reloadBtn.addEventListener('click', handleReloadAction);
+  // Returns nothing, so the background script still answers these messages.
+  api.runtime.onMessage.addListener((message, sender) => {
+    handleTabReport(message, sender);
+  });
 
   els.resetBtn.addEventListener('click', () => {
     applySettingsToUI(DEFAULT_SETTINGS);
@@ -1067,6 +1104,7 @@ async function syncWithActiveTab() {
   }
 
   let state;
+  const reportsBefore = tabReports;
   try {
     state = await api.tabs.sendMessage(tab.id, { type: 'GET_STATE' });
   } catch {
@@ -1090,7 +1128,7 @@ async function syncWithActiveTab() {
   setBlocked(false);
   hideSpotifyPermissionPanel();
   hideYouTubePermissionPanel();
-  showProcessingStatus(state);
+  showTabStatus(tab.id, state, reportsBefore);
   setLiveState(Boolean(state?.live));
 
   if (state?.enabled) {

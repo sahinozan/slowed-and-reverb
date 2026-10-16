@@ -69,6 +69,74 @@ test('loads the real popup page and applies audio settings to the active tab', a
   expect(stored.uiTheme).toBe('midnight');
 });
 
+test('drops the loading warning when the player finishes loading', async ({ extension }) => {
+  const url = `${extension.fixtureUrl}?loading`;
+  const page = await extension.context.newPage();
+  await page.goto(url);
+  await expect(page.locator('#player')).toHaveJSProperty('readyState', 4);
+  // Unload the player so the effect has to wait for it, as on a page that
+  // is still loading when the popup opens.
+  await page.evaluate(() => {
+    const player = document.getElementById('player');
+    window.fixtureSource = player.src;
+    player.removeAttribute('src');
+    player.load();
+  });
+  await expect(page.locator('#player')).toHaveJSProperty('readyState', 0);
+  await page.bringToFront();
+
+  const tab = await fixtureTab(extension.serviceWorker, url);
+  const popup = await openPopupPage(extension, tab.id);
+  const banner = popup.locator('#blocked-banner');
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText('still loading');
+
+  await page.evaluate(() => {
+    document.getElementById('player').src = window.fixtureSource;
+  });
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+  await expect(banner).toBeHidden();
+  await expect(popup.getByText('On', { exact: true })).toBeVisible();
+});
+
+test("answers Spotify's turn-on with the effect running on a playing song", async ({
+  extension
+}) => {
+  const url = `${extension.fixtureUrl}?spotify-toggle`;
+  const page = await extension.context.newPage();
+  await page.goto(url);
+  await expect(page.locator('#player')).toHaveJSProperty('readyState', 4);
+  const tab = await fixtureTab(extension.serviceWorker, url);
+  const settings = {
+    speed: 0.8, reverb: 40, echo: 0, pan: 0, width: 100,
+    keepPitch: false, saturation: 0, eqLow: 0, eqMid: 0, eqHigh: 0
+  };
+  const update = (enabled) =>
+    extension.serviceWorker.evaluate(
+      ({ tabId, enabled, settings }) =>
+        chrome.tabs.sendMessage(tabId, { type: 'UPDATE_AUDIO', enabled, settings }),
+      { tabId: tab.id, enabled, settings }
+    );
+
+  // On Spotify the engine loads with the page, before the song starts.
+  await extension.serviceWorker.evaluate(async (tabId) => {
+    const target = { tabId };
+    await chrome.scripting.executeScript({ target, files: ['spotify-main.js'], world: 'MAIN' });
+    await chrome.scripting.executeScript({ target, files: ['spotify-bridge.js'] });
+  }, tab.id);
+  await update(false);
+  await playLooped(page);
+  await expect(page.locator('#player')).toHaveJSProperty('paused', false);
+
+  const on = await update(true);
+  expect(on).toMatchObject({ success: true, processingActive: true, pending: false });
+  const off = await update(false);
+  expect(off).toMatchObject({ success: true, enabled: false, pending: false });
+  const again = await update(true);
+  expect(again).toMatchObject({ success: true, processingActive: true, pending: false });
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+});
+
 async function playLooped(page) {
   await page.evaluate(async () => {
     const player = document.getElementById('player');
