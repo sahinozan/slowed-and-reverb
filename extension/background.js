@@ -177,6 +177,9 @@ async function setTabIcon(tabId, enabled) {
 
 async function ensureContentScript(tabId) {
   try {
+    // The audio engine goes into the page's world first, so it is listening
+    // when content.js starts.
+    await api.scripting.executeScript({ target: { tabId }, files: ['youtube-main.js'], world: 'MAIN' });
     await api.scripting.executeScript({ target: { tabId }, files: ['settings.js', 'content.js'] });
     return true;
   } catch {

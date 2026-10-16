@@ -64,14 +64,16 @@ describe('shared settings', () => {
     }
   });
 
-  test('the Spotify scripts keep exact copies of the defaults and ranges', () => {
+  test('the page-world and Spotify scripts keep exact copies of the defaults and ranges', () => {
     const { DEFAULTS, BOUNDS } = loadSettings();
     // Compared as JSON, so objects from different contexts compare by value.
     const plain = (value) => JSON.parse(JSON.stringify(value));
     const copies = [
       ['spotify-bridge.js', 'NEUTRAL_SETTINGS', DEFAULTS],
       ['spotify-main.js', 'NEUTRAL_SETTINGS', DEFAULTS],
-      ['spotify-main.js', 'SETTING_BOUNDS', BOUNDS]
+      ['spotify-main.js', 'SETTING_BOUNDS', BOUNDS],
+      ['youtube-main.js', 'NEUTRAL_SETTINGS', DEFAULTS],
+      ['youtube-main.js', 'SETTING_BOUNDS', BOUNDS]
     ];
     for (const [file, name, expected] of copies) {
       const source = fs.readFileSync(path.join(root, 'extension', file), 'utf8');

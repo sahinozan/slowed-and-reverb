@@ -14,7 +14,8 @@ covers the features and development commands in full.
 - `store-assets/`: store images and listing text (`LISTING.md`). See
   `store-assets/README.md`.
 - `scripts/`: build, render and site tools, run through `npm run`.
-- `tests/`: unit tests (`node --test`); `e2e/`: a Playwright smoke test.
+- `tests/`: unit tests (`node --test`); `e2e/`: a Playwright smoke test for
+  Chromium and a puppeteer-core test for Firefox.
 
 ## Checks
 
@@ -22,7 +23,8 @@ covers the features and development commands in full.
 - Before handing work back, run `npm run check`. If it can't run, say which
   command failed and why.
 - For changes that touch the extension at runtime, `npm run test:e2e` runs the
-  real extension in Chromium.
+  real extension in Chromium, and `npm run test:firefox` checks in the
+  installed Firefox that the effects stop when the extension is turned off.
 - Check popup changes in both engines. Firefox draws the popup inside rounded
   panel corners (see the `@supports (-moz-appearance: none)` rule in
   `popup.css`) and needs a manual look. In Chromium, `npm run test:e2e` opens
@@ -49,12 +51,13 @@ The tests fail when the site's popup copy or stamps are out of date.
 - **Settings:** the defaults, ranges and built-in presets live in
   `extension/settings.js`. The background script, the popup and `content.js`
   load it first, so every injection of `content.js` lists `settings.js` before
-  it (a test checks this). The two Spotify scripts keep their own copies,
-  because Spotify's registered scripts are kept across updates:
-  `spotify-bridge.js` of the defaults, `spotify-main.js` of the defaults and
-  ranges. A test keeps those copies equal. A new setting goes in
-  `settings.js`, both Spotify copies, the popup's controls, and the audio
-  graphs in `content.js` and `spotify-main.js`.
+  it (a test checks this). The audio engines run in the page's own world,
+  where `settings.js` isn't loaded, so `youtube-main.js` and
+  `spotify-main.js` keep copies of the defaults and ranges, and
+  `spotify-bridge.js` of the defaults, because Spotify's registered scripts
+  are kept across updates. A test keeps those copies equal. A new setting
+  goes in `settings.js`, the three copies, the popup's controls, and the
+  audio graphs in `youtube-main.js` and `spotify-main.js`.
 - **Privacy:** the extension makes no network requests and has no analytics,
   telemetry or remote code. Don't add permissions; the optional site
   permissions are requested only when the user asks. The website loads

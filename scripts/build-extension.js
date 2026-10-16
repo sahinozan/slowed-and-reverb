@@ -8,6 +8,7 @@ const SOURCE_FILES = [
   'settings.js',
   'background.js',
   'content.js',
+  'youtube-main.js',
   'spotify-bridge.js',
   'spotify-main.js',
   'popup.js',

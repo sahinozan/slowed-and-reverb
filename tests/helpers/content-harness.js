@@ -3,21 +3,15 @@
 const fs = require('fs');
 const { JSDOM } = require('jsdom');
 
-const { createEvent, flushPromises } = (() => {
-  const browserApi = require('./browser-api');
+function createEvent() {
+  const listeners = [];
   return {
-    createEvent() {
-      const listeners = [];
-      return {
-        listeners,
-        addListener(listener) {
-          listeners.push(listener);
-        }
-      };
-    },
-    flushPromises: browserApi.flushPromises
+    listeners,
+    addListener(listener) {
+      listeners.push(listener);
+    }
   };
-})();
+}
 const { root } = require('./load-script');
 
 class FakeAudioNode {
@@ -148,7 +142,6 @@ async function createContentHarness(options = {}) {
     runScripts: 'outside-only'
   });
   const { window } = dom;
-  const runtimeMessage = createEvent();
   const runtimeMessages = [];
   const warnings = [];
 
@@ -169,33 +162,55 @@ async function createContentHarness(options = {}) {
     media.playbackRate = 1;
   }
 
-  window.chrome = {
-    runtime: {
-      id: 'example',
-      onMessage: runtimeMessage,
-      async sendMessage(message) {
-        runtimeMessages.push(structuredClone(message));
-        if (message.type === 'GET_TAB_STATE') return options.remembered ?? null;
-        return null;
-      }
-    }
+  // jsdom leaves event.source unset, which both scripts check.
+  window.postMessage = (data) => {
+    setTimeout(() => window.dispatchEvent(new window.MessageEvent('message', { data, source: window })), 0);
   };
 
-  // The background script injects settings.js before content.js.
-  window.eval(fs.readFileSync(`${root}/extension/settings.js`, 'utf8'));
-  const source = fs.readFileSync(`${root}/extension/content.js`, 'utf8');
-  window.eval(source);
-  await flushPromises();
-  await flushPromises();
+  // A new copy of the extension's messaging, as each extension instance has.
+  function connectExtension() {
+    const runtimeMessage = createEvent();
+    window.chrome = {
+      runtime: {
+        id: 'example',
+        onMessage: runtimeMessage,
+        async sendMessage(message) {
+          runtimeMessages.push(structuredClone(message));
+          if (message.type === 'GET_TAB_STATE') return options.remembered ?? null;
+          return null;
+        }
+      }
+    };
+    return runtimeMessage;
+  }
 
+  // The background script injects the page-world engine, then settings.js and content.js.
+  const engineSource = fs.readFileSync(`${root}/extension/youtube-main.js`, 'utf8');
+  const settingsSource = fs.readFileSync(`${root}/extension/settings.js`, 'utf8');
+  const source = fs.readFileSync(`${root}/extension/content.js`, 'utf8');
+  let runtimeMessage;
+
+  async function inject() {
+    runtimeMessage = connectExtension();
+    window.eval(engineSource);
+    window.eval(settingsSource);
+    window.eval(source);
+    await settle();
+  }
+
+  await inject();
+
+  // Resolves with the content script's answer to a message from the extension.
   function dispatch(message) {
-    let response;
-    for (const listener of runtimeMessage.listeners) {
-      listener(message, {}, (value) => {
-        response = value;
-      });
-    }
-    return response;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`No answer to ${message.type}`)), 3000);
+      for (const listener of runtimeMessage.listeners) {
+        listener(message, {}, (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        });
+      }
+    });
   }
 
   return {
@@ -204,8 +219,19 @@ async function createContentHarness(options = {}) {
     },
     dispatch,
     dom,
+    // Turns the extension off and on again without reloading the page: the
+    // old content script stays without the extension, as in Chromium, and
+    // a new one is injected, as both browsers do when the popup opens.
+    async reinject() {
+      delete window.chrome.runtime.id;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      window.__slowedReverbInjected = false;
+      await inject();
+    },
     media,
-    runtimeMessage,
+    get runtimeMessage() {
+      return runtimeMessage;
+    },
     runtimeMessages,
     source,
     warnings,
@@ -214,4 +240,9 @@ async function createContentHarness(options = {}) {
   };
 }
 
-module.exports = { FakeAudioContext, FakeAudioNode, createContentHarness };
+// Lets messages between the content script and the engine arrive.
+function settle(ms = 20) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+module.exports = { FakeAudioContext, FakeAudioNode, createContentHarness, settle };

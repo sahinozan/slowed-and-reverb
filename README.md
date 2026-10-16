@@ -102,6 +102,7 @@ npm test                  # run service worker, content, popup, and package test
 npm run test:watch        # rerun tests while developing
 npx playwright install --no-shell chromium # one-time local browser install
 npm run test:e2e          # real Chromium extension smoke test
+npm run test:firefox      # real Firefox test: effects stop when the extension is turned off
 npm run build:chromium    # emit dist/chromium/
 npm run build:firefox     # emit dist/firefox/
 npm run package           # build allowlisted ZIPs for both stores
@@ -137,7 +138,12 @@ blocked and live-media behavior, popup controls and presets, manifest contracts,
 and the Firefox build. The Playwright smoke test loads the built Chromium extension
 into a real browser, renders its popup at production size, applies settings to a
 local audio fixture, checks popup dimensions, and saves a screenshot in the test
-report.
+report. The Firefox test runs the Firefox build in the installed Firefox through
+puppeteer-core (set `FIREFOX_BIN` for a Firefox somewhere else), turns the
+effects on for the same fixture, removes the extension, and checks that the audio
+goes back to normal speed; it does the same again after installing it a second
+time. It can't hear the audio, so a doubled or robotic-sounding path is still a
+manual check.
 GitHub Actions runs that smoke test on disposable Ubuntu and Windows machines in
 addition to `npm run check`. A final manual smoke test in current Chromium and
 Firefox is still recommended before a store release because browser and media-site

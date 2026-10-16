@@ -30,7 +30,7 @@ describe('content script audio processing', () => {
     assert.equal(harness.context, undefined);
 
     assert.equal(
-      harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true }).success,
+      (await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true })).success,
       true
     );
 
@@ -75,8 +75,8 @@ describe('content script audio processing', () => {
   test('returns the graph to neutral values when disabled', async () => {
     const harness = await createContentHarness();
 
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: false });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: false });
 
     assert.equal(harness.media.playbackRate, 1);
     assert.equal(harness.media.preservesPitch, false);
@@ -91,13 +91,13 @@ describe('content script audio processing', () => {
   test('returns the graph to neutral when YouTube permission is revoked', async () => {
     const harness = await createContentHarness();
 
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
-    const response = harness.dispatch({ type: 'YOUTUBE_PERMISSION_REVOKED' });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const response = await harness.dispatch({ type: 'YOUTUBE_PERMISSION_REVOKED' });
 
     assert.equal(response.success, true);
     assert.equal(response.enabled, false);
     assert.equal(harness.media.playbackRate, 1);
-    assert.equal(harness.dispatch({ type: 'GET_STATE' }).enabled, false);
+    assert.equal((await harness.dispatch({ type: 'GET_STATE' })).enabled, false);
     const outputGains = harness.context.gains.filter((node) =>
       node.connections.some((connection) => connection.target === harness.context.destination)
     );
@@ -110,7 +110,7 @@ describe('content script audio processing', () => {
     const harness = await createContentHarness();
     t.after(() => close(harness));
 
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
     harness.runtimeMessages.length = 0;
     delete harness.window.chrome.runtime.id;
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -138,7 +138,7 @@ describe('content script audio processing', () => {
     const harness = await createContentHarness();
     t.after(() => close(harness));
 
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
     const source = harness.context.sources[0];
     harness.media.remove();
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -156,6 +156,30 @@ describe('content script audio processing', () => {
     );
     assert.deepEqual(outputGains.map((node) => node.gain.value), [1, 0]);
     assert.equal(harness.media.playbackRate, 1.25);
+  });
+
+  test('reuses captured media when the extension is turned off and on again', async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.reinject();
+    assert.equal(harness.media.playbackRate, 1);
+
+    const response = await harness.dispatch({
+      type: 'UPDATE_AUDIO',
+      settings: SETTINGS,
+      enabled: true
+    });
+    assert.equal(response.success, true);
+    assert.equal(response.processingActive, true);
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+    // One graph per player: a second one would play next to the first.
+    assert.equal(harness.context.sources.length, 1);
+    const outputGains = harness.context.gains.filter((node) =>
+      node.connections.some((connection) => connection.target === harness.context.destination)
+    );
+    assert.deepEqual(outputGains.map((node) => node.gain.value), [0, 1]);
   });
 
   test('restores remembered state after reinjection', async () => {
@@ -181,8 +205,8 @@ describe('content script audio processing', () => {
   test('does not alter speed or pitch on live media', async () => {
     const harness = await createContentHarness({ duration: Number.POSITIVE_INFINITY });
 
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
-    const state = harness.dispatch({ type: 'GET_STATE' });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const state = await harness.dispatch({ type: 'GET_STATE' });
 
     assert.equal(harness.media.playbackRate, 1);
     assert.equal(harness.media.preservesPitch, false);
@@ -206,7 +230,7 @@ describe('content script audio processing', () => {
 
     for (const url of urls) {
       const harness = await createContentHarness({ url, withMedia: false });
-      const state = harness.dispatch({ type: 'GET_STATE' });
+      const state = await harness.dispatch({ type: 'GET_STATE' });
       assert.equal(state.blocked, true);
       assert.equal(state.blockReason, 'unsupportedSite');
       close(harness);
@@ -217,7 +241,7 @@ describe('content script audio processing', () => {
     for (const url of ['https://www.twitch.tv/example', 'https://soundcloud.com/a/b']) {
       const harness = await createContentHarness({ url });
 
-      harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
 
       assert.equal(harness.context, undefined);
       assert.equal(harness.media.crossOrigin, null);
@@ -228,8 +252,8 @@ describe('content script audio processing', () => {
   test('detects media protected with MediaKeys without creating a graph', async () => {
     const harness = await createContentHarness({ mediaKeys: {} });
 
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
-    const state = harness.dispatch({ type: 'GET_STATE' });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const state = await harness.dispatch({ type: 'GET_STATE' });
 
     assert.equal(state.blocked, true);
     assert.equal(state.blockReason, 'drm');
@@ -243,11 +267,11 @@ describe('content script audio processing', () => {
     error.name = 'InvalidStateError';
     const harness = await createContentHarness({ mediaSourceError: error });
 
-    const response = harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const response = await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
 
     assert.equal(response.success, false);
     assert.equal(response.blockReason, 'unsupported');
-    assert.equal(harness.dispatch({ type: 'GET_STATE' }).blockReason, 'unsupported');
+    assert.equal((await harness.dispatch({ type: 'GET_STATE' })).blockReason, 'unsupported');
     assert.equal(harness.warnings.length, 1);
 
     close(harness);
@@ -256,7 +280,7 @@ describe('content script audio processing', () => {
   test('ignores duplicate injections into the same document', async () => {
     const harness = await createContentHarness();
     assert.equal(harness.runtimeMessage.listeners.length, 1);
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
 
     harness.window.eval(harness.source);
     await flushPromises();
@@ -269,7 +293,7 @@ describe('content script audio processing', () => {
 
   test('processes media elements added after the initial injection', async () => {
     const harness = await createContentHarness({ withMedia: false });
-    const initial = harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const initial = await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
     assert.equal(initial.playerDetected, false);
     assert.equal(initial.processingActive, false);
     assert.equal(initial.pending, true);
@@ -286,7 +310,7 @@ describe('content script audio processing', () => {
 
     assert.equal(harness.getContext().sources.length, 1);
     assert.equal(media.playbackRate, SETTINGS.speed);
-    const state = harness.dispatch({ type: 'GET_STATE' });
+    const state = await harness.dispatch({ type: 'GET_STATE' });
     assert.equal(state.playerDetected, true);
     assert.equal(state.processingActive, true);
     assert.equal(state.pending, false);
@@ -302,7 +326,7 @@ describe('content script audio processing', () => {
 
   test('attaches a replacement player whose metadata loaded before insertion', async () => {
     const harness = await createContentHarness();
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
 
     harness.media.remove();
     const replacement = harness.window.document.createElement('audio');
@@ -317,7 +341,7 @@ describe('content script audio processing', () => {
 
     assert.equal(harness.context.sources.length, 2);
     assert.equal(replacement.playbackRate, SETTINGS.speed);
-    const state = harness.dispatch({ type: 'GET_STATE' });
+    const state = await harness.dispatch({ type: 'GET_STATE' });
     assert.equal(state.playerDetected, true);
     assert.equal(state.processingActive, true);
     assert.equal(state.pending, false);
@@ -327,7 +351,7 @@ describe('content script audio processing', () => {
 
   test('reapplies speed when a reused media element starts playing', async () => {
     const harness = await createContentHarness();
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
 
     harness.media.playbackRate = 1;
     harness.media.dispatchEvent(new harness.window.Event('play'));
@@ -340,7 +364,7 @@ describe('content script audio processing', () => {
 
   test('restores neutral speed when reused media becomes live', async () => {
     const harness = await createContentHarness();
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
     assert.equal(harness.media.playbackRate, SETTINGS.speed);
 
     Object.defineProperty(harness.media, 'duration', {
@@ -351,14 +375,14 @@ describe('content script audio processing', () => {
 
     assert.equal(harness.media.playbackRate, 1);
     assert.equal(harness.media.preservesPitch, false);
-    assert.equal(harness.dispatch({ type: 'GET_STATE' }).live, true);
+    assert.equal((await harness.dispatch({ type: 'GET_STATE' })).live, true);
 
     close(harness);
   });
 
   test('disconnects removed media and reuses its pipeline if reattached', async () => {
     const harness = await createContentHarness();
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
     const source = harness.context.sources[0];
     assert.ok(source.connections.length > 0);
 
@@ -376,7 +400,7 @@ describe('content script audio processing', () => {
 
   test('shares reverb data and caps active pipelines on media-heavy pages', async () => {
     const harness = await createContentHarness({ withMedia: false });
-    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
 
     for (let index = 0; index < 40; index++) {
       const media = harness.window.document.createElement('audio');
