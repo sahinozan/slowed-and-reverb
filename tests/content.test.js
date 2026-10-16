@@ -122,12 +122,40 @@ describe('content script audio processing', () => {
     );
     assert.deepEqual(outputGains.map((node) => node.gain.value), [1, 0]);
 
-    // The orphaned script no longer reacts to the page or messages the extension.
+    // The orphaned script leaves the page's own speed alone, captures no new
+    // players and no longer messages the extension.
+    harness.media.playbackRate = 1.5;
+    harness.media.dispatchEvent(new harness.window.Event('play'));
     harness.window.document.dispatchEvent(new harness.window.Event('yt-navigate-finish'));
     harness.window.document.body.append(harness.window.document.createElement('video'));
     await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(harness.media.playbackRate, 1.5);
     assert.deepEqual(harness.runtimeMessages, []);
     assert.equal(harness.context.sources.length, 1);
+  });
+
+  test('reconnects captured media unchanged after the extension is turned off', async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const source = harness.context.sources[0];
+    harness.media.remove();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(source.connections.length, 0);
+
+    delete harness.window.chrome.runtime.id;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    harness.media.playbackRate = 1.25;
+    harness.window.document.body.appendChild(harness.media);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    assert.ok(source.connections.length > 0);
+    const outputGains = harness.context.gains.filter((node) =>
+      node.connections.some((connection) => connection.target === harness.context.destination)
+    );
+    assert.deepEqual(outputGains.map((node) => node.gain.value), [1, 0]);
+    assert.equal(harness.media.playbackRate, 1.25);
   });
 
   test('restores remembered state after reinjection', async () => {

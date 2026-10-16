@@ -301,6 +301,13 @@
 
     let pipeline = pipelines.get(media);
 
+    // Once the extension is gone, keep media this script captured playing
+    // through the unchanged path, and leave speed and pitch to the page.
+    if (extensionGone) {
+      if (pipeline && connectPipeline(media, pipeline)) setPipelineEnabled(pipeline, false);
+      return;
+    }
+
     if (!effectEnabled) {
       media.playbackRate = NEUTRAL_SETTINGS.speed;
       media.preservesPitch = NEUTRAL_SETTINGS.keepPitch;
@@ -483,11 +490,10 @@
     });
 
   // YouTube changes routes without replacing the document or reinjecting this script.
-  function handleNavigation() {
+  document.addEventListener('yt-navigate-finish', () => {
     processMediaElements();
     notifyStateChanged();
-  }
-  document.addEventListener('yt-navigate-finish', handleNavigation);
+  });
 
   // Browsers may require a later page gesture before a suspended AudioContext can resume.
   document.addEventListener('click', resumeAudioContext);
@@ -495,18 +501,16 @@
   // Turning the extension off, removing it or updating it leaves this script
   // running with the audio graph still attached, and no event says so. Chromium
   // clears runtime.id when it happens, so check for that and put the audio back.
+  // Captured media can only play through the graph, so the listeners stay to
+  // reconnect and resume it.
   const shutdownTimer = window.setInterval(() => {
     if (api.runtime?.id) return;
 
     window.clearInterval(shutdownTimer);
-    extensionGone = true;
-    observer.disconnect();
-    window.clearTimeout(mediaProcessTimer);
-    document.removeEventListener('yt-navigate-finish', handleNavigation);
-    document.removeEventListener('click', resumeAudioContext);
     if (effectEnabled) {
       effectEnabled = false;
       processMediaElements();
     }
+    extensionGone = true;
   }, SHUTDOWN_CHECK_MS);
 })();
