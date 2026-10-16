@@ -202,6 +202,64 @@ describe('popup behavior', () => {
     close(harness);
   });
 
+  test('asks again when the effect starts while its answer is on the way', async () => {
+    const active = {
+      enabled: true,
+      settings: SLOWED,
+      blocked: false,
+      live: false,
+      playerDetected: true,
+      processingActive: true,
+      pending: false
+    };
+    let tabState = active;
+    // Only called after the popup has opened, once harness is set.
+    function report() {
+      return dispatchRuntimeMessage(
+        harness.events.runtimeMessage,
+        {
+          type: 'CONTENT_STATE_CHANGED',
+          enabled: true,
+          settings: SLOWED,
+          origin: 'https://www.youtube.com',
+          playerDetected: true,
+          processingActive: true
+        },
+        { id: harness.api.runtime.id, tab: { id: 9, url: 'https://www.youtube.com/watch?v=example' } }
+      );
+    }
+    const harness = await createPopupHarness({
+      onTabMessage(_tabId, message) {
+        if (message.type === 'GET_STATE') return tabState;
+        if (message.type !== 'UPDATE_AUDIO') return { success: true };
+        if (!message.enabled) {
+          tabState = { ...active, enabled: false, processingActive: false };
+          return { success: true, ...tabState };
+        }
+        // The effect starts and the tab reports it before its own answer,
+        // which still says "waiting", reaches the popup.
+        tabState = active;
+        report();
+        return { success: true, ...active, processingActive: false, pending: true };
+      }
+    });
+    const document = harness.window.document;
+    const power = document.getElementById('power-toggle');
+    const banner = document.getElementById('blocked-banner');
+
+    power.checked = false;
+    power.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+    power.checked = true;
+    power.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
+
+    assert.equal(power.checked, true);
+    assert.equal(banner.hidden, true);
+
+    close(harness);
+  });
+
   test('requests exact optional YouTube access only in Firefox', async () => {
     const firefoxManifest = { browser_specific_settings: { gecko: {} } };
     const sites = [
