@@ -26,6 +26,8 @@ const DESCRIPTION_LIMIT = 132;
 // The raw screen captures are large and the build doesn't use them.
 const SOURCE_PATHSPEC = ['.', ':(exclude)store-assets/originals'];
 const STEP_TIMEOUT_MS = 20 * 60 * 1000;
+// How long a stopped step and what it started get to exit before being killed.
+const STOP_GRACE_MS = 10000;
 const INTERRUPTED = 'Stopped; nothing was recorded.';
 
 // Firefox Add-ons shows the privacy policy as Markdown that drops headings and
@@ -191,12 +193,55 @@ function changedLine(release) {
   return `Compared with the ${previous} archives: in the Chromium package ${describe(chromium)}; in the Firefox package ${describe(firefox)}`;
 }
 
+// How the lines of one text differ from another's, from a longest common
+// subsequence of their lines: lines changed in place (by their new text), added
+// and removed, leaving out blank lines. Moved lines count as removed and added.
+function lineChanges(before, after) {
+  const changes = { same: before === after, changed: [], added: [], removed: [] };
+  const [a, b] = [before.split('\n'), after.split('\n')];
+  const common = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      common[i][j] = a[i] === b[j] ? common[i + 1][j + 1] + 1 : Math.max(common[i + 1][j], common[i][j + 1]);
+    }
+  }
+
+  let [removed, added] = [[], []];
+  const settle = () => {
+    const paired = Math.min(removed.length, added.length);
+    changes.changed.push(...added.slice(0, paired));
+    changes.added.push(...added.slice(paired));
+    changes.removed.push(...removed.slice(paired));
+    [removed, added] = [[], []];
+  };
+  let [i, j] = [0, 0];
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      settle();
+      i += 1;
+      j += 1;
+    } else if (j === b.length || (i < a.length && common[i + 1][j] >= common[i][j + 1])) {
+      if (a[i]) removed.push(a[i]);
+      i += 1;
+    } else {
+      if (b[j]) added.push(b[j]);
+      j += 1;
+    }
+  }
+  settle();
+  return changes;
+}
+
 function privacyNote(release) {
-  const { previous, privacyChanges } = release;
-  if (!privacyChanges) return '';
-  if (!privacyChanges.length) return ` It is the same as the ${previous} copy.`;
-  const starts = privacyChanges.map((line) => `"${line.split(' ').slice(0, 6).join(' ')}…"`);
-  return ` It differs from the ${previous} copy in ${plural(privacyChanges.length, 'line')}: ${listWords(starts)}.`;
+  const { previous, privacyChanges: changes } = release;
+  if (!changes) return '';
+  if (changes.same) return ` It is the same as the ${previous} copy.`;
+  const starts = (lines) => listWords(lines.map((line) => `"${line.split(' ').slice(0, 6).join(' ')}…"`));
+  const parts = ['changed', 'added', 'removed']
+    .filter((kind) => changes[kind].length)
+    .map((kind) => `${plural(changes[kind].length, 'line')} ${kind} (${starts(changes[kind])})`);
+  if (!parts.length) return ` It differs from the ${previous} copy only in blank lines.`;
+  return ` Compared with the ${previous} copy, ${listWords(parts)}.`;
 }
 
 function packageBlock(file, purpose, info) {
@@ -295,33 +340,50 @@ function git(args, cwd = root) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-// Asks the running step's whole process group to stop, and kills what is
-// left of it a little later.
+// Sends a signal to a step's process group; signal 0 only asks whether any of
+// it is still running.
+function signalGroup(pid, signal) {
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+// Waits until nothing in the group is running, and kills what is left after
+// the grace period.
+async function endGroup(pid, graceMs) {
+  const killAt = Date.now() + graceMs;
+  const giveUpAt = killAt + 5000;
+  while (signalGroup(pid, 0) && Date.now() < giveUpAt) {
+    if (Date.now() >= killAt) signalGroup(pid, 'SIGKILL');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+// Asks the running step's whole process group to stop. If the step itself
+// doesn't exit within its grace period, the group is killed.
 function stopRunning(reason, signal = 'SIGTERM') {
   stopping ??= reason;
   if (!running) return;
-  const group = -running.pid;
-  const send = (name) => {
-    try {
-      process.kill(group, name);
-    } catch {
-      // Already gone.
-    }
-  };
-  send(signal);
-  setTimeout(() => send('SIGKILL'), 10000).unref();
+  signalGroup(running.pid, signal);
+  const { pid } = running;
+  running.killTimer ??= setTimeout(() => signalGroup(pid, 'SIGKILL'), running.graceMs);
 }
 
 // Runs a command in its own process group, so a timeout or Ctrl+C also stops
-// the browsers and test runners it starts. Output goes to log.
-function run(command, args, { cwd, log, stdout = log }) {
+// the browsers and test runners it starts, and nothing it started outlives
+// it. Output goes to log.
+function run(command, args, { cwd, log, stdout = log, graceMs = STOP_GRACE_MS }) {
   const what = `${command} ${args.join(' ')}`;
   if (stopping) return Promise.reject(new ReleaseError(stopping));
   return new Promise((resolve, reject) => {
     const out = fs.openSync(stdout, 'a');
     const err = fs.openSync(log, 'a');
     const child = spawn(command, args, { cwd, env: childEnv(), stdio: ['ignore', out, err], detached: true });
-    running = child;
+    const step = { pid: child.pid, graceMs, killTimer: null };
+    running = step;
     const timer = setTimeout(
       () => stopRunning(`${what} took more than ${STEP_TIMEOUT_MS / 60000} minutes`),
       STEP_TIMEOUT_MS
@@ -331,6 +393,7 @@ function run(command, args, { cwd, log, stdout = log }) {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      clearTimeout(step.killTimer);
       running = null;
       fs.closeSync(out);
       fs.closeSync(err);
@@ -339,7 +402,11 @@ function run(command, args, { cwd, log, stdout = log }) {
       else resolve(fs.readFileSync(log, 'utf8'));
     };
     child.on('error', (error) => finish(`${command}: ${error.message}`));
-    child.on('exit', (code, signal) => finish(code === 0 && !stopping ? null : `${what} failed (${signal ?? `exit code ${code}`})`));
+    child.on('exit', (code, signal) => {
+      const failure = code === 0 && !stopping ? null : `${what} failed (${signal ?? `exit code ${code}`})`;
+      if (signalGroup(child.pid, 'SIGTERM')) endGroup(child.pid, graceMs).then(() => finish(failure));
+      else finish(failure);
+    });
   });
 }
 
@@ -393,6 +460,24 @@ function zipFiles(zipPath) {
       .filter((entry) => !entry.isDirectory)
       .map((entry) => [entry.entryName, entry.getData()])
   );
+}
+
+// Writes the release folder's files, each { from: path } or { text }. The
+// folder must not exist yet: verified files are never replaced, even when the
+// folder appeared while the checks ran.
+function writeReleaseFolder(outDir, files) {
+  fs.mkdirSync(path.dirname(outDir), { recursive: true });
+  try {
+    fs.mkdirSync(outDir);
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    throw new ReleaseError(`${outDir} appeared while the checks ran. Nothing was written to it.`);
+  }
+  for (const [name, file] of Object.entries(files)) {
+    const target = path.join(outDir, name);
+    if ('from' in file) fs.copyFileSync(file.from, target, fs.constants.COPYFILE_EXCL);
+    else fs.writeFileSync(target, file.text, { flag: 'wx' });
+  }
 }
 
 function fileInfo(file, entries) {
@@ -642,11 +727,10 @@ async function release(options) {
 
     const privacy = firefoxPrivacyText(read('PRIVACY.md'));
     const previousPrivacy = previous && path.join(previousDir, 'firefox-privacy-policy.txt');
-    let privacyChanges = null;
-    if (previousPrivacy && fs.existsSync(previousPrivacy)) {
-      const before = new Set(fs.readFileSync(previousPrivacy, 'utf8').split('\n'));
-      privacyChanges = privacy.split('\n').filter((line) => line && !before.has(line));
-    }
+    const privacyChanges =
+      previousPrivacy && fs.existsSync(previousPrivacy)
+        ? lineChanges(fs.readFileSync(previousPrivacy, 'utf8'), privacy)
+        : null;
 
     let mergedSince = null;
     const previousRecord = previous && path.join(previousDir, `RELEASE-${previous}.txt`);
@@ -678,16 +762,17 @@ async function release(options) {
       checks
     });
 
-    fs.mkdirSync(outDir, { recursive: true });
-    for (const target of TARGETS) {
-      fs.copyFileSync(
-        path.join(tree, 'dist', 'packages', `slowed-reverb-${target}.zip`),
-        path.join(outDir, `slowed-reverb-${target}.zip`)
-      );
-    }
-    fs.copyFileSync(sourceZip, path.join(outDir, 'slowed-reverb-firefox-source.zip'));
-    fs.writeFileSync(path.join(outDir, 'firefox-privacy-policy.txt'), privacy);
-    fs.writeFileSync(path.join(outDir, `RELEASE-${version}.txt`), record);
+    writeReleaseFolder(outDir, {
+      ...Object.fromEntries(
+        TARGETS.map((target) => [
+          `slowed-reverb-${target}.zip`,
+          { from: path.join(tree, 'dist', 'packages', `slowed-reverb-${target}.zip`) }
+        ])
+      ),
+      'slowed-reverb-firefox-source.zip': { from: sourceZip },
+      'firefox-privacy-policy.txt': { text: privacy },
+      [`RELEASE-${version}.txt`]: { text: record }
+    });
 
     console.log(`\nRecorded in ${outDir}:`);
     for (const [file, info] of [
@@ -725,9 +810,12 @@ module.exports = {
   compareVersions,
   describeEntries,
   firefoxPrivacyText,
+  lineChanges,
   previousVersion,
   pullRequests,
   releaseRecord,
+  run,
   versionBumpProblems,
-  wrap
+  wrap,
+  writeReleaseFolder
 };

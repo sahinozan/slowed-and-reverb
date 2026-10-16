@@ -2,16 +2,20 @@
 
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { describe, test } = require('node:test');
 const {
   describeEntries,
   firefoxPrivacyText,
+  lineChanges,
   previousVersion,
   pullRequests,
   releaseRecord,
+  run,
   versionBumpProblems,
-  wrap
+  wrap,
+  writeReleaseFolder
 } = require('../scripts/release');
 
 const { root } = require('./helpers/load-script');
@@ -193,7 +197,12 @@ describe('Release record', () => {
       chromium: ['content.js', 'manifest.json'],
       firefox: ['content.js', 'manifest.json']
     },
-    privacyChanges: ['This policy applies to versions `1.0.0`, `1.0.1`, `1.1.0`, `1.1.1`, and `1.1.2` of the'],
+    privacyChanges: {
+      same: false,
+      changed: ['This policy applies to versions `1.0.0`, `1.0.1`, `1.1.0`, `1.1.1`, and `1.1.2` of the'],
+      added: [],
+      removed: []
+    },
     checks: {
       tests: 150,
       e2e: 5,
@@ -213,7 +222,7 @@ describe('Release record', () => {
     assert.match(record, /^slowed-reverb-chromium\.zip {2}\(upload to the Chrome Web Store\)\nSize: 61400 bytes\nSHA-256: b{64}\n/m);
     assert.match(record, /^slowed-reverb-firefox\.zip {2}\(upload to Firefox Add-ons\)\nSize: 61500 bytes\nSHA-256: c{64}\n/m);
     assert.match(record, /^SHA-256: d{64}\nEntries: 127\nMade with: git archive --format=zip HEAD -- \. ':\(exclude\)store-assets\/originals'$/m);
-    assert.match(flat, /It differs from the 1\.1\.1 copy in 1 line: "This policy applies to versions `1\.0\.0`,…"\./);
+    assert.match(flat, /Compared with the 1\.1\.1 copy, 1 line changed \("This policy applies to versions `1\.0\.0`,…"\)\./);
     assert.match(record, /^- npm run check: passed \(150 tests; Chromium lint; Firefox build and lint\)$/m);
     assert.match(record, /^- Archive inventories: the same 16 files as 1\.1\.1$/m);
     assert.match(flat, / - Compared with the 1\.1\.1 archives, content\.js and manifest\.json differ, in both packages - /);
@@ -240,7 +249,122 @@ describe('Release record', () => {
     );
   });
 
+  test('says how the privacy policy copy changed, removals included', () => {
+    const note = (privacyChanges) => releaseRecord({ ...release, privacyChanges }).replace(/\s+/g, ' ');
+    const none = { changed: [], added: [], removed: [] };
+
+    assert.match(note({ same: true, ...none }), /It is the same as the 1\.1\.1 copy\./);
+    assert.match(
+      note({ same: false, ...none, removed: ['Optional site permissions are recorded and managed by the browser.'] }),
+      /Compared with the 1\.1\.1 copy, 1 line removed \("Optional site permissions are recorded and…"\)\./
+    );
+    assert.match(note({ same: false, ...none }), /It differs from the 1\.1\.1 copy only in blank lines\./);
+  });
+
   test('wraps long lines at the record width', () => {
     assert.equal(wrap('- one two three', '  ', 9), '- one two\n  three');
   });
+});
+
+describe('Line changes', () => {
+  const policy = ['Effective date: October 16, 2026', '', 'Versions 1.1.0 and 1.1.1.', '', 'Summary.', '', 'Storage.', ''].join('\n');
+
+  test('finds nothing in the same text', () => {
+    assert.deepEqual(lineChanges(policy, policy), { same: true, changed: [], added: [], removed: [] });
+  });
+
+  test('pairs a line changed in place and keeps a removed one apart', () => {
+    const after = policy.replace('Versions 1.1.0 and 1.1.1.', 'Versions 1.1.0, 1.1.1 and 1.1.2.').replace('Summary.\n\n', '');
+    assert.deepEqual(lineChanges(policy, after), {
+      same: false,
+      changed: ['Versions 1.1.0, 1.1.1 and 1.1.2.'],
+      added: [],
+      removed: ['Summary.']
+    });
+  });
+
+  test('reports a removal on its own and a change of order', () => {
+    assert.deepEqual(lineChanges(policy, policy.replace('Storage.\n', '')).removed, ['Storage.']);
+
+    const reordered = lineChanges(policy, policy.replace('Summary.\n\nStorage.', 'Storage.\n\nSummary.'));
+    assert.equal(reordered.same, false);
+    assert.ok(reordered.changed.length + reordered.added.length + reordered.removed.length > 0);
+  });
+
+  test('ignores blank lines in the lists but not in the comparison', () => {
+    assert.deepEqual(lineChanges(policy, `${policy}\n`), { same: false, changed: [], added: [], removed: [] });
+  });
+});
+
+describe('Release folder', () => {
+  const temporary = (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-release-test-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    return dir;
+  };
+
+  test('writes the files into a new folder', (t) => {
+    const dir = temporary(t);
+    const zip = path.join(dir, 'built.zip');
+    fs.writeFileSync(zip, 'zip');
+    const outDir = path.join(dir, 'packages', '1.1.2');
+
+    writeReleaseFolder(outDir, { 'slowed-reverb-chromium.zip': { from: zip }, 'RELEASE-1.1.2.txt': { text: 'record' } });
+
+    assert.deepEqual(fs.readdirSync(outDir).sort(), ['RELEASE-1.1.2.txt', 'slowed-reverb-chromium.zip']);
+    assert.equal(fs.readFileSync(path.join(outDir, 'slowed-reverb-chromium.zip'), 'utf8'), 'zip');
+  });
+
+  test('never writes into a folder that appeared during the checks', (t) => {
+    const dir = temporary(t);
+    const outDir = path.join(dir, '1.1.2');
+    fs.mkdirSync(outDir);
+    fs.writeFileSync(path.join(outDir, 'RELEASE-1.1.2.txt'), 'verified');
+
+    assert.throws(
+      () => writeReleaseFolder(outDir, { 'RELEASE-1.1.2.txt': { text: 'draft' }, 'extra.txt': { text: 'x' } }),
+      /appeared while the checks ran/
+    );
+    assert.deepEqual(fs.readdirSync(outDir), ['RELEASE-1.1.2.txt']);
+    assert.equal(fs.readFileSync(path.join(outDir, 'RELEASE-1.1.2.txt'), 'utf8'), 'verified');
+  });
+});
+
+describe('Release steps', () => {
+  test(
+    'a step finishes only once what it started has stopped',
+    { skip: process.platform === 'win32' && 'process groups are POSIX-only' },
+    async (t) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-release-test-'));
+      const ready = path.join(dir, 'ready');
+      let leftover = null;
+      t.after(() => {
+        if (leftover) {
+          try {
+            process.kill(leftover, 'SIGKILL');
+          } catch {
+            // Already gone, as it should be.
+          }
+        }
+        fs.rmSync(dir, { recursive: true, force: true });
+      });
+
+      // The step starts a process that ignores SIGTERM and exits as soon as
+      // that process is ready, leaving it behind in the step's process group.
+      const leftoverScript = `process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);`;
+      const stepScript = `
+        const { spawn } = require('child_process');
+        const fs = require('fs');
+        const ready = process.argv[1];
+        spawn(process.execPath, ['-e', ${JSON.stringify(leftoverScript)}, ready], { stdio: 'ignore' }).unref();
+        const wait = setInterval(() => {
+          if (fs.existsSync(ready) && fs.readFileSync(ready, 'utf8')) process.exit(0);
+        }, 20);`;
+
+      await run(process.execPath, ['-e', stepScript, ready], { cwd: dir, log: path.join(dir, 'step.log'), graceMs: 300 });
+
+      leftover = Number(fs.readFileSync(ready, 'utf8'));
+      assert.throws(() => process.kill(leftover, 0), { code: 'ESRCH' });
+    }
+  );
 });
