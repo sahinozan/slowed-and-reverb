@@ -30,14 +30,13 @@ const ICONS = {
 };
 
 const BLOCKED_TEXT = {
-  drm: "This audio is copy-protected, so the effects can't work here.",
+  drm: "This site protects its audio, so the effects can't change it.",
   unsupportedSite:
     "This site isn't supported. It works on YouTube, YouTube Music and Spotify.",
   unsupported: "The effects can't start on this page. Reloading it usually fixes this.",
-  noPlayer: 'Waiting for the song to load…',
-  loadingPlayer: "The player is still loading. The effect starts as soon as it's ready.",
-  spotifyEffects:
-    "Speed works here, but this browser doesn't let the other effects reach Spotify's audio."
+  noPlayer: 'Play a song to start the effects.',
+  loadingPlayer: 'The effects start once the song loads.',
+  spotifyEffects: 'Only speed works on Spotify here.'
 };
 
 const THEMES = [
@@ -185,7 +184,6 @@ const els = {
   spotifyPermissionBtn: el('spotify-permission-btn'),
   spotifyPermissionStatus: el('spotify-permission-status'),
   youtubePermissionPanel: el('youtube-permission-panel'),
-  youtubePermissionTitle: el('youtube-permission-title'),
   youtubePermissionBtn: el('youtube-permission-btn'),
   youtubePermissionStatus: el('youtube-permission-status'),
   reloadPanel: el('reload-panel'),
@@ -350,7 +348,7 @@ function showSpotifyPermissionPanel(mode) {
     els.spotifyPermissionBtn.textContent = 'Reload Spotify';
   } else {
     els.spotifyPermissionText.textContent =
-      "To work on Spotify, the extension has to load before Spotify's player does, so your browser asks you once.";
+      'Your browser asks once before the extension can work on Spotify.';
     els.spotifyPermissionBtn.textContent = 'Allow on Spotify';
   }
 }
@@ -363,7 +361,6 @@ function hideSpotifyPermissionPanel() {
 function showYouTubePermissionPanel(permission) {
   youtubePermission = permission;
   els.youtubePermissionPanel.hidden = false;
-  els.youtubePermissionTitle.textContent = `Use it on ${permission.name}?`;
   els.youtubePermissionBtn.textContent = `Allow on ${permission.name}`;
   els.youtubePermissionStatus.textContent = '';
 }
@@ -384,7 +381,7 @@ async function handleYouTubePermissionAction() {
     // the button's user action.
     const granted = await api.permissions.request({ origins: [permission.origin] });
     if (!granted) {
-      els.youtubePermissionStatus.textContent = 'Not allowed. You can try again any time.';
+      els.youtubePermissionStatus.textContent = 'You can allow it any time.';
       return;
     }
 
@@ -446,11 +443,11 @@ async function handleSpotifyPermissionAction() {
       const granted = await api.permissions.request({ origins: [SPOTIFY_ORIGIN] });
       if (!granted) {
         permissionReloadWatcher?.cancel();
-        els.spotifyPermissionStatus.textContent = 'Not allowed. You can try again any time.';
+        els.spotifyPermissionStatus.textContent = 'You can allow it any time.';
         return;
       }
 
-      els.spotifyPermissionStatus.textContent = 'Reloading Spotify...';
+      els.spotifyPermissionStatus.textContent = 'Reloading Spotify…';
       if (permissionReloadWatcher) await permissionReloadWatcher.promise;
       await syncWithActiveTab();
       return;
@@ -462,7 +459,7 @@ async function handleSpotifyPermissionAction() {
       return;
     }
 
-    await reloadTab(tab, els.spotifyPermissionStatus, 'Reloading Spotify...');
+    await reloadTab(tab, els.spotifyPermissionStatus, 'Reloading Spotify…');
     await syncWithActiveTab();
   } catch {
     permissionReloadWatcher?.cancel();
@@ -479,7 +476,7 @@ async function handleReloadAction() {
     const tab = await getActiveTab();
     if (tab?.id === undefined) return;
 
-    await reloadTab(tab, els.reloadStatus, 'Reloading the page...');
+    await reloadTab(tab, els.reloadStatus, 'Reloading the page…');
     await syncWithActiveTab();
   } catch {
     els.reloadStatus.textContent = "That didn't work. Reload the page yourself and try again.";
@@ -1016,6 +1013,8 @@ function bindControls() {
   els.spotifyPermissionBtn.addEventListener('click', handleSpotifyPermissionAction);
   els.youtubePermissionBtn.addEventListener('click', handleYouTubePermissionAction);
   els.reloadBtn.addEventListener('click', handleReloadAction);
+  // A notice shortens the list (see popup.css), so check its scrollbar again.
+  new ResizeObserver(updateCustomPresetsScrollGap).observe(els.customPresetsList);
   // Returns nothing, so the background script still answers these messages.
   api.runtime.onMessage.addListener((message, sender) => {
     handleTabReport(message, sender);

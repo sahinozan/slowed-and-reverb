@@ -99,7 +99,7 @@ test('drops the loading warning when the player finishes loading', async ({ exte
   const popup = await openPopupPage(extension, tab.id);
   const banner = popup.locator('#blocked-banner');
   await expect(banner).toBeVisible();
-  await expect(banner).toContainText('still loading');
+  await expect(banner).toContainText('once the song loads');
 
   await page.evaluate(() => {
     document.getElementById('player').src = window.fixtureSource;

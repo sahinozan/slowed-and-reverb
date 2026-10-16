@@ -10,6 +10,7 @@ const browserGlobals = {
   HTMLMediaElement: 'readonly',
   Event: 'readonly',
   MutationObserver: 'readonly',
+  ResizeObserver: 'readonly',
   Node: 'readonly',
   URL: 'readonly',
   Float32Array: 'readonly',

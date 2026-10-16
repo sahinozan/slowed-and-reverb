@@ -129,7 +129,7 @@ describe('popup behavior', () => {
 
     assert.equal(document.getElementById('power-toggle').checked, true);
     assert.equal(document.getElementById('blocked-banner').hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /Waiting/);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /Play a song/);
 
     close(harness);
   });
@@ -148,7 +148,7 @@ describe('popup behavior', () => {
 
     assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
     assert.equal(document.getElementById('blocked-banner').hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /Waiting/);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /Play a song/);
 
     close(harness);
   });
@@ -172,7 +172,7 @@ describe('popup behavior', () => {
     const document = harness.window.document;
     const banner = document.getElementById('blocked-banner');
     assert.equal(banner.hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /still loading/);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /once the song loads/);
 
     const report = (tabId) =>
       dispatchRuntimeMessage(
@@ -333,7 +333,7 @@ describe('popup behavior', () => {
 
     assert.deepEqual(harness.calls.permissionRequests, [['https://www.youtube.com/*']]);
     assert.equal(document.getElementById('youtube-permission-panel').hidden, false);
-    assert.match(document.getElementById('youtube-permission-status').textContent, /Not allowed/);
+    assert.match(document.getElementById('youtube-permission-status').textContent, /allow it any time/);
     assert.equal(harness.calls.executeScript.length, 0);
 
     close(harness);
@@ -395,7 +395,7 @@ describe('popup behavior', () => {
     assert.equal(harness.registeredContentScripts.size, 0);
     assert.match(
       harness.window.document.getElementById('spotify-permission-status').textContent,
-      /Not allowed/
+      /allow it any time/
     );
 
     close(harness);
