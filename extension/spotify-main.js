@@ -259,9 +259,12 @@
           return;
         }
         pageRates.set(this, rate);
-        // A change of the effect waiting for the output to fade out sets the
-        // speed itself; a pause still goes through at once.
-        if (rate !== 0 && pipelines.get(this)?.pendingPlayback) return;
+        // A change of the effect waiting for the output to fade out already
+        // holds the speed it will set, so it is planned again with this one.
+        if (pipelines.get(this)?.pendingPlayback) {
+          applySettings(this);
+          return;
+        }
         const target = playbackRateFor(this, effectSpeedFor(this));
         if (Math.abs(nativePlaybackRate.get.call(this) - target) > 0.001) {
           nativePlaybackRate.set.call(this, target);

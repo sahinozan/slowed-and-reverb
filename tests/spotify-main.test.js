@@ -272,6 +272,50 @@ describe('Spotify main-world audio engine', () => {
     harness.dom.window.close();
   });
 
+  // A change of pitch mode waits 40 ms for the output to fade out. Spotify's
+  // requests in that time must reach the player when the change happens.
+  test('resumes at the speed Spotify asks for during a change still waiting', async () => {
+    const harness = setup();
+    harness.apply(true);
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    // Spotify holds the player at 0 while it seeks, and the engine has seen it.
+    harness.media.playbackRate = 0;
+    await settle();
+    assert.equal(harness.media.playbackRate, 0);
+
+    // Turning the effect off changes the pitch mode, which waits; Spotify
+    // asks for normal speed in the meantime.
+    harness.apply(false);
+    harness.media.playbackRate = 1;
+    await settle();
+
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.media.preservesPitch, false);
+
+    harness.dom.window.close();
+  });
+
+  test('keeps Spotify holding the player at 0 during a change still waiting', async () => {
+    const harness = setup();
+    harness.apply(true);
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+
+    harness.apply(true, { ...SETTINGS, keepPitch: false });
+    harness.media.playbackRate = 0;
+    await settle();
+
+    assert.equal(harness.media.playbackRate, 0);
+    assert.equal(harness.media.preservesPitch, false);
+
+    harness.media.playbackRate = 1;
+    await settle();
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+
+    harness.dom.window.close();
+  });
+
   test('leaves the speed Spotify sets alone while the effect is off', async () => {
     const harness = setup({ userAgent: FIREFOX_USER_AGENT });
     harness.apply(true, { ...SETTINGS, keepPitch: false });
