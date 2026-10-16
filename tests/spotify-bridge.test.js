@@ -5,7 +5,12 @@ const fs = require('fs');
 const { describe, test } = require('node:test');
 const { JSDOM } = require('jsdom');
 
-const { createBrowserApi, dispatchRuntimeMessage, flushPromises } = require('./helpers/browser-api');
+const {
+  createBrowserApi,
+  dispatchRuntimeMessage,
+  flushPromises,
+  waitFor
+} = require('./helpers/browser-api');
 const { root } = require('./helpers/load-script');
 
 const SETTINGS = {
@@ -22,24 +27,28 @@ const SETTINGS = {
 };
 
 describe('Spotify isolated bridge', () => {
-  test('relays extension settings and neutralizes the engine after permission removal', async () => {
+  test('relays extension settings and neutralizes the engine after permission removal', async (t) => {
     const dom = new JSDOM('<!doctype html><body></body>', {
       url: 'https://open.spotify.com/',
       runScripts: 'outside-only'
     });
+    t.after(() => dom.window.close());
     const { window } = dom;
     const harness = createBrowserApi();
     const engineMessages = [];
     let engineStatus = { playerDetected: true, effectsUnavailable: false, processingActive: false };
+    let reportsOnTheWay = 0;
     window.chrome = harness.api;
     window.postMessage = (message) => {
       engineMessages.push(message);
       // Like the real engine, report the status after every change.
       if (message.type !== 'APPLY') return;
       const data = { channel: 'SLOWED_REVERB_SPOTIFY', type: 'STATUS', ...engineStatus };
-      setTimeout(() =>
-        window.eval(`window.__bridgeMessageListener({ source: window, data: ${JSON.stringify(data)} })`)
-      );
+      reportsOnTheWay++;
+      setTimeout(() => {
+        reportsOnTheWay--;
+        window.eval(`window.__bridgeMessageListener({ source: window, data: ${JSON.stringify(data)} })`);
+      });
     };
     const originalAddEventListener = window.addEventListener.bind(window);
     window.addEventListener = (type, listener, options) => {
@@ -78,7 +87,7 @@ describe('Spotify isolated bridge', () => {
     });
     // Wait for the engine's own report on this change, so it can't arrive
     // after the report below and undo it.
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitFor(() => reportsOnTheWay === 0);
     assert.equal(pending.pending, true);
     assert.equal(pending.processingActive, false);
     assert.equal(engineMessages.at(-1).type, 'APPLY');
@@ -116,7 +125,7 @@ describe('Spotify isolated bridge', () => {
       enabled: false,
       settings: SETTINGS
     });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await waitFor(() => reportsOnTheWay === 0);
     assert.equal(harness.calls.runtimeMessages.at(-1).processingActive, false);
     engineStatus = { ...engineStatus, processingActive: true };
     const resumed = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
@@ -137,8 +146,6 @@ describe('Spotify isolated bridge', () => {
       harness.calls.runtimeMessages.some(({ type }) => type === 'SPOTIFY_BRIDGE_READY'),
       true
     );
-
-    dom.window.close();
   });
 
   test('answers the engine only while the extension is running', async (t) => {

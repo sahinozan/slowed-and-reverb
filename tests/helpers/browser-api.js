@@ -221,4 +221,17 @@ async function flushPromises() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-module.exports = { createBrowserApi, dispatchRuntimeMessage, flushPromises };
+// Resolves once `condition` returns true, checking every few milliseconds, so
+// a test waits as long as a busy machine needs and no longer. Fails the test
+// if it is still false after `timeoutMs`.
+async function waitFor(condition, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error(`Still waiting after ${timeoutMs} ms for ${condition}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+module.exports = { createBrowserApi, dispatchRuntimeMessage, flushPromises, waitFor };
