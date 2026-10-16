@@ -351,17 +351,36 @@ describe('Release steps', () => {
 
       // The step starts a process that ignores SIGTERM and exits as soon as
       // that process is ready, leaving it behind in the step's process group.
-      const leftoverScript = `process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000);`;
-      const stepScript = `
-        const { spawn } = require('child_process');
+      // Stopping the tests doesn't reach that group, so both end on their own
+      // once this test process is gone, or after 30 seconds.
+      const selfEnding = `
+        const tester = Number(process.argv[2]);
+        setInterval(() => {
+          try {
+            process.kill(tester, 0);
+          } catch {
+            process.exit(0);
+          }
+        }, 100);
+        setTimeout(() => process.exit(0), 30000);`;
+      const leftoverScript = `${selfEnding}
+        process.on('SIGTERM', () => {});
+        require('fs').writeFileSync(process.argv[1], String(process.pid));`;
+      const stepScript = `${selfEnding}
         const fs = require('fs');
         const ready = process.argv[1];
-        spawn(process.execPath, ['-e', ${JSON.stringify(leftoverScript)}, ready], { stdio: 'ignore' }).unref();
-        const wait = setInterval(() => {
+        require('child_process')
+          .spawn(process.execPath, ['-e', ${JSON.stringify(leftoverScript)}, ready, String(tester)], { stdio: 'ignore' })
+          .unref();
+        setInterval(() => {
           if (fs.existsSync(ready) && fs.readFileSync(ready, 'utf8')) process.exit(0);
         }, 20);`;
 
-      await run(process.execPath, ['-e', stepScript, ready], { cwd: dir, log: path.join(dir, 'step.log'), graceMs: 300 });
+      await run(process.execPath, ['-e', stepScript, ready, String(process.pid)], {
+        cwd: dir,
+        log: path.join(dir, 'step.log'),
+        graceMs: 300
+      });
 
       leftover = Number(fs.readFileSync(ready, 'utf8'));
       assert.throws(() => process.kill(leftover, 0), { code: 'ESRCH' });
