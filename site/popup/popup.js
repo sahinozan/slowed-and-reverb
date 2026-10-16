@@ -773,8 +773,10 @@ function findMatchingPresetName(settings) {
 }
 
 // The tab's state arrives after a few round trips to the page, often after the
-// popup's first paint. Opening with the bar as it was last shown keeps it from
-// popping in and pushing the controls down; the first sync corrects it.
+// popup's first paint. Opening with the bar and the power switch as they were
+// last shown keeps the bar from popping in and the switch from flipping on
+// after the popup appears; the first sync corrects both. The bar is shown
+// exactly when the effect is on, so its label also stands for the switch.
 const PRESET_BAR_KEY = 'presetBarLabel';
 
 function restorePresetBar() {
@@ -785,6 +787,7 @@ function restorePresetBar() {
   if (!label) return;
   els.presetLabel.textContent = label;
   els.presetBar.hidden = false;
+  setPowerUI(true);
 }
 
 function rememberPresetBar() {

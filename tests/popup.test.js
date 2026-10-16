@@ -581,6 +581,9 @@ describe('popup behavior', () => {
     });
 
     assert.deepEqual(presetBar(harness), { hidden: false, label: 'Current Preset: Nightcore' });
+    // The switch opens on too, rather than flipping on once the tab answers.
+    assert.equal(harness.window.document.getElementById('power-toggle').checked, true);
+    assert.equal(harness.window.document.getElementById('power-status').textContent, 'On');
 
     tabState.release({ enabled: true, settings: SLOWED, blocked: false, live: false });
     for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
@@ -646,6 +649,7 @@ describe('popup behavior', () => {
     for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
 
     assert.equal(presetBar(harness).hidden, true);
+    assert.equal(harness.window.document.getElementById('power-toggle').checked, false);
     assert.equal(harness.window.localStorage.getItem(PRESET_BAR_KEY), null);
 
     close(harness);
