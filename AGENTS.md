@@ -24,7 +24,8 @@ covers the features and development commands in full.
   command failed and why.
 - For changes that touch the extension at runtime, `npm run test:e2e` runs the
   real extension in Chromium, and `npm run test:firefox` checks in the
-  installed Firefox that the effects stop when the extension is turned off.
+  installed Firefox that the effects stop when the extension is turned off
+  and that Spotify's own speed resets don't cause silent gaps.
 - Check popup changes in both engines. Firefox draws the popup inside rounded
   panel corners (see the `@supports (-moz-appearance: none)` rule in
   `popup.css`) and needs a manual look. In Chromium, `npm run test:e2e` opens
