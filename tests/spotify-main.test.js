@@ -173,4 +173,49 @@ describe('Spotify main-world audio engine', () => {
 
     harness.dom.window.close();
   });
+
+  test('turns itself off when the bridge stops answering and accepts a new one', async (t) => {
+    const harness = setup();
+    t.after(() => harness.dom.window.close());
+    const wait = () => new Promise((resolve) => setTimeout(resolve, 300));
+    let bridgeRunning = true;
+    harness.window.document.addEventListener('SLOWED_REVERB_SPOTIFY_CHECK', (event) => {
+      if (bridgeRunning) event.preventDefault();
+    });
+
+    harness.apply(true);
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await wait();
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+
+    // Firefox removes the bridge when the extension is turned off.
+    bridgeRunning = false;
+    await wait();
+    const context = FakeAudioContext.instances[0];
+    assert.equal(harness.media.playbackRate, 1);
+    assert.deepEqual(
+      context.gains
+        .filter((node) => node.connections.some(({ target }) => target === context.destination))
+        .map(({ gain }) => gain.value),
+      [1, 0]
+    );
+    assert.equal(
+      harness.statusMessages.filter(({ type }) => type === 'STATUS').at(-1).processingActive,
+      false
+    );
+
+    // Turned back on, Firefox injects a new bridge into the same page.
+    bridgeRunning = true;
+    harness.window.dispatchEvent(
+      new harness.window.MessageEvent('message', {
+        source: harness.window,
+        data: { channel: 'SLOWED_REVERB_SPOTIFY', type: 'BRIDGE_READY' }
+      })
+    );
+    assert.equal(harness.statusMessages.at(-2).type, 'READY');
+    harness.apply(true);
+    await wait();
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+    assert.equal(FakeAudioContext.instances.length, 1);
+  });
 });

@@ -112,7 +112,7 @@ describe('Spotify isolated bridge', () => {
     dom.window.close();
   });
 
-  test('turns the engine off and stops relaying once the extension is turned off', async (t) => {
+  test('answers the engine only while the extension is running', async (t) => {
     const dom = new JSDOM('<!doctype html><body></body>', {
       url: 'https://open.spotify.com/',
       runScripts: 'outside-only'
@@ -129,34 +129,26 @@ describe('Spotify isolated bridge', () => {
       if (type === 'message') pageListeners.push(listener);
       return originalAddEventListener(type, listener, options);
     };
-    const originalRemoveEventListener = window.removeEventListener.bind(window);
-    window.removeEventListener = (type, listener, options) => {
-      if (type === 'message') pageListeners.splice(pageListeners.indexOf(listener), 1);
-      return originalRemoveEventListener(type, listener, options);
-    };
     window.eval(fs.readFileSync(`${root}/extension/spotify-bridge.js`, 'utf8'));
     await flushPromises();
     const fromEngine = (data) => {
-      for (const listener of [...pageListeners]) {
+      for (const listener of pageListeners) {
         listener({ source: window, data: { channel: 'SLOWED_REVERB_SPOTIFY', ...data } });
       }
     };
+    const bridgeAnswers = () =>
+      !window.document.dispatchEvent(
+        new window.Event('SLOWED_REVERB_SPOTIFY_CHECK', { cancelable: true })
+      );
 
-    fromEngine({ type: 'READY' });
-    await dispatchRuntimeMessage(harness.events.runtimeMessage, {
-      type: 'UPDATE_AUDIO',
-      enabled: true,
-      settings: SETTINGS
-    });
-    assert.equal(engineMessages.at(-1).enabled, true);
+    assert.equal(engineMessages.at(-1).type, 'BRIDGE_READY');
+    assert.equal(bridgeAnswers(), true);
 
+    // Chromium leaves the script running once the extension is turned off.
     delete harness.api.runtime.id;
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    assert.equal(engineMessages.at(-1).type, 'APPLY');
-    assert.equal(engineMessages.at(-1).enabled, false);
+    assert.equal(bridgeAnswers(), false);
 
     // A later engine status or restart reaches nothing that would message the extension.
-    assert.deepEqual(pageListeners, []);
     harness.calls.runtimeMessages.length = 0;
     const sentToEngine = engineMessages.length;
     fromEngine({ type: 'STATUS', playerDetected: true });
