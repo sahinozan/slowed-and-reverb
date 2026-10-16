@@ -14,40 +14,75 @@ function createEvent() {
 }
 const { root } = require('./load-script');
 
-// A ramp lands on its final value at once, and is recorded so a test can
-// check that a change was smoothed rather than set.
+// Follows Web Audio's automation rules closely enough to hear a jump: each
+// setting keeps its scheduled events and reports its value at its context's
+// current time. Tests move that clock themselves. `ramps` records each ramp's
+// target and end time.
 class FakeAudioParam {
-  constructor() {
-    this.value = 0;
+  constructor(context) {
+    this.context = context;
+    this.intrinsic = 0;
+    this.events = [];
     this.ramps = [];
   }
 
-  cancelScheduledValues() {}
+  get value() {
+    return this.valueAt(this.context?.currentTime ?? 0);
+  }
 
-  setValueAtTime(value) {
-    this.value = value;
+  set value(value) {
+    this.intrinsic = value;
+    this.events = [];
+  }
+
+  valueAt(time) {
+    let previous = { time: 0, value: this.intrinsic };
+    for (const event of this.events) {
+      if (event.time <= time) {
+        previous = event;
+        continue;
+      }
+      if (event.type !== 'ramp' || event.time <= previous.time) return previous.value;
+      const progress = (time - previous.time) / (event.time - previous.time);
+      return previous.value + (event.value - previous.value) * progress;
+    }
+    return previous.value;
+  }
+
+  insert(event) {
+    const index = this.events.findIndex(({ time }) => time > event.time);
+    if (index < 0) this.events.push(event);
+    else this.events.splice(index, 0, event);
+  }
+
+  cancelScheduledValues(time) {
+    this.events = this.events.filter((event) => event.time < time);
+  }
+
+  setValueAtTime(value, time) {
+    this.insert({ type: 'set', value, time });
   }
 
   linearRampToValueAtTime(value, endTime) {
-    this.ramps.push({ from: this.value, to: value, endTime });
-    this.value = value;
+    this.ramps.push({ to: value, endTime });
+    this.insert({ type: 'ramp', value, time: endTime });
   }
 }
 
 class FakeAudioNode {
-  constructor(type) {
+  constructor(type, context) {
     this.type = type;
     this.connections = [];
-    this.gain = new FakeAudioParam();
-    this.frequency = new FakeAudioParam();
-    this.Q = new FakeAudioParam();
-    this.delayTime = new FakeAudioParam();
-    this.pan = new FakeAudioParam();
-    this.threshold = new FakeAudioParam();
-    this.knee = new FakeAudioParam();
-    this.ratio = new FakeAudioParam();
-    this.attack = new FakeAudioParam();
-    this.release = new FakeAudioParam();
+    this.gain = new FakeAudioParam(context);
+    this.frequency = new FakeAudioParam(context);
+    this.Q = new FakeAudioParam(context);
+    this.delayTime = new FakeAudioParam(context);
+    this.pan = new FakeAudioParam(context);
+    this.threshold = new FakeAudioParam(context);
+    this.knee = new FakeAudioParam(context);
+    this.ratio = new FakeAudioParam(context);
+    this.attack = new FakeAudioParam(context);
+    this.release = new FakeAudioParam(context);
   }
 
   connect(target, ...ports) {
@@ -66,11 +101,16 @@ class FakeAudioContext {
   static instances = [];
   static mediaSourceError = null;
 
+  // Lets time pass on every audio clock, so scheduled changes complete.
+  static advance(seconds) {
+    for (const context of FakeAudioContext.instances) context.currentTime += seconds;
+  }
+
   constructor() {
     this.sampleRate = 20;
     this.currentTime = 0;
     this.state = 'running';
-    this.destination = new FakeAudioNode('destination');
+    this.destination = new FakeAudioNode('destination', this);
     this.filters = [];
     this.gains = [];
     this.sources = [];
@@ -101,56 +141,56 @@ class FakeAudioContext {
 
   createMediaElementSource(media) {
     if (FakeAudioContext.mediaSourceError) throw FakeAudioContext.mediaSourceError;
-    const node = new FakeAudioNode('source');
+    const node = new FakeAudioNode('source', this);
     node.media = media;
     this.sources.push(node);
     return node;
   }
 
   createBiquadFilter() {
-    const node = new FakeAudioNode('filter');
+    const node = new FakeAudioNode('filter', this);
     this.filters.push(node);
     return node;
   }
 
   createConvolver() {
-    return new FakeAudioNode('convolver');
+    return new FakeAudioNode('convolver', this);
   }
 
   createDelay() {
-    return new FakeAudioNode('delay');
+    return new FakeAudioNode('delay', this);
   }
 
   createWaveShaper() {
-    const node = new FakeAudioNode('wave-shaper');
+    const node = new FakeAudioNode('wave-shaper', this);
     this.waveShapers.push(node);
     return node;
   }
 
   createDynamicsCompressor() {
-    const node = new FakeAudioNode('compressor');
+    const node = new FakeAudioNode('compressor', this);
     this.compressors.push(node);
     return node;
   }
 
   createStereoPanner() {
-    const node = new FakeAudioNode('panner');
+    const node = new FakeAudioNode('panner', this);
     this.panners.push(node);
     return node;
   }
 
   createGain() {
-    const node = new FakeAudioNode('gain');
+    const node = new FakeAudioNode('gain', this);
     this.gains.push(node);
     return node;
   }
 
   createChannelSplitter() {
-    return new FakeAudioNode('splitter');
+    return new FakeAudioNode('splitter', this);
   }
 
   createChannelMerger() {
-    return new FakeAudioNode('merger');
+    return new FakeAudioNode('merger', this);
   }
 }
 
@@ -231,13 +271,18 @@ async function createContentHarness(options = {}) {
   // the output has faded out (see youtube-main.js), so wait for it too.
   const PLAYER_CHANGE_SETTLE_MS = 60;
 
-  function dispatch(message) {
+  // Resolves once the change has played out: a second passes on the audio
+  // clock afterward unless the test keeps it still (advance: 0).
+  function dispatch(message, { advance = 1 } = {}) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`No answer to ${message.type}`)), 3000);
       for (const listener of runtimeMessage.listeners) {
         listener(message, {}, (value) => {
           clearTimeout(timer);
-          setTimeout(() => resolve(value), PLAYER_CHANGE_SETTLE_MS);
+          setTimeout(() => {
+            FakeAudioContext.advance(advance);
+            resolve(value);
+          }, PLAYER_CHANGE_SETTLE_MS);
         });
       }
     });

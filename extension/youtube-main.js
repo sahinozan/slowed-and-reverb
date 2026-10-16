@@ -157,13 +157,47 @@
     audioContext.resume().catch(() => {});
   }
 
-  // Starts from where the setting is now, so a change that arrives mid-move
-  // (a slider being dragged) carries on without a jump.
+  // The path each setting is scheduled to take, as the points it reaches:
+  // in a straight line from the point before (ramp), or by jumping. Firefox
+  // has no cancelAndHoldAtTime, so a new change works out from this where
+  // the setting will be when it starts, and carries on from exactly there.
+  const paths = new WeakMap();
+
+  function pathValue(path, time) {
+    let previous = path[0];
+    for (const point of path.slice(1)) {
+      if (point.time > time) {
+        if (!point.ramp || point.time <= previous.time) return previous.value;
+        const progress = (time - previous.time) / (point.time - previous.time);
+        return previous.value + (point.value - previous.value) * progress;
+      }
+      previous = point;
+    }
+    return previous.value;
+  }
+
+  // Replaces a setting's path from `start` on with `points`, keeping the old
+  // path up to `start`, so a change that overlaps an earlier one never jumps.
+  function schedulePath(context, param, start, points) {
+    const path = paths.get(param) ?? [{ time: 0, value: param.value, ramp: false }];
+    const value = pathValue(path, start);
+    param.cancelScheduledValues(start);
+    param.linearRampToValueAtTime(value, start);
+    for (const point of points) {
+      if (point.ramp) param.linearRampToValueAtTime(point.value, point.time);
+      else param.setValueAtTime(point.value, point.time);
+    }
+    // From before `start`, only the points from the last one already played on.
+    const kept = path.filter((point) => point.time < start);
+    const played = kept.findLastIndex((point) => point.time <= context.currentTime);
+    paths.set(param, [...kept.slice(Math.max(played, 0)), { time: start, value, ramp: true }, ...points]);
+  }
+
   function smoothTo(param, value) {
     const start = audioContext.currentTime + SCHEDULE_AHEAD_SECONDS;
-    param.cancelScheduledValues(start);
-    param.setValueAtTime(param.value, start);
-    param.linearRampToValueAtTime(value, start + SMOOTHING_SECONDS);
+    schedulePath(audioContext, param, start, [
+      { time: start + SMOOTHING_SECONDS, value, ramp: true }
+    ]);
   }
 
   function createGain(context, value = 1) {
@@ -216,7 +250,7 @@
   // in), both fade out, and the crossfade happens when the silence ends.
   function setPipelineEnabled(pipeline, enabled) {
     const now = audioContext.currentTime;
-    const { silentUntil } = pipeline;
+    const silentUntil = pipeline.pendingPlayback ? Infinity : pipeline.quietUntil;
     const outputs = [
       [pipeline.bypass.gain, enabled ? 0 : 1],
       [pipeline.processed.gain, enabled ? 1 : 0]
@@ -229,12 +263,15 @@
       }
       const start = now + SCHEDULE_AHEAD_SECONDS;
       const silentFrom = start + DIP_FADE_SECONDS;
-      param.cancelScheduledValues(start);
-      param.setValueAtTime(param.value, start);
-      param.linearRampToValueAtTime(0, silentFrom);
-      if (silentUntil === Infinity) continue;
-      param.setValueAtTime(0, Math.max(silentUntil, silentFrom));
-      param.linearRampToValueAtTime(value, Math.max(silentUntil, silentFrom) + SMOOTHING_SECONDS);
+      const points = [{ time: silentFrom, value: 0, ramp: true }];
+      if (silentUntil !== Infinity) {
+        const silentTo = Math.max(silentUntil, silentFrom);
+        points.push(
+          { time: silentTo, value: 0, ramp: false },
+          { time: silentTo + SMOOTHING_SECONDS, value, ramp: true }
+        );
+      }
+      schedulePath(audioContext, param, start, points);
     }
   }
 
@@ -250,10 +287,10 @@
     media.webkitPreservesPitch = keepPitch;
   }
 
-  // Drops a player change still waiting for the output to fade out.
+  // Drops a player change still waiting for the output to fade out. Any
+  // silence still needed for an earlier change stays.
   function cancelPendingPlayback(pipeline) {
     pipeline.pendingPlayback = null;
-    if (pipeline.silentUntil === Infinity) pipeline.silentUntil = pipeline.captureEnds;
   }
 
   // Sets the crossfade and the player's speed and pitch mode. A change that
@@ -267,21 +304,21 @@
       return;
     }
 
-    pipeline.silentUntil = Infinity;
-    setPipelineEnabled(pipeline, enabled);
     const change = () => {
       if (pipeline.pendingPlayback !== change) return;
       pipeline.pendingPlayback = null;
       // Timed from the change itself, in case this ran late, and scheduled
       // first, since changing the player can run this file's code again.
-      pipeline.silentUntil = Math.max(
-        pipeline.captureEnds,
+      pipeline.quietUntil = Math.max(
+        pipeline.quietUntil,
         audioContext.currentTime + PLAYER_CLICK_SECONDS
       );
       setPipelineEnabled(pipeline, enabled);
       setPlayback(media, speed, keepPitch);
     };
+    // While a change is waiting, the output stays silent.
     pipeline.pendingPlayback = change;
+    setPipelineEnabled(pipeline, enabled);
     window.setTimeout(change, PLAYER_CHANGE_DELAY_MS);
   }
 
@@ -409,8 +446,9 @@
         pan,
         bypass,
         processed,
-        captureEnds: context.currentTime + CAPTURE_SILENCE_SECONDS,
-        silentUntil: context.currentTime + CAPTURE_SILENCE_SECONDS,
+        // Silent until then: the player's click from a change, or Firefox's
+        // gap when a player is first routed in, has passed by this time.
+        quietUntil: context.currentTime + CAPTURE_SILENCE_SECONDS,
         pendingPlayback: null,
         connected: true,
         playListener: null

@@ -22,14 +22,30 @@ const SETTINGS = {
 };
 
 // A change of pitch mode reaches the player 40 ms after the change arrives,
-// once the output has faded out (see spotify-main.js).
-function settle() {
-  return new Promise((resolve) => setTimeout(resolve, 60));
+// once the output has faded out (see spotify-main.js). Then a second passes
+// on the audio clock, unless the test keeps it still, so the fades complete.
+function settle(advance = 1) {
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      FakeAudioContext.advance(advance);
+      resolve();
+    }, 60)
+  );
 }
 
 // Where each recorded change of a setting was heading, and when it got there.
 function ramps(param) {
   return param.ramps.map(({ to, endTime }) => ({ to, endTime: Math.round(endTime * 1000) / 1000 }));
+}
+
+// The biggest change between two milliseconds: a fade moves a little each
+// millisecond, a jump all at once.
+function largestStep(param, from, to) {
+  let largest = 0;
+  for (let time = from; time < to; time += 0.001) {
+    largest = Math.max(largest, Math.abs(param.valueAt(time + 0.001) - param.valueAt(time)));
+  }
+  return largest;
 }
 
 function setup(options = {}) {
@@ -71,10 +87,11 @@ function setup(options = {}) {
 }
 
 describe('Spotify main-world audio engine', () => {
-  test('captures dynamically created protected media and applies the full graph', () => {
+  test('captures dynamically created protected media and applies the full graph', async () => {
     const harness = setup();
     harness.apply(true);
     harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
 
     const context = FakeAudioContext.instances[0];
     assert.equal(context.sources.length, 1);
@@ -149,6 +166,51 @@ describe('Spotify main-world audio engine', () => {
     harness.dom.window.close();
   });
 
+
+  test('carries on from a change still under way without jumping', async () => {
+    const harness = setup();
+    harness.apply(true);
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    const context = FakeAudioContext.instances[0];
+    const wet = context.gains[2].gain;
+
+    harness.apply(true, { ...SETTINGS, reverb: 100 });
+    context.currentTime = 1.03;
+    harness.apply(true, { ...SETTINGS, reverb: 0 });
+
+    assert.equal(wet.valueAt(1.05), 0.7);
+    assert.equal(wet.valueAt(1.2), 0);
+    assert.ok(largestStep(wet, 1, 1.2) < 0.05);
+
+    harness.dom.window.close();
+  });
+
+  test('keeps the silence an earlier change needs when a later one is taken back', async () => {
+    const harness = setup();
+    harness.apply(true);
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    const context = FakeAudioContext.instances[0];
+    const processed = context.gains.filter((node) =>
+      node.connections.some(({ target }) => target === context.destination)
+    )[1];
+
+    // The player changes its pitch mode at 1.00 s, so its click needs
+    // silence until 1.08 s.
+    harness.apply(true, { ...SETTINGS, keepPitch: false });
+    await settle(0);
+    // Another change is asked for, then taken back before it happens.
+    harness.apply(true, { ...SETTINGS, keepPitch: true });
+    harness.apply(true, { ...SETTINGS, keepPitch: false });
+    await settle(0);
+
+    assert.equal(harness.media.preservesPitch, false);
+    assert.equal(processed.gain.valueAt(1.07), 0);
+    assert.equal(processed.gain.valueAt(1.2), 1);
+
+    harness.dom.window.close();
+  });
 
   test('keeps Spotify speed available when its Web Audio source fails', () => {
     const error = new Error('protected output unavailable');
@@ -241,6 +303,8 @@ describe('Spotify main-world audio engine', () => {
     // Firefox removes the bridge when the extension is turned off.
     bridgeRunning = false;
     await wait();
+    // Let the fade back to the unchanged path play out.
+    FakeAudioContext.advance(1);
     const context = FakeAudioContext.instances[0];
     assert.equal(harness.media.playbackRate, 1);
     assert.deepEqual(
