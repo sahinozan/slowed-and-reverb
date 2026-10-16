@@ -1,9 +1,10 @@
 # Privacy Policy for Slowed & Reverb
 
-Effective date: August 11, 2026
+Effective date: October 16, 2026
 
-This policy applies to versions `1.0.0` and `1.0.1` of the Slowed & Reverb browser extension
-for Chromium-based browsers and Firefox.
+This policy applies to versions `1.0.0`, `1.0.1`, and `1.1.0` of the Slowed & Reverb
+browser extension for Chromium-based browsers and Firefox. The rating reminder and
+its day count described below are in version `1.1.0` and later.
 
 ## Summary
 
@@ -34,9 +35,9 @@ The browser's local extension storage holds only:
 - effect settings, such as speed, reverb, equalizer, and pan values;
 - the selected popup theme;
 - user-created preset names and their effect settings; and
-- for the one-time rating reminder, how many days the popup was opened with the
-  effect on, the date of the last such day, and whether the reminder was
-  answered. Private windows are never counted.
+- for the one-time rating reminder (version `1.1.0` and later), how many days
+  the popup was opened with the effect on, the date of the last such day, and
+  whether the reminder was answered. Private windows are never counted.
 
 The rating reminder and the popup's "Rate" link open the extension's page in
 the Chrome Web Store or on Firefox Add-ons only when the user clicks them.

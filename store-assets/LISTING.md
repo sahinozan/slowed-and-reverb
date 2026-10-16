@@ -116,12 +116,14 @@ Privacy policy: https://slowedreverbapp.com/privacy
 YouTube and YouTube Music are trademarks of Google LLC, and Spotify is a trademark of Spotify AB. This extension is made independently and isn't affiliated with, endorsed by or sponsored by either company.
 ```
 
-Firefox release notes for 1.0.1:
+Firefox release notes for 1.1.0:
 
 ```markdown
-- Clearer wording in the panel, especially when it asks for permission on Spotify, or on YouTube in Firefox.
-- The equalizer's Low and High are now called Bass and Treble.
-- In Firefox, the panel's border is no longer cut off at the corners.
+- Glow is the new default theme: Terminal's colors on a dark cherry background with a soft glow. Terminal is still in the theme picker, and a theme you picked before stays as it is.
+- Reset Defaults puts the sliders back to normal and leaves the effect on, so you can start a new preset from there. The line above the tabs then says Default.
+- The panel opens with the On/Off switch already where it was, instead of flipping on a moment later.
+- Simpler wording in the panel's notices, and the panel fits without scrolling.
+- A Rate link next to Reset Defaults. After you've used the panel on five different days, it asks once whether you'd leave a rating. To know when to ask, it counts those days on your computer only. Nothing is sent anywhere, and private windows don't count.
 ```
 
 ## Screenshot captions
