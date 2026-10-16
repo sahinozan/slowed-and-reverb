@@ -177,6 +177,7 @@ describe('popup behavior', () => {
       const document = harness.window.document;
 
       assert.equal(document.getElementById('youtube-permission-panel').hidden, false);
+      assert.equal(document.getElementById('reload-panel').hidden, true);
       assert.equal(
         document.getElementById('youtube-permission-btn').textContent.trim(),
         `Allow on ${site.name}`
@@ -440,8 +441,9 @@ describe('popup behavior', () => {
     const harness = await createPopupHarness({ executeScriptError: new Error('restricted page') });
     const document = harness.window.document;
 
-    assert.equal(document.getElementById('blocked-banner').hidden, false);
-    assert.match(document.getElementById('blocked-banner-text').textContent, /can't reach the player/);
+    assert.equal(document.getElementById('blocked-banner').hidden, true);
+    assert.equal(document.getElementById('reload-panel').hidden, false);
+    assert.match(document.getElementById('reload-panel').textContent, /can't start on this page/);
     assert.equal(document.getElementById('power-toggle').checked, false);
     assert.equal(document.getElementById('power-toggle').disabled, true);
     assert.equal(audioUpdates(harness).length, 0);
@@ -469,6 +471,44 @@ describe('popup behavior', () => {
       harness.window.localStorage.getItem(PRESET_BAR_KEY),
       'Current Preset: Slowed + Reverb'
     );
+
+    close(harness);
+  });
+
+  test('reloads a page whose player the extension cannot reach', async () => {
+    let reachable = false;
+    const harness = await createPopupHarness({
+      onTabMessage(_tabId, message) {
+        if (message.type !== 'GET_STATE') return { success: true };
+        return reachable
+          ? { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+          : { enabled: false, blocked: true, blockReason: 'unsupported' };
+      }
+    });
+    const document = harness.window.document;
+    assert.equal(document.getElementById('reload-panel').hidden, false);
+    assert.equal(document.getElementById('power-toggle').disabled, true);
+
+    reachable = true;
+    document.getElementById('reload-btn').click();
+    for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
+
+    assert.deepEqual(harness.calls.reloadedTabs, [9]);
+    assert.equal(document.getElementById('reload-panel').hidden, true);
+    assert.equal(document.getElementById('blocked-banner').hidden, true);
+    assert.equal(document.getElementById('power-toggle').disabled, false);
+
+    close(harness);
+  });
+
+  test('keeps other blocked reasons as a warning without a reload', async () => {
+    const harness = await createPopupHarness({
+      contentState: { enabled: false, blocked: true, blockReason: 'drm' }
+    });
+    const document = harness.window.document;
+
+    assert.equal(document.getElementById('blocked-banner').hidden, false);
+    assert.equal(document.getElementById('reload-panel').hidden, true);
 
     close(harness);
   });

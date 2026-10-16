@@ -33,7 +33,7 @@ const BLOCKED_TEXT = {
   drm: "This audio is copy-protected, so the effects can't work here.",
   unsupportedSite:
     "This site isn't supported. It works on YouTube, YouTube Music and Spotify.",
-  unsupported: "The extension can't reach the player on this page.",
+  unsupported: "The effects can't start on this page. Reloading it usually fixes this.",
   noPlayer: 'Waiting for the song to load…',
   loadingPlayer: "The player is still loading. The effect starts as soon as it's ready.",
   spotifyEffects:
@@ -185,6 +185,9 @@ const els = {
   youtubePermissionTitle: el('youtube-permission-title'),
   youtubePermissionBtn: el('youtube-permission-btn'),
   youtubePermissionStatus: el('youtube-permission-status'),
+  reloadPanel: el('reload-panel'),
+  reloadBtn: el('reload-btn'),
+  reloadStatus: el('reload-status'),
   presetBar: el('current-preset-bar'),
   presetLabel: el('current-preset-label'),
   presetNameInput: el('preset-name-input'),
@@ -382,8 +385,8 @@ function watchForTabReload(tabId) {
   return { cancel: finish, promise };
 }
 
-async function reloadSpotifyTab(tab) {
-  els.spotifyPermissionStatus.textContent = 'Reloading Spotify...';
+async function reloadTab(tab, statusElement, statusText) {
+  statusElement.textContent = statusText;
   const reloadWatcher = watchForTabReload(tab.id);
   try {
     await api.tabs.reload(tab.id);
@@ -424,7 +427,7 @@ async function handleSpotifyPermissionAction() {
       return;
     }
 
-    await reloadSpotifyTab(tab);
+    await reloadTab(tab, els.spotifyPermissionStatus, 'Reloading Spotify...');
     await syncWithActiveTab();
   } catch {
     permissionReloadWatcher?.cancel();
@@ -432,6 +435,21 @@ async function handleSpotifyPermissionAction() {
       "That didn't work. You can also allow Spotify in your browser's extension settings.";
   } finally {
     els.spotifyPermissionBtn.disabled = false;
+  }
+}
+
+async function handleReloadAction() {
+  els.reloadBtn.disabled = true;
+  try {
+    const tab = await getActiveTab();
+    if (tab?.id === undefined) return;
+
+    await reloadTab(tab, els.reloadStatus, 'Reloading the page...');
+    await syncWithActiveTab();
+  } catch {
+    els.reloadStatus.textContent = "That didn't work. Reload the page yourself and try again.";
+  } finally {
+    els.reloadBtn.disabled = false;
   }
 }
 
@@ -687,7 +705,12 @@ function setBlocked(isBlocked, reason) {
   if (isBlocked) {
     els.blockedBannerText.textContent = BLOCKED_TEXT[reason] ?? BLOCKED_TEXT.drm;
   }
-  els.blockedBanner.hidden = !isBlocked;
+  // A reloaded page has a fresh player, which usually clears this, so offer
+  // the reload in place of the warning.
+  const offerReload = isBlocked && reason === 'unsupported';
+  els.blockedBanner.hidden = !isBlocked || offerReload;
+  els.reloadPanel.hidden = !offerReload;
+  els.reloadStatus.textContent = '';
 
   for (const control of blockableControls) control.disabled = isBlocked;
   setEqDisabled(isBlocked);
@@ -956,6 +979,7 @@ function bindControls() {
   els.power.addEventListener('change', () => saveAndApplySettings(els.power.checked));
   els.spotifyPermissionBtn.addEventListener('click', handleSpotifyPermissionAction);
   els.youtubePermissionBtn.addEventListener('click', handleYouTubePermissionAction);
+  els.reloadBtn.addEventListener('click', handleReloadAction);
 
   els.resetBtn.addEventListener('click', () => {
     applySettingsToUI(DEFAULT_SETTINGS);
@@ -1025,6 +1049,7 @@ async function syncWithActiveTab() {
     hideSpotifyPermissionPanel();
     setBlocked(true, 'unsupported');
     els.blockedBanner.hidden = true;
+    els.reloadPanel.hidden = true;
     showYouTubePermissionPanel(firefoxYouTubePermission);
     setPowerUI(false);
     setTabIcon(tab.id, false);

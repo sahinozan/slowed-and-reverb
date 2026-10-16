@@ -68,3 +68,80 @@ test('loads the real popup page and applies audio settings to the active tab', a
   expect(stored.reverb).toBe(40);
   expect(stored.uiTheme).toBe('midnight');
 });
+
+async function playLooped(page) {
+  await page.evaluate(async () => {
+    const player = document.getElementById('player');
+    player.loop = true;
+    player.muted = true;
+    await player.play();
+  });
+}
+
+// This test turns the extension off and on again, which replaces its service
+// worker, so it stays last in the file.
+test('puts the audio back when the extension is turned off in the browser', async ({
+  extension
+}) => {
+  const settings = {
+    speed: 0.8,
+    reverb: 40,
+    echo: 0,
+    pan: 0,
+    width: 100,
+    keepPitch: false,
+    saturation: 0,
+    eqLow: 0,
+    eqMid: 0,
+    eqHigh: 0
+  };
+  const youtubeUrl = `${extension.fixtureUrl}?youtube`;
+  const spotifyUrl = `${extension.fixtureUrl}?spotify`;
+
+  const youtube = await extension.context.newPage();
+  await youtube.goto(youtubeUrl);
+  await expect(youtube.locator('#player')).toHaveJSProperty('readyState', 4);
+  await playLooped(youtube);
+  const youtubeTab = await fixtureTab(extension.serviceWorker, youtubeUrl);
+  await extension.serviceWorker.evaluate(
+    async ({ tabId, settings }) => {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['settings.js', 'content.js'] });
+      await chrome.tabs.sendMessage(tabId, { type: 'UPDATE_AUDIO', enabled: true, settings });
+    },
+    { tabId: youtubeTab.id, settings }
+  );
+  await expect(youtube.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+
+  // Spotify's scripts run on the same audio fixture, the engine in the page's world.
+  const spotify = await extension.context.newPage();
+  await spotify.goto(spotifyUrl);
+  await expect(spotify.locator('#player')).toHaveJSProperty('readyState', 4);
+  await playLooped(spotify);
+  const spotifyTab = await fixtureTab(extension.serviceWorker, spotifyUrl);
+  await extension.serviceWorker.evaluate(
+    async ({ tabId, settings }) => {
+      const target = { tabId };
+      await chrome.scripting.executeScript({ target, files: ['spotify-main.js'], world: 'MAIN' });
+      await chrome.scripting.executeScript({ target, files: ['spotify-bridge.js'] });
+      await chrome.tabs.sendMessage(tabId, { type: 'UPDATE_AUDIO', enabled: true, settings });
+    },
+    { tabId: spotifyTab.id, settings }
+  );
+  await expect(spotify.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+
+  const extensionsPage = await extension.context.newPage();
+  await extensionsPage.goto('chrome://extensions');
+  const setEnabled = (enabled) =>
+    extensionsPage.evaluate(
+      ({ id, enabled }) => new Promise((resolve) => chrome.management.setEnabled(id, enabled, resolve)),
+      { id: extension.extensionId, enabled }
+    );
+
+  try {
+    await setEnabled(false);
+    await expect(youtube.locator('#player')).toHaveJSProperty('playbackRate', 1, { timeout: 1000 });
+    await expect(spotify.locator('#player')).toHaveJSProperty('playbackRate', 1, { timeout: 1000 });
+  } finally {
+    await setEnabled(true);
+  }
+});

@@ -4,6 +4,7 @@
 
   const api = typeof browser !== 'undefined' ? browser : chrome;
   const CHANNEL = 'SLOWED_REVERB_SPOTIFY';
+  const SHUTDOWN_CHECK_MS = 250;
   // A copy of SlowedReverbSettings.DEFAULTS (settings.js). This script stays
   // self-contained because its registration outlives extension updates;
   // tests/settings.test.js keeps the copy equal.
@@ -46,7 +47,7 @@
     };
   }
 
-  window.addEventListener('message', (event) => {
+  function handleEngineMessage(event) {
     if (event.source !== window || event.data?.channel !== CHANNEL) return;
 
     if (event.data.type === 'READY') {
@@ -67,7 +68,8 @@
         })
         .catch(() => {});
     }
-  });
+  }
+  window.addEventListener('message', handleEngineMessage);
 
   api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'GET_STATE') {
@@ -112,4 +114,16 @@
     .catch(() => {});
 
   window.postMessage({ channel: CHANNEL, type: 'BRIDGE_READY' }, '*');
+
+  // Turning the extension off, removing it or updating it leaves this script
+  // and the page's audio engine running, and no event says so. Chromium clears
+  // runtime.id when it happens, so check for that and turn the engine off.
+  const shutdownTimer = window.setInterval(() => {
+    if (api.runtime?.id) return;
+
+    window.clearInterval(shutdownTimer);
+    window.removeEventListener('message', handleEngineMessage);
+    enabled = false;
+    applyToEngine();
+  }, SHUTDOWN_CHECK_MS);
 })();

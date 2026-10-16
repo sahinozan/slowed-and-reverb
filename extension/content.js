@@ -31,6 +31,7 @@
   const HAVE_METADATA = 1;
   const MEDIA_SETTLE_MS = 100;
   const MAX_ACTIVE_PIPELINES = 32;
+  const SHUTDOWN_CHECK_MS = 250;
 
   const isSupportedHost =
     location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com';
@@ -50,6 +51,7 @@
   let processingUnavailable = false;
   let playerDetected = false;
   let processingActive = false;
+  let extensionGone = false;
 
   function blockReason() {
     if (!isSupportedHost) return 'unsupportedSite';
@@ -299,6 +301,13 @@
 
     let pipeline = pipelines.get(media);
 
+    // Once the extension is gone, keep media this script captured playing
+    // through the unchanged path, and leave speed and pitch to the page.
+    if (extensionGone) {
+      if (pipeline && connectPipeline(media, pipeline)) setPipelineEnabled(pipeline, false);
+      return;
+    }
+
     if (!effectEnabled) {
       media.playbackRate = NEUTRAL_SETTINGS.speed;
       media.preservesPitch = NEUTRAL_SETTINGS.keepPitch;
@@ -408,6 +417,7 @@
   observer.observe(document.documentElement, { childList: true, subtree: true });
 
   function notifyStateChanged() {
+    if (extensionGone) return;
     api.runtime
       .sendMessage({
         type: 'CONTENT_STATE_CHANGED',
@@ -487,4 +497,20 @@
 
   // Browsers may require a later page gesture before a suspended AudioContext can resume.
   document.addEventListener('click', resumeAudioContext);
+
+  // Turning the extension off, removing it or updating it leaves this script
+  // running with the audio graph still attached, and no event says so. Chromium
+  // clears runtime.id when it happens, so check for that and put the audio back.
+  // Captured media can only play through the graph, so the listeners stay to
+  // reconnect and resume it.
+  const shutdownTimer = window.setInterval(() => {
+    if (api.runtime?.id) return;
+
+    window.clearInterval(shutdownTimer);
+    if (effectEnabled) {
+      effectEnabled = false;
+      processMediaElements();
+    }
+    extensionGone = true;
+  }, SHUTDOWN_CHECK_MS);
 })();
