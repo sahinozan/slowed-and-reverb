@@ -33,7 +33,7 @@ const BLOCKED_TEXT = {
   drm: "This audio is copy-protected, so the effects can't work here.",
   unsupportedSite:
     "This site isn't supported. It works on YouTube, YouTube Music and Spotify.",
-  unsupported: "The extension can't reach the player on this page.",
+  unsupported: "The effects can't start on this page. Reloading it usually fixes this.",
   noPlayer: 'Waiting for the song to load…',
   loadingPlayer: "The player is still loading. The effect starts as soon as it's ready.",
   spotifyEffects:

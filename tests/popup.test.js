@@ -443,7 +443,7 @@ describe('popup behavior', () => {
 
     assert.equal(document.getElementById('blocked-banner').hidden, true);
     assert.equal(document.getElementById('reload-panel').hidden, false);
-    assert.match(document.getElementById('reload-panel').textContent, /can't reach the player/);
+    assert.match(document.getElementById('reload-panel').textContent, /can't start on this page/);
     assert.equal(document.getElementById('power-toggle').checked, false);
     assert.equal(document.getElementById('power-toggle').disabled, true);
     assert.equal(audioUpdates(harness).length, 0);
