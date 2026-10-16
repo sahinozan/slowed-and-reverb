@@ -39,9 +39,16 @@ const BLOCKED_TEXT = {
   unsupportedSite:
     "This site isn't supported. It works on YouTube, YouTube Music and Spotify.",
   unsupported: "The effects can't start on this page. Reloading it usually fixes this.",
+  outdated: 'Reload Spotify to finish updating the extension.',
   noPlayer: 'Play a song to start the effects.',
   loadingPlayer: 'The effects start once the song loads.',
   spotifyEffects: 'Only speed works on Spotify here.'
+};
+
+// The reasons a reload fixes, with the reload panel's button and progress.
+const RELOAD_ACTIONS = {
+  unsupported: { button: 'Reload page', progress: 'Reloading the page…' },
+  outdated: { button: 'Reload Spotify', progress: 'Reloading Spotify…' }
 };
 
 const THEMES = [
@@ -199,6 +206,7 @@ const els = {
   youtubePermissionBtn: el('youtube-permission-btn'),
   youtubePermissionStatus: el('youtube-permission-status'),
   reloadPanel: el('reload-panel'),
+  reloadText: el('reload-text'),
   reloadBtn: el('reload-btn'),
   reloadStatus: el('reload-status'),
   presetBar: el('current-preset-bar'),
@@ -278,6 +286,7 @@ let youtubePermission = null;
 let tabSynced = false;
 let processingPending = false;
 let tabReports = 0;
+let reloadReason = 'unsupported';
 
 function isSpotifyUrl(url) {
   try {
@@ -492,7 +501,7 @@ async function handleReloadAction() {
     const tab = await getActiveTab();
     if (tab?.id === undefined) return;
 
-    await reloadTab(tab, els.reloadStatus, 'Reloading the page…');
+    await reloadTab(tab, els.reloadStatus, RELOAD_ACTIONS[reloadReason].progress);
     await syncWithActiveTab();
   } catch {
     els.reloadStatus.textContent = "That didn't work. Reload the page yourself and try again.";
@@ -754,12 +763,18 @@ function setBlocked(isBlocked, reason) {
   if (isBlocked) {
     els.blockedBannerText.textContent = BLOCKED_TEXT[reason] ?? BLOCKED_TEXT.drm;
   }
-  // A reloaded page has a fresh player, which usually clears this, so offer
-  // the reload in place of the warning.
-  const offerReload = isBlocked && reason === 'unsupported';
+  // A reloaded page has a fresh player, which usually clears this, and after
+  // an update it has the new version's audio engine, so offer the reload in
+  // place of the warning.
+  const offerReload = isBlocked && Object.hasOwn(RELOAD_ACTIONS, reason);
   els.blockedBanner.hidden = !isBlocked || offerReload;
   els.reloadPanel.hidden = !offerReload;
   els.reloadStatus.textContent = '';
+  if (offerReload) {
+    reloadReason = reason;
+    els.reloadText.textContent = BLOCKED_TEXT[reason];
+    els.reloadBtn.textContent = RELOAD_ACTIONS[reason].button;
+  }
 
   for (const control of blockableControls) control.disabled = isBlocked;
   setEqDisabled(isBlocked);

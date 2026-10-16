@@ -24,8 +24,10 @@ covers the features and development commands in full.
   command failed and why.
 - For changes that touch the extension at runtime, `npm run test:e2e` runs the
   real extension in Chromium, and `npm run test:firefox` checks in the
-  installed Firefox that the effects stop when the extension is turned off
-  and that Spotify's own speed resets don't cause silent gaps.
+  installed Firefox that the effects stop when the extension is turned off,
+  that Spotify's own speed resets don't cause silent gaps, and that an
+  update keeps the previous version's Spotify engine off until Spotify is
+  reloaded.
 - Check popup changes in both engines. Firefox draws the popup inside rounded
   panel corners (see the `@supports (-moz-appearance: none)` rule in
   `popup.css`) and needs a manual look. In Chromium, `npm run test:e2e` opens
@@ -80,10 +82,11 @@ The tests fail when the site's popup copy or stamps are out of date.
 ## Releases
 
 A version bump touches `extension/manifest.json`, `package.json`, the root
-entries of `package-lock.json`, the footer of every `site/*.html` page, a new
-entry in `site/changelog.html`, and the version line in `PRIVACY.md` and
-`site/privacy.html`. The Chrome store summary is the manifest's `description`
-(132 characters at most), so it only changes with a release.
+entries of `package-lock.json`, `VERSION` in `extension/spotify-main.js`, the
+footer of every `site/*.html` page, a new entry in `site/changelog.html`, and
+the version line in `PRIVACY.md` and `site/privacy.html`. The Chrome store
+summary is the manifest's `description` (132 characters at most), so it only
+changes with a release.
 
 Build the upload packages from a clean checkout of `main`, check them, and
 record the commit, checksums and checks in `dist/packages/<version>/`, as for

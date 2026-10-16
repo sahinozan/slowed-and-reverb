@@ -5,6 +5,12 @@
   const CHANNEL = 'SLOWED_REVERB_SPOTIFY';
   const BRIDGE_CHECK_EVENT = `${CHANNEL}_CHECK`;
   const BRIDGE_CHECK_MS = 250;
+  // The extension's version, which the bridge compares with its own. This
+  // engine stays in an open tab when the extension is updated, and Firefox
+  // can later put the new bridge next to it (when the extension is turned
+  // off and on again). tests/settings.test.js keeps this equal to the
+  // manifest's version.
+  const VERSION = '1.1.1';
   // Copies of SlowedReverbSettings.DEFAULTS and BOUNDS (settings.js). This script
   // stays self-contained because its registration outlives extension updates;
   // tests/settings.test.js keeps the copies equal.
@@ -460,6 +466,7 @@
       {
         channel: CHANNEL,
         type: 'STATUS',
+        version: VERSION,
         playerDetected: mediaElements.size > 0,
         effectsUnavailable: processingUnavailable,
         processingActive
@@ -564,7 +571,7 @@
     if (event.data.type === 'BRIDGE_READY') {
       // Also a bridge that Firefox injects again when the extension comes back.
       watchBridge();
-      window.postMessage({ channel: CHANNEL, type: 'READY', bridgeCheck: true }, '*');
+      window.postMessage({ channel: CHANNEL, type: 'READY', bridgeCheck: true, version: VERSION }, '*');
       notifyStatus();
     } else if (event.data.type === 'APPLY') {
       watchBridge();
@@ -577,6 +584,6 @@
   });
 
   for (const media of document.querySelectorAll('audio, video')) registerMedia(media);
-  window.postMessage({ channel: CHANNEL, type: 'READY', bridgeCheck: true }, '*');
+  window.postMessage({ channel: CHANNEL, type: 'READY', bridgeCheck: true, version: VERSION }, '*');
   notifyStatus();
 })();
