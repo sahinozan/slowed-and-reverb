@@ -14,7 +14,7 @@ of them from `scripts/render-store-assets.js`. The listing text is in
   Spotify" step, enlarged, 1280 × 800
 - `screenshots/03-advanced.png`: the Advanced tab, "Every control is free to
   use", 1280 × 800
-- `screenshots/04-presets.png`: My Presets and the other three themes,
+- `screenshots/04-presets.png`: My Presets and the other four themes,
   1280 × 800
 - `screenshots/05-privacy.png`: "Everything happens in your browser",
   1280 × 800

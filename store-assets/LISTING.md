@@ -54,7 +54,7 @@ Click the extension's icon while a song plays and Slowed + Reverb turns on right
 • Echo, stereo width, pan and saturation on the Advanced tab
 • My Presets, to save the settings you like and switch back with one click
 • Keyboard shortcuts, once you choose the keys
-• Four color themes for the panel
+• Five color themes for the panel
 
 Each tab has its own setting. A new tab starts with the effect off, and a tab keeps its setting when you reload it.
 
@@ -94,7 +94,7 @@ Click the extension's icon while a song plays and Slowed + Reverb turns on right
 - Echo, stereo width, pan and saturation on the Advanced tab
 - My Presets, to save the settings you like and switch back with one click
 - Keyboard shortcuts, once you choose the keys
-- Four color themes for the panel
+- Five color themes for the panel
 
 Each tab has its own setting. A new tab starts with the effect off, and a tab keeps its setting when you reload it.
 
@@ -131,5 +131,5 @@ Firefox only; Chrome doesn't show captions. In upload order:
 1. The panel on YouTube, opened from the extension's icon.
 2. On Spotify, click Allow once. The page reloads and it's ready.
 3. Echo, stereo width, pan and saturation on the Advanced tab.
-4. Save your favorite settings under My Presets, and pick one of four color themes.
+4. Save your favorite settings under My Presets, and pick one of five color themes.
 5. Everything happens in your browser. Nothing about you is collected.
