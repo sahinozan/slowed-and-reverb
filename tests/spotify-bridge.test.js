@@ -76,7 +76,9 @@ describe('Spotify isolated bridge', () => {
       enabled: true,
       settings: SETTINGS
     });
-    await flushPromises();
+    // Wait for the engine's own report on this change, so it can't arrive
+    // after the report below and undo it.
+    await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(pending.pending, true);
     assert.equal(pending.processingActive, false);
     assert.equal(engineMessages.at(-1).type, 'APPLY');
