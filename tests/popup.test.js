@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
 
-const { flushPromises } = require('./helpers/browser-api');
+const { dispatchRuntimeMessage, flushPromises } = require('./helpers/browser-api');
 const { createPopupHarness } = require('./helpers/popup-harness');
 
 const DEFAULT_SETTINGS = {
@@ -149,6 +149,55 @@ describe('popup behavior', () => {
     assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
     assert.equal(document.getElementById('blocked-banner').hidden, false);
     assert.match(document.getElementById('blocked-banner-text').textContent, /Waiting/);
+
+    close(harness);
+  });
+
+  test('drops the loading warning once the tab reports the effect started', async () => {
+    const loading = {
+      enabled: true,
+      settings: SLOWED,
+      blocked: false,
+      live: false,
+      playerDetected: true,
+      processingActive: false,
+      pending: true
+    };
+    let tabState = loading;
+    const harness = await createPopupHarness({
+      onTabMessage(_tabId, message) {
+        return message.type === 'GET_STATE' ? tabState : { success: true };
+      }
+    });
+    const document = harness.window.document;
+    const banner = document.getElementById('blocked-banner');
+    assert.equal(banner.hidden, false);
+    assert.match(document.getElementById('blocked-banner-text').textContent, /still loading/);
+
+    const report = (tabId) =>
+      dispatchRuntimeMessage(
+        harness.events.runtimeMessage,
+        {
+          type: 'CONTENT_STATE_CHANGED',
+          enabled: true,
+          settings: SLOWED,
+          origin: 'https://www.youtube.com',
+          playerDetected: true,
+          processingActive: true
+        },
+        { id: harness.api.runtime.id, tab: { id: tabId, url: 'https://www.youtube.com/watch?v=example' } }
+      );
+
+    tabState = { ...loading, processingActive: true, pending: false };
+    // Another tab starting its effect says nothing about this one.
+    await report(12);
+    for (let attempt = 0; attempt < 4; attempt++) await flushPromises();
+    assert.equal(banner.hidden, false);
+
+    await report(9);
+    for (let attempt = 0; attempt < 4; attempt++) await flushPromises();
+    assert.equal(banner.hidden, true);
+    assert.equal(document.getElementById('power-toggle').checked, true);
 
     close(harness);
   });

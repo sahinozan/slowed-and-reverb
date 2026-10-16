@@ -42,6 +42,7 @@
     runtime: {
       id: 'site-demo',
       getManifest: () => ({}),
+      onMessage: { addListener: () => {} },
       sendMessage: async (message) => {
         if (message.type === 'GET_TAB_STATE') return tabState;
         if (message.type === 'APPLY_TO_TAB') {

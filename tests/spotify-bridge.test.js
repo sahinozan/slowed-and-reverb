@@ -30,8 +30,17 @@ describe('Spotify isolated bridge', () => {
     const { window } = dom;
     const harness = createBrowserApi();
     const engineMessages = [];
+    let engineStatus = { playerDetected: true, effectsUnavailable: false, processingActive: false };
     window.chrome = harness.api;
-    window.postMessage = (message) => engineMessages.push(message);
+    window.postMessage = (message) => {
+      engineMessages.push(message);
+      // Like the real engine, report the status after every change.
+      if (message.type !== 'APPLY') return;
+      const data = { channel: 'SLOWED_REVERB_SPOTIFY', type: 'STATUS', ...engineStatus };
+      setTimeout(() =>
+        window.eval(`window.__bridgeMessageListener({ source: window, data: ${JSON.stringify(data)} })`)
+      );
+    };
     const originalAddEventListener = window.addEventListener.bind(window);
     window.addEventListener = (type, listener, options) => {
       if (type === 'message') window.__bridgeMessageListener = listener;
@@ -97,6 +106,24 @@ describe('Spotify isolated bridge', () => {
       ),
       true
     );
+
+    // Turning the effect back on while the song plays answers with the
+    // engine's report on that change, not the state from before it.
+    await dispatchRuntimeMessage(harness.events.runtimeMessage, {
+      type: 'UPDATE_AUDIO',
+      enabled: false,
+      settings: SETTINGS
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(harness.calls.runtimeMessages.at(-1).processingActive, false);
+    engineStatus = { ...engineStatus, processingActive: true };
+    const resumed = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
+      type: 'UPDATE_AUDIO',
+      enabled: true,
+      settings: SETTINGS
+    });
+    assert.equal(resumed.processingActive, true);
+    assert.equal(resumed.pending, false);
 
     await dispatchRuntimeMessage(harness.events.runtimeMessage, {
       type: 'SPOTIFY_PERMISSION_REVOKED'

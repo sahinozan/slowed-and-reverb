@@ -100,6 +100,7 @@ function installPopupBrowserMock({
     runtime: {
       id: 'store-preview-extension',
       getManifest: () => ({}),
+      onMessage: { addListener: () => {} },
       sendMessage: async (message) => (
         message.type === 'GET_TAB_STATE' ? tabState : { success: true }
       )
