@@ -10,6 +10,7 @@ const NON_BROWSER_PATHS = new Set([
   'eslint.config.js',
   'scripts/classify-ci-changes.js',
   'scripts/popup-preview.js',
+  'scripts/release.js',
   'scripts/render-icons.js',
   'scripts/serve-site.js',
   'scripts/stamp-site-assets.js',
