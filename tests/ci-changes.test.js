@@ -23,7 +23,8 @@ describe('CI change classification', () => {
       classifyFiles([
         'tests/package.test.js',
         '.github/dependabot.yml',
-        'scripts/render-store-assets.js'
+        'scripts/render-store-assets.js',
+        'scripts/release.js'
       ]),
       { full: true, browser: false }
     );

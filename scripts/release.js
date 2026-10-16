@@ -1,0 +1,731 @@
+'use strict';
+
+// Builds and checks the store upload packages for a release, then records them
+// in dist/packages/<version>/ of the main checkout (AGENTS.md, "Releases"):
+//
+//   npm run release -- <commit on main> [--out <folder>]
+//
+// It works in a clean worktree of the commit, runs every check one at a time
+// (the browser tests are timing-sensitive, so run nothing else meanwhile),
+// checks that the packages are exactly what the commit builds, and writes a
+// draft RELEASE-<version>.txt to finish by hand. It never replaces an existing
+// version folder. Needs macOS or Linux, Chromium for Playwright and Firefox.
+
+const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync, spawn } = require('child_process');
+const AdmZip = require('adm-zip');
+
+const root = path.join(__dirname, '..');
+const TARGETS = ['chromium', 'firefox'];
+const EXTENSION_NAME = 'Slowed & Reverb';
+// The Chrome Web Store summary is the manifest's description.
+const DESCRIPTION_LIMIT = 132;
+// The raw screen captures are large and the build doesn't use them.
+const SOURCE_PATHSPEC = ['.', ':(exclude)store-assets/originals'];
+const STEP_TIMEOUT_MS = 20 * 60 * 1000;
+
+// Firefox Add-ons shows the privacy policy as Markdown that drops headings and
+// keeps only http(s) links, so its copy of PRIVACY.md has no title, section
+// headings as bold lines, one line per paragraph and list item, and email
+// links as plain text.
+function firefoxPrivacyText(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  if (/^#\s/.test(lines[0])) lines.shift();
+
+  const blocks = [];
+  let open = null;
+  for (const line of lines) {
+    const text = line.trim();
+    if (!text) {
+      open = null;
+    } else if (/^#{2,6}\s/.test(line)) {
+      blocks.push({ kind: 'heading', text: `**${text.replace(/^#+\s+/, '')}**` });
+      open = null;
+    } else if (line.startsWith('- ')) {
+      if (open?.kind !== 'list') {
+        open = { kind: 'list', items: [] };
+        blocks.push(open);
+      }
+      open.items.push(text);
+    } else if (open?.kind === 'list') {
+      open.items[open.items.length - 1] += ` ${text}`;
+    } else if (open?.kind === 'paragraph') {
+      open.text += ` ${text}`;
+    } else {
+      open = { kind: 'paragraph', text };
+      blocks.push(open);
+    }
+  }
+
+  const output = blocks
+    .map((block, index) => {
+      const text = block.kind === 'list' ? block.items.join('\n') : block.text;
+      // A heading sits directly above its paragraph but keeps a blank line
+      // before a list.
+      const joined = block.kind === 'heading' && blocks[index + 1]?.kind === 'paragraph';
+      return text + (joined ? '\n' : '\n\n');
+    })
+    .join('')
+    .trimEnd();
+  return `${output.replace(/\[([^\]]+@[^\]]+)\]\(mailto:[^)]+\)/g, '$1')}\n`;
+}
+
+function parseVersion(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function compareVersions(a, b) {
+  const [left, right] = [parseVersion(a), parseVersion(b)];
+  return left.map((part, index) => part - right[index]).find((difference) => difference !== 0) ?? 0;
+}
+
+// The newest release folder older than version, or null.
+function previousVersion(folders, version) {
+  return (
+    folders
+      .filter((name) => parseVersion(name) && compareVersions(name, version) < 0)
+      .sort(compareVersions)
+      .pop() ?? null
+  );
+}
+
+function versionsIn(text) {
+  return text?.match(/\d+\.\d+\.\d+/g) ?? [];
+}
+
+// What a version bump touches (AGENTS.md, "Releases") that still shows
+// another version. read(file) returns a file's text from the repository root.
+function versionBumpProblems(read, pages, version) {
+  const problems = [];
+  const expect = (ok, problem) => {
+    if (!ok) problems.push(problem);
+  };
+
+  const packageJson = JSON.parse(read('package.json'));
+  expect(packageJson.version === version, `package.json has version ${packageJson.version}`);
+  const lock = JSON.parse(read('package-lock.json'));
+  expect(
+    lock.version === version && lock.packages?.['']?.version === version,
+    'package-lock.json has another version in its root entries'
+  );
+  for (const file of ['extension/spotify-main.js', 'extension/youtube-main.js']) {
+    const literal = /const VERSION = '([^']*)';/.exec(read(file));
+    expect(literal?.[1] === version, `${file} has VERSION ${literal?.[1]}`);
+  }
+  for (const page of pages) {
+    expect(
+      read(`site/${page}`).includes(`<span>Slowed &amp; Reverb ${version}</span>`),
+      `site/${page} doesn't show ${version} in its footer`
+    );
+  }
+  expect(read('site/changelog.html').includes(`<h2>${version} `), `site/changelog.html has no entry for ${version}`);
+  const policy = /applies to versions ([\s\S]*?) of the/.exec(read('PRIVACY.md'))?.[1];
+  expect(versionsIn(policy).includes(version), `PRIVACY.md's versions line doesn't list ${version}`);
+  const page = /covers versions ([\s\S]*?) of Slowed/.exec(read('site/privacy.html'))?.[1];
+  expect(versionsIn(page).includes(version), `site/privacy.html's versions line doesn't list ${version}`);
+  return problems;
+}
+
+// "17 (16 files plus the assets directory entry)" for entries of
+// { name, isDirectory }.
+function describeEntries(entries) {
+  const directories = entries.filter((entry) => entry.isDirectory).map((entry) => entry.name.replace(/\/$/, ''));
+  if (directories.length === 0) return String(entries.length);
+  const files = entries.length - directories.length;
+  const noun = directories.length === 1 ? 'entry' : 'entries';
+  return `${entries.length} (${files} files plus the ${listWords(directories)} directory ${noun})`;
+}
+
+function listWords(words) {
+  if (words.length < 2) return words.join('');
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+// Word-wraps a paragraph to the record's width; later lines get the indent.
+function wrap(text, indent = '', width = 78) {
+  const lines = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    const prefix = lines.length ? indent : '';
+    if (line && (prefix + line + ' ' + word).length > width) {
+      lines.push(prefix + line);
+      line = word;
+    } else {
+      line = line ? `${line} ${word}` : word;
+    }
+  }
+  lines.push((lines.length ? indent : '') + line);
+  return lines.join('\n');
+}
+
+function plural(count, word) {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+function inventoryLine(release) {
+  const { previous, inventory } = release;
+  if (!previous) return 'Archive inventories: no earlier release folder to compare with';
+  if (!inventory.added.length && !inventory.removed.length) {
+    return `Archive inventories: the same ${inventory.files} files as ${previous}`;
+  }
+  const changes = [
+    inventory.added.length && `added since ${previous}: ${inventory.added.join(', ')}`,
+    inventory.removed.length && `removed since ${previous}: ${inventory.removed.join(', ')}`
+  ].filter(Boolean);
+  return `Archive inventories: ${inventory.files} files; ${changes.join('; ')} (TODO: say why)`;
+}
+
+function changedLine(release) {
+  const { previous, changed } = release;
+  const [chromium, firefox] = TARGETS.map((target) => changed[target]);
+  const describe = (files) =>
+    files.length ? `${listWords(files)} ${files.length === 1 ? 'differs' : 'differ'}` : 'nothing differs';
+  if (chromium.join() === firefox.join()) {
+    return `Compared with the ${previous} archives, ${describe(chromium)}, in both packages`;
+  }
+  return `Compared with the ${previous} archives: in the Chromium package ${describe(chromium)}; in the Firefox package ${describe(firefox)}`;
+}
+
+function privacyNote(release) {
+  const { previous, privacyChanges } = release;
+  if (!privacyChanges) return '';
+  if (!privacyChanges.length) return ` It is the same as the ${previous} copy.`;
+  const starts = privacyChanges.map((line) => `"${line.split(' ').slice(0, 6).join(' ')}…"`);
+  return ` It differs from the ${previous} copy in ${plural(privacyChanges.length, 'line')}: ${listWords(starts)}.`;
+}
+
+function packageBlock(file, purpose, info) {
+  return [
+    `${file}  (${purpose})`,
+    `Size: ${info.size} bytes`,
+    `SHA-256: ${info.sha256}`,
+    `Entries: ${info.entries}`
+  ].join('\n');
+}
+
+// The draft RELEASE-<version>.txt, in the shape of the earlier records.
+function releaseRecord(release) {
+  const { version, previous, checks } = release;
+  const merged = release.mergedSince?.length
+    ? `TODO (merged since ${previous}: PR ${release.mergedSince.map((number) => `#${number}`).join(', ')})`
+    : 'TODO';
+  const lint = checks.lint;
+  const verification = [
+    `npm run check: passed (${checks.tests} tests; Chromium lint; Firefox build and lint)`,
+    `npm run test:e2e: ${checks.e2e} passed (the real extension in Chromium)`,
+    `npm run test:firefox: ${checks.firefox} passed (the Firefox build in the installed Firefox)`,
+    `Both manifests: version ${version}, name "${EXTENSION_NAME}", ${checks.descriptionLength}-character description`,
+    'Extracted Chromium archive: byte-identical to a fresh build of this commit',
+    `Extracted Firefox archive: byte-identical to a fresh build of this commit; web-ext lint: ${plural(lint.errors, 'error')}, ${plural(lint.warnings, 'warning')}, ${plural(lint.notices, 'notice')}`,
+    inventoryLine(release),
+    previous && changedLine(release),
+    'Firefox build from the extracted source zip: byte-identical to the packaged add-on',
+    'Tracked worktree remained clean after packaging and verification',
+    'TODO: what was checked by hand, in which browsers and on which sites'
+  ].filter(Boolean);
+
+  return [
+    [
+      `${EXTENSION_NAME} ${version} release artifact record`,
+      `Date: ${release.date}`,
+      `Source commit: ${release.commit} (${release.commitNote})`,
+      wrap(`Release changes merged in: ${merged}`),
+      wrap(`Built in a clean worktree of that commit with no local changes, with Node ${release.node} and npm ${release.npm}.`)
+    ].join('\n'),
+    packageBlock('slowed-reverb-chromium.zip', 'upload to the Chrome Web Store', release.packages.chromium),
+    packageBlock('slowed-reverb-firefox.zip', 'upload to Firefox Add-ons', release.packages.firefox),
+    [
+      packageBlock(
+        'slowed-reverb-firefox-source.zip',
+        'source code for the Firefox review, if asked',
+        release.packages.source
+      ),
+      `Made with: git archive --format=zip HEAD -- ${SOURCE_PATHSPEC.map((spec) => (spec === '.' ? spec : `'${spec}'`)).join(' ')}`,
+      "(the raw 5K screen captures are left out; the build doesn't use them)",
+      'Build: npm ci, then npm run build:firefox (output in dist/firefox)'
+    ].join('\n'),
+    [
+      'firefox-privacy-policy.txt  (paste into Manage Authors & License → Privacy Policy)',
+      wrap(
+        'Made from PRIVACY.md: the title dropped, section headings as bold lines, each ' +
+          'paragraph and list item on one line, and the support email as plain text, ' +
+          `since Firefox keeps only http(s) links.${privacyNote(release)}`
+      )
+    ].join('\n'),
+    ['Verification', ...verification.map((line) => wrap(`- ${line}`, '  '))].join('\n'),
+    wrap(
+      `These files live in dist/packages/${version}/ because npm test rebuilds ` +
+        'dist/packages/*.zip, and the zips record file times, so a rebuild changes the ' +
+        'SHA-256 even when the contents are the same. Upload the files in this folder. ' +
+        'Do not rebuild them without repeating verification and replacing this record.'
+    )
+  ].join('\n\n') + '\n';
+}
+
+// Running the release ---------------------------------------------------------
+
+class ReleaseError extends Error {
+  constructor(message, log) {
+    super(message);
+    this.log = log;
+  }
+}
+
+let running = null;
+let stopping = null;
+
+// Each step runs as from a plain shell, without this npm run's settings.
+function childEnv() {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !/^npm_/i.test(key) && key !== 'INIT_CWD')
+  );
+  env.PATH = (env.PATH ?? '')
+    .split(path.delimiter)
+    .filter((dir) => !dir.includes(`${path.sep}node_modules${path.sep}`))
+    .join(path.delimiter);
+  return env;
+}
+
+function git(args, cwd = root) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+// Asks the running step's whole process group to stop, and kills what is
+// left of it a little later.
+function stopRunning(reason, signal = 'SIGTERM') {
+  stopping ??= reason;
+  if (!running) return;
+  const group = -running.pid;
+  const send = (name) => {
+    try {
+      process.kill(group, name);
+    } catch {
+      // Already gone.
+    }
+  };
+  send(signal);
+  setTimeout(() => send('SIGKILL'), 10000).unref();
+}
+
+// Runs a command in its own process group, so a timeout or Ctrl+C also stops
+// the browsers and test runners it starts. Output goes to log.
+function run(command, args, { cwd, log, stdout = log }) {
+  const what = `${command} ${args.join(' ')}`;
+  if (stopping) return Promise.reject(new ReleaseError(stopping));
+  return new Promise((resolve, reject) => {
+    const out = fs.openSync(stdout, 'a');
+    const err = fs.openSync(log, 'a');
+    const child = spawn(command, args, { cwd, env: childEnv(), stdio: ['ignore', out, err], detached: true });
+    running = child;
+    const timer = setTimeout(
+      () => stopRunning(`${what} took more than ${STEP_TIMEOUT_MS / 60000} minutes`),
+      STEP_TIMEOUT_MS
+    );
+    let done = false;
+    const finish = (error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      running = null;
+      fs.closeSync(out);
+      fs.closeSync(err);
+      if (error) reject(new ReleaseError(stopping ?? error, log));
+      else resolve(fs.readFileSync(log, 'utf8'));
+    };
+    child.on('error', (error) => finish(`${command}: ${error.message}`));
+    child.on('exit', (code, signal) => finish(code === 0 && !stopping ? null : `${what} failed (${signal ?? `exit code ${code}`})`));
+  });
+}
+
+function count(log, pattern) {
+  const match = pattern.exec(log);
+  return match ? Number(match[1]) : 0;
+}
+
+// node --test's summary: "ℹ pass 12" (spec reporter) or "# pass 12" (TAP).
+function nodeTestCounts(log) {
+  const counts = {};
+  for (const name of ['tests', 'pass', 'fail', 'skipped', 'todo', 'cancelled']) {
+    counts[name] = count(log, new RegExp(`^(?:ℹ|#) ${name} (\\d+)$`, 'm'));
+  }
+  return counts;
+}
+
+function listFiles(dir, base = dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const file = path.join(dir, entry.name);
+    return entry.isDirectory() ? listFiles(file, base) : [path.relative(base, file).split(path.sep).join('/')];
+  });
+}
+
+// Differences between two folders' files, as diff -r would report them.
+function compareTrees(left, right) {
+  const leftFiles = new Set(listFiles(left));
+  const rightFiles = new Set(listFiles(right));
+  const differences = [];
+  for (const file of leftFiles) {
+    if (!rightFiles.has(file)) differences.push(`only in ${left}: ${file}`);
+    else if (!fs.readFileSync(path.join(left, file)).equals(fs.readFileSync(path.join(right, file)))) {
+      differences.push(`differs: ${file}`);
+    }
+  }
+  for (const file of rightFiles) {
+    if (!leftFiles.has(file)) differences.push(`only in ${right}: ${file}`);
+  }
+  return differences;
+}
+
+function expectSameTree(left, right, what) {
+  const differences = compareTrees(left, right);
+  if (differences.length) throw new ReleaseError(`${what}:\n  ${differences.join('\n  ')}`);
+}
+
+function zipFiles(zipPath) {
+  return new Map(
+    new AdmZip(zipPath)
+      .getEntries()
+      .filter((entry) => !entry.isDirectory)
+      .map((entry) => [entry.entryName, entry.getData()])
+  );
+}
+
+function fileInfo(file, entries) {
+  return {
+    size: fs.statSync(file).size,
+    sha256: crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
+    entries
+  };
+}
+
+// Pull request numbers in first-parent subjects: merge commits and squashes.
+function pullRequests(subjects) {
+  return subjects
+    .map((subject) => /^Merge pull request #(\d+)/.exec(subject) ?? /\(#(\d+)\)$/.exec(subject))
+    .filter(Boolean)
+    .map((match) => Number(match[1]));
+}
+
+function parseArgs(argv) {
+  const options = { commit: null, out: null };
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === '--out') options.out = argv[++index];
+    else if (!argv[index].startsWith('-') && !options.commit) options.commit = argv[index];
+    else throw new ReleaseError(`Unexpected argument: ${argv[index]}`);
+  }
+  if (!options.commit || (argv.includes('--out') && !options.out)) {
+    throw new ReleaseError('Usage: npm run release -- <commit on main> [--out <folder>]');
+  }
+  return options;
+}
+
+// The main checkout, where earlier releases are recorded, even when this runs
+// from another worktree.
+function mainCheckout() {
+  const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  return path.basename(common) === '.git' ? path.dirname(common) : root;
+}
+
+function seconds(ms) {
+  return ms < 60000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+}
+
+async function step(title, action) {
+  if (stopping) throw new ReleaseError(stopping);
+  process.stdout.write(`${title} ... `);
+  const started = Date.now();
+  try {
+    const result = await action();
+    console.log(`${result ?? 'done'} (${seconds(Date.now() - started)})`);
+    return result;
+  } catch (error) {
+    console.log('FAILED');
+    throw error;
+  }
+}
+
+async function release(options) {
+  let sha;
+  try {
+    sha = git(['rev-parse', '--verify', '--quiet', `${options.commit}^{commit}`]);
+  } catch {
+    throw new ReleaseError(`${options.commit} is not a commit in this repository`);
+  }
+  try {
+    git(['merge-base', '--is-ancestor', sha, 'refs/remotes/origin/main']);
+  } catch {
+    throw new ReleaseError(
+      `${options.commit} is not on origin/main. Release from a commit on main (git fetch first if it was just merged).`
+    );
+  }
+
+  const version = JSON.parse(git(['show', `${sha}:extension/manifest.json`])).version;
+  const packagesDir = path.join(mainCheckout(), 'dist', 'packages');
+  // npm runs scripts from the repository root; --out is relative to where it was typed.
+  const outDir = options.out
+    ? path.resolve(process.env.INIT_CWD ?? process.cwd(), options.out)
+    : path.join(packagesDir, version);
+  if (fs.existsSync(outDir)) {
+    throw new ReleaseError(`${outDir} already exists. It may hold verified files; move it aside or pass --out.`);
+  }
+  const recorded = fs.existsSync(packagesDir)
+    ? fs
+      .readdirSync(packagesDir)
+      .filter((name) => TARGETS.every((target) => fs.existsSync(path.join(packagesDir, name, `slowed-reverb-${target}.zip`))))
+    : [];
+  const previous = previousVersion(recorded, version);
+  const previousDir = previous && path.join(packagesDir, previous);
+  const subject = git(['log', '-1', '--format=%s', sha]);
+  const pull = pullRequests([subject])[0];
+
+  console.log(`Release ${version} from ${sha.slice(0, 7)}: ${subject}`);
+  console.log(previous ? `Comparing with ${previousDir}` : 'No earlier release folder to compare with');
+
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), `slowed-reverb-release-${version}-`));
+  const tree = path.join(work, 'tree');
+  const logs = path.join(work, 'logs');
+  const extracted = path.join(work, 'extracted');
+  const sourceZip = path.join(work, 'slowed-reverb-firefox-source.zip');
+  const sourceDir = path.join(work, 'source');
+  fs.mkdirSync(logs);
+  console.log(`Working in ${work}`);
+
+  const removeWorktree = () => {
+    try {
+      git(['worktree', 'remove', '--force', tree]);
+    } catch {
+      fs.rmSync(tree, { recursive: true, force: true });
+      git(['worktree', 'prune']);
+    }
+  };
+  // The steps run in their own process groups, which Ctrl+C in the terminal
+  // doesn't reach, so pass it on; the worktree is removed once they stop.
+  const interrupt = (signal) => stopRunning('Stopped', signal);
+  process.on('SIGINT', interrupt);
+  process.on('SIGTERM', interrupt);
+
+  let finished = false;
+  try {
+    git(['worktree', 'add', '--detach', tree, sha]);
+    const inTree = (name, command, args) => run(command, args, { cwd: tree, log: path.join(logs, `${name}.log`) });
+    const read = (file) => fs.readFileSync(path.join(tree, file), 'utf8');
+    const checks = {};
+
+    await step('Version bump', () => {
+      const pages = fs.readdirSync(path.join(tree, 'site')).filter((name) => name.endsWith('.html'));
+      const problems = versionBumpProblems(read, pages, version);
+      if (problems.length) throw new ReleaseError(`The version bump to ${version} is incomplete:\n  ${problems.join('\n  ')}`);
+      return `everything shows ${version}`;
+    });
+    await step('npm ci', () => inTree('install', 'npm', ['ci', '--no-audit', '--no-fund']).then(() => null));
+    await step('npm run check', async () => {
+      const counts = nodeTestCounts(await inTree('check', 'npm', ['run', 'check']));
+      if (!counts.pass || counts.fail || counts.cancelled) {
+        throw new ReleaseError(`npm test reported ${counts.pass} passed, ${counts.fail} failed`, path.join(logs, 'check.log'));
+      }
+      checks.tests = counts.tests;
+      return `passed, ${counts.tests} tests${counts.skipped ? `, ${counts.skipped} skipped` : ''}`;
+    });
+    await step('npm run package', () => inTree('package', 'npm', ['run', 'package']).then(() => null));
+    await step('npm run test:e2e', async () => {
+      const log = await inTree('e2e', 'npm', ['run', 'test:e2e']);
+      const passed = count(log, /^\s*(\d+) passed\b/m);
+      const other = ['failed', 'flaky', 'skipped', 'did not run'].filter((word) =>
+        new RegExp(`^\\s*\\d+ ${word}\\b`, 'm').test(log)
+      );
+      if (!passed || other.length) {
+        const report = other.length ? `tests that ${listWords(other)}` : 'no tests that passed';
+        throw new ReleaseError(`Playwright reported ${report}`, path.join(logs, 'e2e.log'));
+      }
+      checks.e2e = passed;
+      return `${passed} passed`;
+    });
+    await step('npm run test:firefox', async () => {
+      const counts = nodeTestCounts(await inTree('firefox', 'npm', ['run', 'test:firefox']));
+      if (!counts.pass || counts.fail || counts.skipped || counts.todo || counts.cancelled) {
+        throw new ReleaseError(
+          `The Firefox tests reported ${counts.pass} passed, ${counts.fail} failed, ${counts.skipped} skipped`,
+          path.join(logs, 'firefox.log')
+        );
+      }
+      checks.firefox = counts.pass;
+      return `${counts.pass} passed`;
+    });
+
+    const packages = {};
+    const changed = {};
+    let inventory = null;
+    await step('Archives against a fresh build', async () => {
+      // The browser tests build their own copies, so build once more.
+      for (const target of TARGETS) await inTree(`build-${target}`, 'npm', ['run', `build:${target}`]);
+      for (const target of TARGETS) {
+        const zipPath = path.join(tree, 'dist', 'packages', `slowed-reverb-${target}.zip`);
+        const zip = new AdmZip(zipPath);
+        zip.extractAllTo(path.join(extracted, target), true);
+        expectSameTree(path.join(extracted, target), path.join(tree, 'dist', target), `The ${target} archive isn't its build`);
+        const entries = zip.getEntries().map((entry) => ({ name: entry.entryName, isDirectory: entry.isDirectory }));
+        packages[target] = fileInfo(zipPath, describeEntries(entries));
+
+        const manifest = JSON.parse(fs.readFileSync(path.join(extracted, target, 'manifest.json'), 'utf8'));
+        const problems = [
+          manifest.version !== version && `version ${manifest.version}`,
+          manifest.name !== EXTENSION_NAME && `name "${manifest.name}"`,
+          manifest.description.length > DESCRIPTION_LIMIT && `a ${manifest.description.length}-character description`
+        ].filter(Boolean);
+        if (problems.length) throw new ReleaseError(`The ${target} manifest has ${problems.join(', ')}`);
+        checks.descriptionLength = manifest.description.length;
+
+        if (previous) {
+          const before = zipFiles(path.join(previousDir, `slowed-reverb-${target}.zip`));
+          const after = zipFiles(zipPath);
+          const names = (map) => [...map.keys()].sort();
+          const targetInventory = {
+            files: after.size,
+            added: names(after).filter((name) => !before.has(name)),
+            removed: names(before).filter((name) => !after.has(name))
+          };
+          if (inventory && JSON.stringify(inventory) !== JSON.stringify(targetInventory)) {
+            throw new ReleaseError('The Chromium and Firefox archives hold different files');
+          }
+          inventory = targetInventory;
+          changed[target] = names(after).filter((name) => before.has(name) && !before.get(name).equals(after.get(name)));
+        }
+      }
+      return `byte-identical, ${packages.chromium.entries.split(' ')[0]} entries each`;
+    });
+
+    await step('web-ext lint on the Firefox archive', async () => {
+      const report = path.join(logs, 'web-ext-lint.json');
+      await run(
+        path.join(tree, 'node_modules', '.bin', 'web-ext'),
+        ['lint', `--source-dir=${path.join(extracted, 'firefox')}`, '--no-config-discovery', '--output=json'],
+        { cwd: tree, log: path.join(logs, 'web-ext-lint.log'), stdout: report }
+      );
+      const result = JSON.parse(fs.readFileSync(report, 'utf8'));
+      const lint = Object.fromEntries(
+        ['errors', 'warnings', 'notices'].map((kind) => [kind, result.count?.[kind] ?? result[kind].length])
+      );
+      if (lint.errors || lint.warnings) {
+        throw new ReleaseError(`web-ext lint: ${lint.errors} errors, ${lint.warnings} warnings (see ${report})`);
+      }
+      checks.lint = lint;
+      return `${lint.errors} errors, ${lint.warnings} warnings, ${lint.notices} notices`;
+    });
+
+    await step('Firefox source zip', async () => {
+      git(['archive', '--format=zip', '-o', sourceZip, 'HEAD', '--', ...SOURCE_PATHSPEC], tree);
+      const zip = new AdmZip(sourceZip);
+      zip.extractAllTo(sourceDir, true);
+      await run(process.execPath, ['scripts/build-extension.js', 'firefox'], {
+        cwd: sourceDir,
+        log: path.join(logs, 'source-build.log')
+      });
+      expectSameTree(
+        path.join(sourceDir, 'dist', 'firefox'),
+        path.join(extracted, 'firefox'),
+        "The Firefox build from the source zip isn't the packaged add-on"
+      );
+      packages.source = fileInfo(sourceZip, String(zip.getEntries().length));
+      return `builds the same add-on, ${packages.source.entries} entries`;
+    });
+
+    await step('Worktree', () => {
+      const status = git(['status', '--porcelain', '--untracked-files=no'], tree);
+      if (status) throw new ReleaseError(`Packaging changed tracked files:\n${status}`);
+      return 'clean';
+    });
+
+    const privacy = firefoxPrivacyText(read('PRIVACY.md'));
+    const previousPrivacy = previous && path.join(previousDir, 'firefox-privacy-policy.txt');
+    let privacyChanges = null;
+    if (previousPrivacy && fs.existsSync(previousPrivacy)) {
+      const before = new Set(fs.readFileSync(previousPrivacy, 'utf8').split('\n'));
+      privacyChanges = privacy.split('\n').filter((line) => line && !before.has(line));
+    }
+
+    let mergedSince = null;
+    const previousRecord = previous && path.join(previousDir, `RELEASE-${previous}.txt`);
+    const previousCommit =
+      previousRecord && fs.existsSync(previousRecord)
+        ? /^Source commit: ([0-9a-f]{40})/m.exec(fs.readFileSync(previousRecord, 'utf8'))?.[1]
+        : null;
+    if (previousCommit) {
+      try {
+        mergedSince = pullRequests(git(['log', '--first-parent', '--format=%s', `${previousCommit}..${sha}`]).split('\n')).reverse();
+      } catch {
+        mergedSince = null;
+      }
+    }
+
+    const record = releaseRecord({
+      version,
+      previous,
+      date: new Date().toLocaleDateString('en-CA'),
+      commit: sha,
+      commitNote: pull ? `main, after PR #${pull}` : 'main',
+      mergedSince,
+      node: process.version.replace(/^v/, ''),
+      npm: execFileSync('npm', ['--version'], { cwd: tree, env: childEnv(), encoding: 'utf8' }).trim(),
+      packages,
+      inventory,
+      changed,
+      privacyChanges,
+      checks
+    });
+
+    fs.mkdirSync(outDir, { recursive: true });
+    for (const target of TARGETS) {
+      fs.copyFileSync(
+        path.join(tree, 'dist', 'packages', `slowed-reverb-${target}.zip`),
+        path.join(outDir, `slowed-reverb-${target}.zip`)
+      );
+    }
+    fs.copyFileSync(sourceZip, path.join(outDir, 'slowed-reverb-firefox-source.zip'));
+    fs.writeFileSync(path.join(outDir, 'firefox-privacy-policy.txt'), privacy);
+    fs.writeFileSync(path.join(outDir, `RELEASE-${version}.txt`), record);
+
+    console.log(`\nRecorded in ${outDir}:`);
+    for (const [file, info] of [
+      ['slowed-reverb-chromium.zip', packages.chromium],
+      ['slowed-reverb-firefox.zip', packages.firefox],
+      ['slowed-reverb-firefox-source.zip', packages.source]
+    ]) {
+      console.log(`  ${file}  ${info.size} bytes  ${info.sha256}`);
+    }
+    console.log(`  firefox-privacy-policy.txt\n  RELEASE-${version}.txt (a draft: fill in the lines marked TODO)`);
+    finished = true;
+  } finally {
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', interrupt);
+    removeWorktree();
+    if (finished) fs.rmSync(work, { recursive: true, force: true });
+    else console.log(`Logs are in ${logs}`);
+  }
+}
+
+if (require.main === module) {
+  Promise.resolve()
+    .then(() => release(parseArgs(process.argv.slice(2))))
+    .catch((error) => {
+      console.error(`\n${error.message}`);
+      if (error.log && fs.existsSync(error.log)) {
+        const tail = fs.readFileSync(error.log, 'utf8').trimEnd().split('\n').slice(-40).join('\n');
+        console.error(`\nEnd of ${error.log}:\n${tail}`);
+      }
+      process.exitCode = 1;
+    });
+}
+
+module.exports = {
+  compareVersions,
+  describeEntries,
+  firefoxPrivacyText,
+  previousVersion,
+  pullRequests,
+  releaseRecord,
+  versionBumpProblems,
+  wrap
+};

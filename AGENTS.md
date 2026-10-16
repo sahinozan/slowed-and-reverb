@@ -88,10 +88,17 @@ entry in `site/changelog.html`, and the version line in `PRIVACY.md` and
 `site/privacy.html`. The Chrome store summary is the manifest's `description`
 (132 characters at most), so it only changes with a release.
 
-Build the upload packages from a clean checkout of `main`, check them, and
-record the commit, checksums and checks in `dist/packages/<version>/`, as for
-1.0.0 and 1.0.1. `npm test` rebuilds `dist/packages/*.zip`, so keep the
-verified files in the version folder.
+Build the upload packages with `npm run release -- <commit>`, given the
+commit on `main` to release (`git fetch` first). It checks that everything the
+version bump touches shows the new version, works in a clean worktree of the
+commit, runs `npm run check`, the packaging and both browser tests one at a
+time (run no other tests meanwhile), and checks that the packages are exactly
+what the commit builds. Then it writes the packages, the Firefox Add-ons copy
+of the privacy policy and a draft `RELEASE-<version>.txt` to
+`dist/packages/<version>/` in the main checkout, next to the earlier releases;
+fill in the draft's TODO lines. It never replaces an existing version folder.
+`npm test` rebuilds `dist/packages/*.zip`, so keep the verified files in the
+version folder.
 
 ## Git
 

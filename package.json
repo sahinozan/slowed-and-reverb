@@ -13,6 +13,7 @@
     "package": "npm run package:chromium && npm run package:firefox",
     "package:chromium": "npm run build:chromium && web-ext build --source-dir=dist/chromium --artifacts-dir=dist/packages --filename=slowed-reverb-chromium.zip --overwrite-dest --no-config-discovery",
     "package:firefox": "npm run build:firefox && web-ext build --source-dir=dist/firefox --artifacts-dir=dist/packages --filename=slowed-reverb-firefox.zip --overwrite-dest --no-config-discovery",
+    "release": "node scripts/release.js",
     "site:popup": "node scripts/sync-site-popup.js",
     "site:serve": "node scripts/serve-site.js",
     "site:stamp": "node scripts/stamp-site-assets.js",

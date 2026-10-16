@@ -130,6 +130,7 @@ npm run build:firefox     # emit dist/firefox/
 npm run package           # build allowlisted ZIPs for both stores
 npm run lint:firefox      # build, then validate with web-ext
 npm run check             # run every required local and store-package check
+npm run release -- <commit> # build, check and record a release's store packages from main
 npm run site:popup        # copy the current popup into the website after popup changes
 npm run site:serve        # preview the website locally, served like Cloudflare
 npm run site:stamp        # refresh the website's stylesheet and script version stamps
