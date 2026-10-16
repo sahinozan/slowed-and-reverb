@@ -56,6 +56,12 @@
   --frame: var(--fg);
 }
 
+/* Soft glow keeps Terminal's colors on a darker ground; the glow itself is
+   painted on .container near the end of this file. */
+:root[data-theme="softglow"] {
+  --bg: #0f0308;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -1028,4 +1034,27 @@ footer.no-divider {
 
 .action-btn:active {
   background: hsl(var(--accent-hsl) / 0.3);
+}
+
+/* Soft glow: a faint pink and purple glow behind the panel. The controls are
+   see-through so the glow shows through them, but the equalizer handles keep
+   a solid ring and the theme picker, which sits over the panel, stays solid. */
+:root[data-theme="softglow"] .container {
+  background:
+    radial-gradient(120% 55% at 12% 0%, rgba(232, 89, 127, 0.16), transparent 62%),
+    radial-gradient(110% 50% at 95% 100%, rgba(150, 40, 140, 0.16), transparent 65%),
+    radial-gradient(80% 40% at 50% 55%, rgba(120, 20, 60, 0.1), transparent 70%),
+    #0f0308;
+}
+
+:root[data-theme="softglow"] .container * {
+  --bg: rgba(15, 3, 8, 0.45);
+}
+
+:root[data-theme="softglow"] .eq-handle {
+  stroke: #0f0308;
+}
+
+:root[data-theme="softglow"] .theme-panel {
+  background: #0f0308;
 }

@@ -72,8 +72,8 @@ Each toggles off if that exact preset is already what's playing.
 
 ### Themes
 
-Four themes (Terminal, Midnight, Paper, Frost) behind the palette icon. Purely
-cosmetic and stored globally, not per tab.
+Five themes (Terminal, Midnight, Paper, Frost, Soft glow) behind the palette
+icon. Purely cosmetic and stored globally, not per tab.
 
 ## Behavior worth knowing
 

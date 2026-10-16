@@ -39,6 +39,8 @@
   --muted: color-mix(in srgb, var(--fg) 70%, transparent);
   --shade: color-mix(in srgb, var(--fg) 20%, transparent);
 }
+/* Soft glow is Terminal on a darker ground. */
+:root[data-theme="softglow"] { --bg: #0f0308; }
 :root {
   --accent: hsl(var(--accent-hsl));
   --muted: color-mix(in srgb, var(--fg) 62%, transparent);
