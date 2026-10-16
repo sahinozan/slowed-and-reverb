@@ -340,14 +340,31 @@ function git(args, cwd = root) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-// Sends a signal to a step's process group; signal 0 only asks whether any of
-// it is still running.
+// Sends a signal to a step's process group.
 function signalGroup(pid, signal) {
   try {
     process.kill(-pid, signal);
-    return true;
+  } catch {
+    // Already gone.
+  }
+}
+
+// Whether a process, or with a negative pid a process group, is still
+// running. A process that has ended but hasn't been reaped yet (a zombie, as
+// orphans stay in Linux containers whose init doesn't reap them) doesn't count.
+function stillRunning(pid) {
+  try {
+    process.kill(pid, 0);
   } catch (error) {
-    return error.code === 'EPERM';
+    if (error.code !== 'EPERM') return false;
+  }
+  try {
+    return execFileSync('ps', ['-A', '-o', `${pid < 0 ? 'pgid' : 'pid'}=,stat=`], { encoding: 'utf8' })
+      .split('\n')
+      .map((line) => line.trim().split(/\s+/))
+      .some(([id, stat]) => Number(id) === Math.abs(pid) && stat && !stat.startsWith('Z'));
+  } catch {
+    return true;
   }
 }
 
@@ -356,7 +373,7 @@ function signalGroup(pid, signal) {
 async function endGroup(pid, graceMs) {
   const killAt = Date.now() + graceMs;
   const giveUpAt = killAt + 5000;
-  while (signalGroup(pid, 0) && Date.now() < giveUpAt) {
+  while (stillRunning(-pid) && Date.now() < giveUpAt) {
     if (Date.now() >= killAt) signalGroup(pid, 'SIGKILL');
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -404,8 +421,9 @@ function run(command, args, { cwd, log, stdout = log, graceMs = STOP_GRACE_MS })
     child.on('error', (error) => finish(`${command}: ${error.message}`));
     child.on('exit', (code, signal) => {
       const failure = code === 0 && !stopping ? null : `${what} failed (${signal ?? `exit code ${code}`})`;
-      if (signalGroup(child.pid, 'SIGTERM')) endGroup(child.pid, graceMs).then(() => finish(failure));
-      else finish(failure);
+      if (!stillRunning(-child.pid)) return finish(failure);
+      signalGroup(child.pid, 'SIGTERM');
+      endGroup(child.pid, graceMs).then(() => finish(failure));
     });
   });
 }
@@ -815,6 +833,7 @@ module.exports = {
   pullRequests,
   releaseRecord,
   run,
+  stillRunning,
   versionBumpProblems,
   wrap,
   writeReleaseFolder

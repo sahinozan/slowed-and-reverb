@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 const { describe, test } = require('node:test');
 const {
   describeEntries,
@@ -13,6 +14,7 @@ const {
   pullRequests,
   releaseRecord,
   run,
+  stillRunning,
   versionBumpProblems,
   wrap,
   writeReleaseFolder
@@ -383,7 +385,26 @@ describe('Release steps', () => {
       });
 
       leftover = Number(fs.readFileSync(ready, 'utf8'));
-      assert.throws(() => process.kill(leftover, 0), { code: 'ESRCH' });
+      assert.equal(stillRunning(leftover), false);
+    }
+  );
+
+  test(
+    'a process that has ended but not been reaped is not running',
+    { skip: process.platform === 'win32' && 'zombies are POSIX-only' },
+    async (t) => {
+      // sleep never reaps its child, so the child stays a zombie, as orphans
+      // do in Linux containers whose init doesn't reap them.
+      const parent = spawn('sh', ['-c', 'sleep 0 & echo $!; exec sleep 5'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      t.after(() => parent.kill('SIGKILL'));
+      const [line] = await new Promise((resolve) => parent.stdout.once('data', (data) => resolve(String(data).split('\n'))));
+      const zombie = Number(line);
+      const deadline = Date.now() + 3000;
+      while (stillRunning(zombie) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assert.doesNotThrow(() => process.kill(zombie, 0), 'the zombie still has its process entry');
+      assert.equal(stillRunning(zombie), false);
+      assert.equal(stillRunning(parent.pid), true);
     }
   );
 });
