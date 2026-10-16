@@ -47,7 +47,7 @@ function addTestDriver(extensionDir) {
     `window.addEventListener('message', (event) => {
   if (event.source !== window || event.data?.channel !== '${CHANNEL}' || event.data.type !== 'DRIVE') return;
   browser.runtime
-    .sendMessage({ type: 'E2E_DRIVE', site: event.data.site, settings: event.data.settings })
+    .sendMessage({ type: 'E2E_DRIVE', site: event.data.site, state: event.data.state, settings: event.data.settings })
     .then(
       (result) => ({ result }),
       (error) => ({ error: String(error) })
@@ -63,6 +63,12 @@ function addTestDriver(extensionDir) {
   const target = { tabId: sender.tab.id };
   if (message.site === 'youtube') {
     return queueTabApply(sender.tab.id, sender.tab.url, message.settings, true);
+  }
+  // Spotify's scripts registered for the page, as Firefox injects them.
+  if (message.site === 'spotify-registered') {
+    return browser.tabs.sendMessage(sender.tab.id, message.state
+      ? { type: 'GET_STATE' }
+      : { type: 'UPDATE_AUDIO', enabled: true, settings: message.settings });
   }
   return browser.scripting
     .executeScript({ target, files: ['spotify-main.js'], world: 'MAIN' })
@@ -171,10 +177,7 @@ function recordAudioGraph() {
   });
 }
 
-async function openPlayingFixture(name) {
-  const page = await browser.newPage();
-  await page.evaluateOnNewDocument(recordAudioGraph);
-  await page.goto(`${server.url}?${name}`);
+async function startPlaying(page) {
   await page.waitForFunction(() => document.getElementById('player').readyState === 4);
   await page.evaluate(async () => {
     const player = document.getElementById('player');
@@ -182,31 +185,46 @@ async function openPlayingFixture(name) {
     player.muted = true;
     await player.play();
   });
+}
+
+async function openPlayingFixture(name) {
+  const page = await browser.newPage();
+  await page.evaluateOnNewDocument(recordAudioGraph);
+  await page.goto(`${server.url}?${name}`);
+  await startPlaying(page);
   return page;
 }
 
-// Turns the effect on in the page's tab through the test driver.
-async function turnOn(page, site) {
+// Asks the extension, through the test driver, to turn the effect on in the
+// page's tab, or with `state` for the tab's state.
+async function drive(page, site, state = false) {
   await waitFor(
     () => page.evaluate(() => document.readyState === 'complete'),
     5_000,
     'page did not finish loading'
   );
-  const reply = await page.evaluate(
-    (channel, site, settings) =>
+  return page.evaluate(
+    (channel, site, state, settings) =>
       new Promise((resolve) => {
         window.addEventListener('message', function listener(event) {
           if (event.data?.channel !== channel || event.data.type !== 'RESULT') return;
           window.removeEventListener('message', listener);
           resolve(JSON.parse(event.data.reply));
         });
-        window.postMessage({ channel, type: 'DRIVE', site, settings }, '*');
+        window.postMessage({ channel, type: 'DRIVE', site, state, settings }, '*');
       }),
     CHANNEL,
     site,
+    state,
     SETTINGS
   );
+}
+
+// Turns the effect on in the page's tab through the test driver.
+async function turnOn(page, site) {
+  const reply = await drive(page, site);
   assert.equal(reply.error, undefined, `${site}: ${reply.error}`);
+  assert.notEqual(reply.result?.success, false, `${site}: ${JSON.stringify(reply.result)}`);
   // Spotify's engine waits for playback to start before it changes anything.
   await page.evaluate(async () => {
     const player = document.getElementById('player');
@@ -323,4 +341,73 @@ test('puts the audio back when the extension is turned off or removed in Firefox
   await turnOnEverywhere(pages);
   await browser.uninstallExtension(EXTENSION_ID);
   await expectEffectOff(pages);
+  for (const page of Object.values(pages)) await page.close();
+});
+
+function patchFile(dir, file, pattern, replacement) {
+  const filePath = path.join(dir, file);
+  const source = fs.readFileSync(filePath, 'utf8');
+  assert.match(source, pattern, `${file} no longer matches the update test's patch`);
+  fs.writeFileSync(filePath, source.replace(pattern, replacement));
+}
+
+// An earlier version and this build, which both register Spotify's scripts
+// for the local fixture, as for Spotify.
+function prepareUpdate() {
+  return ['older', 'newer'].map((name) => {
+    const versionRoot = path.join(tempRoot, name);
+    fs.mkdirSync(versionRoot);
+    const dir = prepareTestExtension(versionRoot, builtExtensionDir, 'firefox');
+    addTestDriver(dir);
+    patchFile(dir, 'background.js', /'https:\/\/open\.spotify\.com\/\*'/, "'http://127.0.0.1/*'");
+    if (name === 'older') {
+      patchFile(dir, 'spotify-main.js', /const VERSION = '[^']*';/, "const VERSION = '0.0.1';");
+      patchFile(dir, 'manifest.json', /"version": "[^"]*"/, '"version": "0.0.1"');
+    }
+    return dir;
+  });
+}
+
+// An update leaves the previous version's engine in an open Spotify tab.
+// Firefox doesn't put the new version's scripts next to it then, so it turns
+// itself off, but it does when the extension is turned off and on again
+// without reloading the page. That engine plays the way the old version did
+// (1.1.0's skipped), so it has to stay off until the page is reloaded.
+test('asks for a Spotify reload when an update leaves the old engine in the page', async () => {
+  const [older, newer] = prepareUpdate();
+  assert.equal(await browser.installExtension(older), EXTENSION_ID);
+  const page = await openPlayingFixture('update');
+  await turnOn(page, 'spotify-registered');
+  await expectPlayback(page, 'spotify', true, 5_000);
+
+  assert.equal(await browser.installExtension(newer), EXTENSION_ID);
+  await expectPlayback(page, 'spotify', false, 2_000);
+  await setExtensionEnabled(false);
+  await setExtensionEnabled(true);
+
+  let state;
+  await waitFor(
+    async () => {
+      state = (await drive(page, 'spotify-registered', true)).result;
+      return state !== undefined;
+    },
+    5_000,
+    'the new bridge never reached the page'
+  );
+  assert.deepEqual(state, { enabled: false, blocked: true, blockReason: 'outdated' });
+  assert.deepEqual((await drive(page, 'spotify-registered')).result, {
+    success: false,
+    blocked: true,
+    blockReason: 'outdated'
+  });
+  await expectPlayback(page, 'spotify', false, 2_000);
+
+  // A reload brings in this version's engine.
+  await page.reload();
+  await startPlaying(page);
+  await turnOn(page, 'spotify-registered');
+  await expectPlayback(page, 'spotify', true, 5_000);
+
+  await browser.uninstallExtension(EXTENSION_ID);
+  await page.close();
 });

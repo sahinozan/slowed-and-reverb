@@ -448,6 +448,11 @@ describe('Spotify main-world audio engine', () => {
     );
     assert.equal(harness.statusMessages.at(-2).type, 'READY');
     assert.equal(harness.statusMessages.at(-2).bridgeCheck, true);
+    // The bridge compares these with its own version.
+    const { version } = JSON.parse(fs.readFileSync(`${root}/extension/manifest.json`, 'utf8'));
+    assert.equal(harness.statusMessages.at(-2).version, version);
+    assert.equal(harness.statusMessages.at(-1).type, 'STATUS');
+    assert.equal(harness.statusMessages.at(-1).version, version);
     harness.apply(true);
     await wait();
     assert.equal(harness.media.playbackRate, SETTINGS.speed);

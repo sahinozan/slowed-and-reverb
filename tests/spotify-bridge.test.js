@@ -13,6 +13,8 @@ const {
 } = require('./helpers/browser-api');
 const { root } = require('./helpers/load-script');
 
+const { version: VERSION } = JSON.parse(fs.readFileSync(`${root}/extension/manifest.json`, 'utf8'));
+
 const SETTINGS = {
   speed: 0.8,
   reverb: 40,
@@ -34,9 +36,14 @@ describe('Spotify isolated bridge', () => {
     });
     t.after(() => dom.window.close());
     const { window } = dom;
-    const harness = createBrowserApi();
+    const harness = createBrowserApi({ manifest: { version: VERSION } });
     const engineMessages = [];
-    let engineStatus = { playerDetected: true, effectsUnavailable: false, processingActive: false };
+    let engineStatus = {
+      version: VERSION,
+      playerDetected: true,
+      effectsUnavailable: false,
+      processingActive: false
+    };
     let reportsOnTheWay = 0;
     window.chrome = harness.api;
     window.postMessage = (message) => {
@@ -78,7 +85,7 @@ describe('Spotify isolated bridge', () => {
 
     window.eval(`window.__bridgeMessageListener({
       source: window,
-      data: { channel: 'SLOWED_REVERB_SPOTIFY', type: 'READY', bridgeCheck: true }
+      data: { channel: 'SLOWED_REVERB_SPOTIFY', type: 'READY', bridgeCheck: true, version: '${VERSION}' }
     })`);
     const pending = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
       type: 'UPDATE_AUDIO',
@@ -99,6 +106,7 @@ describe('Spotify isolated bridge', () => {
       data: {
         channel: 'SLOWED_REVERB_SPOTIFY',
         type: 'STATUS',
+        version: '${VERSION}',
         playerDetected: true,
         effectsUnavailable: false,
         processingActive: true
@@ -193,43 +201,65 @@ describe('Spotify isolated bridge', () => {
     assert.equal(engineMessages.length, sentToEngine);
   });
 
-  test('keeps an engine from before the bridge check off until the page is reloaded', async (t) => {
-    const dom = new JSDOM('<!doctype html><body></body>', {
-      url: 'https://open.spotify.com/',
-      runScripts: 'outside-only'
-    });
-    t.after(() => dom.window.close());
-    const { window } = dom;
-    const harness = createBrowserApi();
-    const engineMessages = [];
-    const pageListeners = [];
-    window.chrome = harness.api;
-    window.postMessage = (message) => engineMessages.push(message);
-    const originalAddEventListener = window.addEventListener.bind(window);
-    window.addEventListener = (type, listener, options) => {
-      if (type === 'message') pageListeners.push(listener);
-      return originalAddEventListener(type, listener, options);
-    };
-    window.eval(fs.readFileSync(`${root}/extension/spotify-bridge.js`, 'utf8'));
-    await flushPromises();
+  // An update leaves the engine in open tabs, and Firefox puts the new bridge
+  // next to it when the extension is turned off and on again.
+  const outdatedEngines = [
+    ['from before the bridge check', '1.1.1', [{ type: 'READY' }]],
+    [
+      'from 1.1.0, which reports no version',
+      '1.1.1',
+      [{ type: 'READY', bridgeCheck: true }, { type: 'STATUS', playerDetected: true }]
+    ],
+    [
+      'whose report reaches the bridge before it says it is ready',
+      '1.1.1',
+      [{ type: 'STATUS', playerDetected: true }, { type: 'READY', bridgeCheck: true }]
+    ],
+    [
+      'from an earlier version that reports it',
+      '1.2.0',
+      [{ type: 'READY', bridgeCheck: true, version: '1.1.1' }]
+    ]
+  ];
+  for (const [engine, extensionVersion, engineReports] of outdatedEngines) {
+    test(`keeps an engine ${engine} off until the page is reloaded`, async (t) => {
+      const dom = new JSDOM('<!doctype html><body></body>', {
+        url: 'https://open.spotify.com/',
+        runScripts: 'outside-only'
+      });
+      t.after(() => dom.window.close());
+      const { window } = dom;
+      const harness = createBrowserApi({ manifest: { version: extensionVersion } });
+      const engineMessages = [];
+      const pageListeners = [];
+      window.chrome = harness.api;
+      window.postMessage = (message) => engineMessages.push(message);
+      const originalAddEventListener = window.addEventListener.bind(window);
+      window.addEventListener = (type, listener, options) => {
+        if (type === 'message') pageListeners.push(listener);
+        return originalAddEventListener(type, listener, options);
+      };
+      window.eval(fs.readFileSync(`${root}/extension/spotify-bridge.js`, 'utf8'));
+      await flushPromises();
 
-    // An engine left in the tab by the previous version answers without the check.
-    for (const listener of pageListeners) {
-      listener({ source: window, data: { channel: 'SLOWED_REVERB_SPOTIFY', type: 'READY' } });
-    }
-    const response = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
-      type: 'UPDATE_AUDIO',
-      enabled: true,
-      settings: SETTINGS
-    });
-    assert.deepEqual({ ...response }, { success: false, blocked: true, blockReason: 'unsupported' });
-    assert.equal(engineMessages.at(-1).type, 'APPLY');
-    assert.equal(engineMessages.at(-1).enabled, false);
+      for (const report of engineReports) {
+        for (const listener of pageListeners) {
+          listener({ source: window, data: { channel: 'SLOWED_REVERB_SPOTIFY', ...report } });
+        }
+      }
+      const response = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
+        type: 'UPDATE_AUDIO',
+        enabled: true,
+        settings: SETTINGS
+      });
+      assert.deepEqual({ ...response }, { success: false, blocked: true, blockReason: 'outdated' });
+      assert.equal(engineMessages.at(-1).type, 'APPLY');
+      assert.equal(engineMessages.at(-1).enabled, false);
 
-    const state = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
-      type: 'GET_STATE'
+      const state = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
+        type: 'GET_STATE'
+      });
+      assert.deepEqual({ ...state }, { enabled: false, blocked: true, blockReason: 'outdated' });
     });
-    assert.equal(state.blocked, true);
-    assert.equal(state.blockReason, 'unsupported');
-  });
+  }
 });

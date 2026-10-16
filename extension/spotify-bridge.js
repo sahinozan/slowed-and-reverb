@@ -8,6 +8,8 @@
   // The engine answers a change within a task or two; this only guards
   // against an engine that never answers.
   const ENGINE_STATUS_TIMEOUT_MS = 1000;
+  // The engine reports the version it came with, to compare with this one.
+  const VERSION = api.runtime.getManifest().version;
   // A copy of SlowedReverbSettings.DEFAULTS (settings.js). This script stays
   // self-contained because its registration outlives extension updates;
   // tests/settings.test.js keeps the copy equal.
@@ -27,9 +29,12 @@
   let settings = { ...NEUTRAL_SETTINGS };
   let enabled = false;
   let engineReady = false;
-  // Engines from before the bridge check stay in open tabs after an update.
-  // Nothing could turn their effects off once the extension is turned off,
-  // so they are kept off until the page is reloaded.
+  // The engine stays in an open tab when the extension is updated, and
+  // Firefox puts this bridge next to it when the extension is turned off and
+  // on again without reloading the page. An engine from another version
+  // works the way that version did (1.1.0's skipped on Spotify), and one
+  // from before the bridge check can't be turned off with the extension, so
+  // it is kept off until the page is reloaded.
   let engineOutdated = false;
   let playerDetected = false;
   let effectsUnavailable = false;
@@ -61,7 +66,7 @@
   }
 
   function state() {
-    if (engineOutdated) return { enabled: false, blocked: true, blockReason: 'unsupported' };
+    if (engineOutdated) return { enabled: false, blocked: true, blockReason: 'outdated' };
     return {
       enabled,
       settings,
@@ -79,10 +84,12 @@
     // turned off, and messaging it then throws.
     if (!api.runtime?.id) return;
     if (event.source !== window || event.data?.channel !== CHANNEL) return;
+    if (event.data.type !== 'READY' && event.data.type !== 'STATUS') return;
+    // Engines from 1.1.0 and earlier report no version.
+    if (event.data.version !== VERSION) engineOutdated = true;
 
     if (event.data.type === 'READY') {
       engineReady = true;
-      engineOutdated = event.data.bridgeCheck !== true;
       applyToEngine();
     } else if (event.data.type === 'STATUS') {
       playerDetected = Boolean(event.data.playerDetected);
@@ -113,7 +120,7 @@
       const status = nextEngineStatus();
       applyToEngine();
       if (engineOutdated) {
-        sendResponse({ success: false, blocked: true, blockReason: 'unsupported' });
+        sendResponse({ success: false, blocked: true, blockReason: 'outdated' });
         return true;
       }
       status.then(() => {

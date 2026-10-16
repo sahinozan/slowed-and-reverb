@@ -641,6 +641,70 @@ describe('popup behavior', () => {
     assert.equal(document.getElementById('power-toggle').disabled, false);
   });
 
+  test('asks for a Spotify reload when the page still has the previous version', async (t) => {
+    let updated = false;
+    const harness = await createPopupHarness({
+      activeTab: { id: 9, url: 'https://open.spotify.com/track/example' },
+      grantedOrigins: ['https://open.spotify.com/*'],
+      onTabMessage(_tabId, message) {
+        if (message.type === 'GET_STATE') {
+          return updated
+            ? { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+            : { enabled: false, blocked: true, blockReason: 'outdated' };
+        }
+        return { success: true };
+      }
+    });
+    t.after(() => close(harness));
+    const document = harness.window.document;
+
+    assert.equal(document.getElementById('blocked-banner').hidden, true);
+    assert.equal(document.getElementById('reload-panel').hidden, false);
+    assert.equal(
+      document.getElementById('reload-text').textContent,
+      'Reload Spotify to finish updating the extension.'
+    );
+    assert.equal(document.getElementById('reload-btn').textContent, 'Reload Spotify');
+    assert.equal(document.getElementById('power-toggle').disabled, true);
+    assert.equal(audioUpdates(harness).length, 0);
+
+    let progress = null;
+    const reload = harness.api.tabs.reload;
+    harness.api.tabs.reload = (tabId) => {
+      progress = document.getElementById('reload-status').textContent;
+      updated = true;
+      return reload(tabId);
+    };
+    document.getElementById('reload-btn').click();
+    for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
+
+    assert.equal(progress, 'Reloading Spotify…');
+    assert.deepEqual(harness.calls.reloadedTabs, [9]);
+    assert.equal(document.getElementById('reload-panel').hidden, true);
+    assert.equal(document.getElementById('power-toggle').disabled, false);
+  });
+
+  test('asks for a Spotify reload when turning the effect on finds the previous version', async (t) => {
+    const harness = await createPopupHarness({
+      activeTab: { id: 9, url: 'https://open.spotify.com/track/example' },
+      grantedOrigins: ['https://open.spotify.com/*'],
+      onTabMessage(_tabId, message) {
+        if (message.type === 'GET_STATE') {
+          return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false };
+        }
+        return { success: false, blocked: true, blockReason: 'outdated' };
+      }
+    });
+    t.after(() => close(harness));
+    const document = harness.window.document;
+
+    // A fresh tab turns the effect on as the popup opens.
+    assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
+    assert.equal(document.getElementById('reload-panel').hidden, false);
+    assert.match(document.getElementById('reload-text').textContent, /finish updating/);
+    assert.equal(document.getElementById('power-toggle').checked, false);
+  });
+
   test('keeps other blocked reasons as a warning without a reload', async (t) => {
     const harness = await createPopupHarness({
       contentState: { enabled: false, blocked: true, blockReason: 'drm' }
