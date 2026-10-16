@@ -14,20 +14,40 @@ function createEvent() {
 }
 const { root } = require('./load-script');
 
+// A ramp lands on its final value at once, and is recorded so a test can
+// check that a change was smoothed rather than set.
+class FakeAudioParam {
+  constructor() {
+    this.value = 0;
+    this.ramps = [];
+  }
+
+  cancelScheduledValues() {}
+
+  setValueAtTime(value) {
+    this.value = value;
+  }
+
+  linearRampToValueAtTime(value, endTime) {
+    this.ramps.push({ from: this.value, to: value, endTime });
+    this.value = value;
+  }
+}
+
 class FakeAudioNode {
   constructor(type) {
     this.type = type;
     this.connections = [];
-    this.gain = { value: 0 };
-    this.frequency = { value: 0 };
-    this.Q = { value: 0 };
-    this.delayTime = { value: 0 };
-    this.pan = { value: 0 };
-    this.threshold = { value: 0 };
-    this.knee = { value: 0 };
-    this.ratio = { value: 0 };
-    this.attack = { value: 0 };
-    this.release = { value: 0 };
+    this.gain = new FakeAudioParam();
+    this.frequency = new FakeAudioParam();
+    this.Q = new FakeAudioParam();
+    this.delayTime = new FakeAudioParam();
+    this.pan = new FakeAudioParam();
+    this.threshold = new FakeAudioParam();
+    this.knee = new FakeAudioParam();
+    this.ratio = new FakeAudioParam();
+    this.attack = new FakeAudioParam();
+    this.release = new FakeAudioParam();
   }
 
   connect(target, ...ports) {
@@ -48,6 +68,7 @@ class FakeAudioContext {
 
   constructor() {
     this.sampleRate = 20;
+    this.currentTime = 0;
     this.state = 'running';
     this.destination = new FakeAudioNode('destination');
     this.filters = [];
@@ -142,6 +163,9 @@ async function createContentHarness(options = {}) {
     runScripts: 'outside-only'
   });
   const { window } = dom;
+  if (options.userAgent) {
+    Object.defineProperty(window.navigator, 'userAgent', { value: options.userAgent });
+  }
   const runtimeMessages = [];
   const warnings = [];
 
@@ -160,6 +184,8 @@ async function createContentHarness(options = {}) {
       readyState: { configurable: true, value: options.readyState ?? 2 }
     });
     media.playbackRate = 1;
+    // jsdom has no default; browsers keep the original pitch unless told not to.
+    media.preservesPitch = true;
   }
 
   // jsdom leaves event.source unset, which both scripts check.
@@ -201,13 +227,17 @@ async function createContentHarness(options = {}) {
   await inject();
 
   // Resolves with the content script's answer to a message from the extension.
+  // A change of pitch mode reaches the player 40 ms after the answer, once
+  // the output has faded out (see youtube-main.js), so wait for it too.
+  const PLAYER_CHANGE_SETTLE_MS = 60;
+
   function dispatch(message) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`No answer to ${message.type}`)), 3000);
       for (const listener of runtimeMessage.listeners) {
         listener(message, {}, (value) => {
           clearTimeout(timer);
-          resolve(value);
+          setTimeout(() => resolve(value), PLAYER_CHANGE_SETTLE_MS);
         });
       }
     });

@@ -57,6 +57,28 @@
 
   const LIMITER = { threshold: -3, knee: 3, ratio: 20, attack: 0.003, release: 0.25 };
 
+  // How long a setting takes to move to a new value. Jumping straight to it
+  // makes an audible click; this is too short to hear as a fade.
+  const SMOOTHING_SECONDS = 0.025;
+  // Changes start this far ahead. Firefox's audio clock, as a page reads it,
+  // runs behind the sound being made, so a change starting "now" would start
+  // in the past and jump to partway through.
+  const SCHEDULE_AHEAD_SECONDS = 0.02;
+
+  // The player itself clicks when it changes how it plays: Firefox for any
+  // change of speed or pitch mode, 5 to 20 ms after it; Chromium only for a
+  // change of pitch mode, about 50 ms after it (measured on both). So the
+  // output fades out first, the player changes once it is silent, and the
+  // output stays silent until the click has passed.
+  const FIREFOX = window.navigator.userAgent.includes('Firefox');
+  const DIP_FADE_SECONDS = 0.01;
+  // After the fade-out has finished, with a margin for page timers.
+  const PLAYER_CHANGE_DELAY_MS = 40;
+  const PLAYER_CLICK_SECONDS = 0.08;
+  // Firefox also goes silent for about 165 ms, then clicks, when a player is
+  // first routed into the graph.
+  const CAPTURE_SILENCE_SECONDS = FIREFOX ? 0.25 : 0;
+
   const HAVE_METADATA = 1;
   const MEDIA_SETTLE_MS = 100;
   const MAX_ACTIVE_PIPELINES = 32;
@@ -135,6 +157,15 @@
     audioContext.resume().catch(() => {});
   }
 
+  // Starts from where the setting is now, so a change that arrives mid-move
+  // (a slider being dragged) carries on without a jump.
+  function smoothTo(param, value) {
+    const start = audioContext.currentTime + SCHEDULE_AHEAD_SECONDS;
+    param.cancelScheduledValues(start);
+    param.setValueAtTime(param.value, start);
+    param.linearRampToValueAtTime(value, start + SMOOTHING_SECONDS);
+  }
+
   function createGain(context, value = 1) {
     const node = context.createGain();
     node.gain.value = value;
@@ -180,9 +211,78 @@
     return merger;
   }
 
+  // Crossfades between the unchanged path and the effect. While the output
+  // has to stay silent (a player change on its way, or a player just routed
+  // in), both fade out, and the crossfade happens when the silence ends.
   function setPipelineEnabled(pipeline, enabled) {
-    pipeline.bypass.gain.value = enabled ? 0 : 1;
-    pipeline.processed.gain.value = enabled ? 1 : 0;
+    const now = audioContext.currentTime;
+    const { silentUntil } = pipeline;
+    const outputs = [
+      [pipeline.bypass.gain, enabled ? 0 : 1],
+      [pipeline.processed.gain, enabled ? 1 : 0]
+    ];
+
+    for (const [param, value] of outputs) {
+      if (silentUntil <= now) {
+        smoothTo(param, value);
+        continue;
+      }
+      const start = now + SCHEDULE_AHEAD_SECONDS;
+      const silentFrom = start + DIP_FADE_SECONDS;
+      param.cancelScheduledValues(start);
+      param.setValueAtTime(param.value, start);
+      param.linearRampToValueAtTime(0, silentFrom);
+      if (silentUntil === Infinity) continue;
+      param.setValueAtTime(0, Math.max(silentUntil, silentFrom));
+      param.linearRampToValueAtTime(value, Math.max(silentUntil, silentFrom) + SMOOTHING_SECONDS);
+    }
+  }
+
+  function playbackClicks(media, speed, keepPitch) {
+    if (media.preservesPitch !== keepPitch) return true;
+    return FIREFOX && Math.abs(media.playbackRate - speed) > 0.001;
+  }
+
+  function setPlayback(media, speed, keepPitch) {
+    media.playbackRate = speed;
+    media.preservesPitch = keepPitch;
+    media.mozPreservesPitch = keepPitch;
+    media.webkitPreservesPitch = keepPitch;
+  }
+
+  // Drops a player change still waiting for the output to fade out.
+  function cancelPendingPlayback(pipeline) {
+    pipeline.pendingPlayback = null;
+    if (pipeline.silentUntil === Infinity) pipeline.silentUntil = pipeline.captureEnds;
+  }
+
+  // Sets the crossfade and the player's speed and pitch mode. A change that
+  // makes the player click waits until the output has faded out.
+  function changePlayback(media, pipeline, enabled, speed, keepPitch) {
+    cancelPendingPlayback(pipeline);
+
+    if (!playbackClicks(media, speed, keepPitch)) {
+      setPipelineEnabled(pipeline, enabled);
+      setPlayback(media, speed, keepPitch);
+      return;
+    }
+
+    pipeline.silentUntil = Infinity;
+    setPipelineEnabled(pipeline, enabled);
+    const change = () => {
+      if (pipeline.pendingPlayback !== change) return;
+      pipeline.pendingPlayback = null;
+      // Timed from the change itself, in case this ran late, and scheduled
+      // first, since changing the player can run this file's code again.
+      pipeline.silentUntil = Math.max(
+        pipeline.captureEnds,
+        audioContext.currentTime + PLAYER_CLICK_SECONDS
+      );
+      setPipelineEnabled(pipeline, enabled);
+      setPlayback(media, speed, keepPitch);
+    };
+    pipeline.pendingPlayback = change;
+    window.setTimeout(change, PLAYER_CHANGE_DELAY_MS);
   }
 
   function connectPipeline(media, pipeline) {
@@ -270,8 +370,9 @@
       const saturation = createGain(context, 0);
       const width = createGain(context, 1);
       const mixed = createGain(context, 1);
+      // Both start silent; the first crossfade brings in the effect.
       const bypass = createGain(context, 0);
-      const processed = createGain(context, 1);
+      const processed = createGain(context, 0);
 
       source.connect(stereoInput);
       source.connect(bypass).connect(context.destination);
@@ -308,6 +409,9 @@
         pan,
         bypass,
         processed,
+        captureEnds: context.currentTime + CAPTURE_SILENCE_SECONDS,
+        silentUntil: context.currentTime + CAPTURE_SILENCE_SECONDS,
+        pendingPlayback: null,
         connected: true,
         playListener: null
       };
@@ -344,53 +448,46 @@
     let pipeline = pipelines.get(media);
 
     if (!bridgeConnected) {
-      if (pipeline && connectPipeline(media, pipeline)) setPipelineEnabled(pipeline, false);
+      if (pipeline && connectPipeline(media, pipeline)) {
+        cancelPendingPlayback(pipeline);
+        setPipelineEnabled(pipeline, false);
+      }
       return;
     }
 
     if (!effectEnabled) {
-      media.playbackRate = NEUTRAL_SETTINGS.speed;
-      media.preservesPitch = NEUTRAL_SETTINGS.keepPitch;
-      media.mozPreservesPitch = NEUTRAL_SETTINGS.keepPitch;
-      media.webkitPreservesPitch = NEUTRAL_SETTINGS.keepPitch;
-
-      if (pipeline && connectPipeline(media, pipeline)) setPipelineEnabled(pipeline, false);
+      const { speed, keepPitch } = NEUTRAL_SETTINGS;
+      if (pipeline && connectPipeline(media, pipeline)) {
+        changePlayback(media, pipeline, false, speed, keepPitch);
+      } else {
+        setPlayback(media, speed, keepPitch);
+      }
       return;
     }
 
     pipeline ??= createPipeline(media);
     if (!pipeline) return;
     if (!connectPipeline(media, pipeline)) return;
-    setPipelineEnabled(pipeline, true);
 
     const settings = currentSettings;
     const live = isLiveMedia(media);
     liveStreamDetected = liveStreamDetected || live;
 
-    if (live) {
-      media.playbackRate = NEUTRAL_SETTINGS.speed;
-      media.preservesPitch = NEUTRAL_SETTINGS.keepPitch;
-      media.mozPreservesPitch = NEUTRAL_SETTINGS.keepPitch;
-      media.webkitPreservesPitch = NEUTRAL_SETTINGS.keepPitch;
-    } else {
-      media.playbackRate = settings.speed;
-      media.preservesPitch = settings.keepPitch;
-      media.mozPreservesPitch = settings.keepPitch;
-      media.webkitPreservesPitch = settings.keepPitch;
-    }
+    const playback = live ? NEUTRAL_SETTINGS : settings;
+    changePlayback(media, pipeline, true, playback.speed, playback.keepPitch);
 
-    pipeline.eqLow.gain.value = settings.eqLow;
-    pipeline.eqMid.gain.value = settings.eqMid;
-    pipeline.eqHigh.gain.value = settings.eqHigh;
+    smoothTo(pipeline.eqLow.gain, settings.eqLow);
+    smoothTo(pipeline.eqMid.gain, settings.eqMid);
+    smoothTo(pipeline.eqHigh.gain, settings.eqHigh);
 
     const reverbMix = settings.reverb / 100;
-    pipeline.wet.gain.value = reverbMix * REVERB_WET_SCALE;
-    pipeline.dry.gain.value = 1 - reverbMix * REVERB_DRY_DUCK;
+    smoothTo(pipeline.wet.gain, reverbMix * REVERB_WET_SCALE);
+    smoothTo(pipeline.dry.gain, 1 - reverbMix * REVERB_DRY_DUCK);
 
-    pipeline.echo.gain.value = (settings.echo / 100) * ECHO_WET_SCALE;
-    pipeline.saturation.gain.value = (settings.saturation / 100) * SATURATION_WET_SCALE;
-    pipeline.width.gain.value = settings.width / 100;
-    pipeline.pan.pan.value = settings.pan / 100;
+    smoothTo(pipeline.echo.gain, (settings.echo / 100) * ECHO_WET_SCALE);
+    smoothTo(pipeline.saturation.gain, (settings.saturation / 100) * SATURATION_WET_SCALE);
+    smoothTo(pipeline.width.gain, settings.width / 100);
+    smoothTo(pipeline.pan.pan, settings.pan / 100);
   }
 
   function processMediaElements() {

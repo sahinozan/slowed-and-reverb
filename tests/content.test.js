@@ -19,6 +19,18 @@ const SETTINGS = {
   eqHigh: 4
 };
 
+// The two gains that play to the speakers: the unchanged path, then the effect.
+function outputGains(context) {
+  return context.gains.filter((node) =>
+    node.connections.some((connection) => connection.target === context.destination)
+  );
+}
+
+// Where each recorded change of a setting was heading, and when it got there.
+function ramps(param) {
+  return param.ramps.map(({ to, endTime }) => ({ to, endTime: Math.round(endTime * 1000) / 1000 }));
+}
+
 function close(harness) {
   harness.dom.window.close();
 }
@@ -68,6 +80,73 @@ describe('content script audio processing', () => {
       ),
       [-3, 3, 20, 0.003, 0.25]
     );
+
+    close(harness);
+  });
+
+  test('fades settings instead of switching them', async () => {
+    const harness = await createContentHarness();
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const context = harness.getContext();
+    const processed = outputGains(context)[1];
+    // Past the silence that switching the effect on started.
+    context.currentTime = 1;
+
+    await harness.dispatch({
+      type: 'UPDATE_AUDIO',
+      settings: { ...SETTINGS, reverb: 0, speed: 0.9 },
+      enabled: true
+    });
+    // Changes start 20 ms ahead and take 25 ms.
+    assert.deepEqual(ramps(context.gains[2].gain).at(-1), { to: 0, endTime: 1.045 });
+    // Chromium changes speed without a click, so the output carries on.
+    assert.deepEqual(ramps(processed.gain).at(-1), { to: 1, endTime: 1.045 });
+    assert.equal(harness.media.playbackRate, 0.9);
+
+    close(harness);
+  });
+
+  test('stays silent while the player changes its pitch mode', async () => {
+    const harness = await createContentHarness();
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const context = harness.getContext();
+    const [bypass, processed] = outputGains(context);
+
+    const answer = harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: false });
+    // Until the output has faded out, the player keeps its pitch mode.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(harness.media.preservesPitch, true);
+    await answer;
+
+    assert.equal(harness.media.preservesPitch, false);
+    // Both fade out over 10 ms, stay silent 80 ms, then fade to their new level.
+    assert.deepEqual(ramps(bypass.gain).slice(-2), [
+      { to: 0, endTime: 0.03 },
+      { to: 1, endTime: 0.105 }
+    ]);
+    assert.deepEqual(ramps(processed.gain).slice(-2), [
+      { to: 0, endTime: 0.03 },
+      { to: 0, endTime: 0.105 }
+    ]);
+
+    close(harness);
+  });
+
+  test('stays silent while Firefox changes the speed', async () => {
+    const harness = await createContentHarness({
+      userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
+    });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    const processed = outputGains(harness.getContext())[1];
+
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9 }, enabled: true });
+    assert.equal(harness.media.playbackRate, 0.9);
+    // Firefox also keeps the output silent for 250 ms after first routing
+    // the player in, and in this test the audio clock never moves on.
+    assert.deepEqual(ramps(processed.gain).slice(-2), [
+      { to: 0, endTime: 0.03 },
+      { to: 1, endTime: 0.275 }
+    ]);
 
     close(harness);
   });
@@ -392,6 +471,8 @@ describe('content script audio processing', () => {
       value: Number.POSITIVE_INFINITY
     });
     harness.media.dispatchEvent(new harness.window.Event('play'));
+    // The change of pitch mode waits for the output to fade out.
+    await new Promise((resolve) => setTimeout(resolve, 60));
 
     assert.equal(harness.media.playbackRate, 1);
     assert.equal(harness.media.preservesPitch, false);
