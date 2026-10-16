@@ -291,7 +291,7 @@ describe('store package contracts', () => {
 
   test('keeps CI dependencies immutable and automatic updates enabled', () => {
     const workflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8');
-    assert.doesNotMatch(workflow, /uses:\s+actions\/(?:checkout|setup-node)@v\d/);
+    assert.doesNotMatch(workflow, /uses:\s+actions\/(?:checkout|setup-node|cache)@v\d/);
     assert.doesNotMatch(workflow, /uses:\s+actions\/upload-artifact@v\d/);
     assert.match(workflow, /persist-credentials:\s+false/);
     assert.match(workflow, /node-version:\s+24\.19\.0/);

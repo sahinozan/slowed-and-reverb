@@ -126,8 +126,30 @@ jobs:
       - name: Install exact dependencies
         run: npm ci
 
+      # Unpacking Chromium takes minutes on Windows, so keep the download in
+      # a cache keyed on the Playwright version; a bump downloads it again.
+      - name: Read the Playwright version
+        id: playwright
+        shell: bash
+        run: |
+          version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright Chromium
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.os == 'Windows' && '~\AppData\Local\ms-playwright' || '~/.cache/ms-playwright' }}
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+
       - name: Install Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps --no-shell chromium
+
+      # The cache holds only the browser, so Linux still needs its libraries.
+      - name: Install Chromium's system libraries
+        if: steps.playwright-cache.outputs.cache-hit == 'true' && runner.os == 'Linux'
+        run: npx playwright install-deps chromium
 
       - name: Run extension browser smoke tests
         run: npm run test:e2e
