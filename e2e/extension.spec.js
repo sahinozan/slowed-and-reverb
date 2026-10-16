@@ -50,9 +50,19 @@ test('loads the real popup page and applies audio settings to the active tab', a
   await popup.getByRole('button', { name: 'Themes' }).click();
   await popup.getByRole('button', { name: 'Midnight' }).click();
   await expect(popup.locator('html')).toHaveAttribute('data-theme', 'midnight');
+  await popup.keyboard.press('Escape');
+  await expect(popup.locator('#theme-panel')).toBeHidden();
 
+  // Take the shot as people see the popup: after the theme has faded in, and
+  // cropped to the page, since a real popup window is sized to its content.
+  const box = await popup.evaluate(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.all(document.getAnimations().map((animation) => animation.finished));
+    const { x, y, width, height } = document.body.getBoundingClientRect();
+    return { x, y, width, height };
+  });
   const screenshotPath = testInfo.outputPath(`popup-${process.platform}.png`);
-  await popup.screenshot({ path: screenshotPath });
+  await popup.screenshot({ path: screenshotPath, clip: box });
   await testInfo.attach(`popup-${process.platform}.png`, {
     path: screenshotPath,
     contentType: 'image/png'
