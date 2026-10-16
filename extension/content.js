@@ -61,8 +61,9 @@
   }
 
   function adoptEngineState(state) {
-    // The engine turns the effect off on media it cannot change.
-    if (state && !state.enabled) effectEnabled = false;
+    // The engine turns the effect off on media it cannot change. A state from
+    // before a newer change from the extension says nothing about that change.
+    if (state && !state.enabled && state.revision === stateRevision) effectEnabled = false;
   }
 
   function applyToEngine(restoring = false) {
@@ -70,6 +71,7 @@
       type: 'APPLY',
       settings: currentSettings,
       enabled: effectEnabled,
+      revision: stateRevision,
       restoring
     }).then((state) => {
       adoptEngineState(state);
@@ -103,6 +105,7 @@
     if (event.data.type !== 'STATE') return;
 
     const state = {
+      revision: event.data.revision,
       enabled: event.data.enabled === true,
       blockReason: event.data.blockReason ?? null,
       live: event.data.live === true,
@@ -130,9 +133,10 @@
         sendResponse({ success: false, ...describeState(null) });
         return true;
       }
+      const revision = stateRevision;
       applyToEngine().then((state) => {
         const description = describeState(state);
-        if (description.blocked) effectEnabled = false;
+        if (description.blocked && revision === stateRevision) effectEnabled = false;
         sendResponse({ success: !description.blocked, ...description });
       });
     } else if (message.type === 'GET_STATE') {

@@ -24,6 +24,10 @@
   let settings = { ...NEUTRAL_SETTINGS };
   let enabled = false;
   let engineReady = false;
+  // Engines from before the bridge check stay in open tabs after an update.
+  // Nothing could turn their effects off once the extension is turned off,
+  // so they are kept off until the page is reloaded.
+  let engineOutdated = false;
   let playerDetected = false;
   let effectsUnavailable = false;
   let processingActive = false;
@@ -31,10 +35,12 @@
 
   function applyToEngine() {
     if (!engineReady) return;
+    if (engineOutdated) enabled = false;
     window.postMessage({ channel: CHANNEL, type: 'APPLY', settings, enabled }, '*');
   }
 
   function state() {
+    if (engineOutdated) return { enabled: false, blocked: true, blockReason: 'unsupported' };
     return {
       enabled,
       settings,
@@ -55,6 +61,7 @@
 
     if (event.data.type === 'READY') {
       engineReady = true;
+      engineOutdated = event.data.bridgeCheck !== true;
       applyToEngine();
     } else if (event.data.type === 'STATUS') {
       playerDetected = Boolean(event.data.playerDetected);
@@ -82,6 +89,10 @@
       settings = { ...NEUTRAL_SETTINGS, ...message.settings };
       enabled = Boolean(message.enabled);
       applyToEngine();
+      if (engineOutdated) {
+        sendResponse({ success: false, blocked: true, blockReason: 'unsupported' });
+        return true;
+      }
       sendResponse({
         success: true,
         enabled,

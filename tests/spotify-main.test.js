@@ -213,6 +213,7 @@ describe('Spotify main-world audio engine', () => {
       })
     );
     assert.equal(harness.statusMessages.at(-2).type, 'READY');
+    assert.equal(harness.statusMessages.at(-2).bridgeCheck, true);
     harness.apply(true);
     await wait();
     assert.equal(harness.media.playbackRate, SETTINGS.speed);

@@ -60,7 +60,7 @@ describe('Spotify isolated bridge', () => {
 
     window.eval(`window.__bridgeMessageListener({
       source: window,
-      data: { channel: 'SLOWED_REVERB_SPOTIFY', type: 'READY' }
+      data: { channel: 'SLOWED_REVERB_SPOTIFY', type: 'READY', bridgeCheck: true }
     })`);
     const pending = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
       type: 'UPDATE_AUDIO',
@@ -155,5 +155,45 @@ describe('Spotify isolated bridge', () => {
     fromEngine({ type: 'READY' });
     assert.deepEqual(harness.calls.runtimeMessages, []);
     assert.equal(engineMessages.length, sentToEngine);
+  });
+
+  test('keeps an engine from before the bridge check off until the page is reloaded', async (t) => {
+    const dom = new JSDOM('<!doctype html><body></body>', {
+      url: 'https://open.spotify.com/',
+      runScripts: 'outside-only'
+    });
+    t.after(() => dom.window.close());
+    const { window } = dom;
+    const harness = createBrowserApi();
+    const engineMessages = [];
+    const pageListeners = [];
+    window.chrome = harness.api;
+    window.postMessage = (message) => engineMessages.push(message);
+    const originalAddEventListener = window.addEventListener.bind(window);
+    window.addEventListener = (type, listener, options) => {
+      if (type === 'message') pageListeners.push(listener);
+      return originalAddEventListener(type, listener, options);
+    };
+    window.eval(fs.readFileSync(`${root}/extension/spotify-bridge.js`, 'utf8'));
+    await flushPromises();
+
+    // An engine left in the tab by the previous version answers without the check.
+    for (const listener of pageListeners) {
+      listener({ source: window, data: { channel: 'SLOWED_REVERB_SPOTIFY', type: 'READY' } });
+    }
+    const response = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
+      type: 'UPDATE_AUDIO',
+      enabled: true,
+      settings: SETTINGS
+    });
+    assert.deepEqual({ ...response }, { success: false, blocked: true, blockReason: 'unsupported' });
+    assert.equal(engineMessages.at(-1).type, 'APPLY');
+    assert.equal(engineMessages.at(-1).enabled, false);
+
+    const state = await dispatchRuntimeMessage(harness.events.runtimeMessage, {
+      type: 'GET_STATE'
+    });
+    assert.equal(state.blocked, true);
+    assert.equal(state.blockReason, 'unsupported');
   });
 });

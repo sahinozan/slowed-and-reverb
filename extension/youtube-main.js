@@ -81,6 +81,8 @@
   let bridgeConnected = false;
   let bridgeCheckTimer = null;
   let started = false;
+  // Which change from content.js the engine's state reflects.
+  let revision = null;
 
   function blockReason() {
     if (drmDetected) return 'drm';
@@ -461,6 +463,7 @@
         type: 'STATE',
         requestId,
         notify,
+        revision,
         enabled: effectEnabled,
         blockReason: blockReason(),
         live: liveStreamDetected,
@@ -536,6 +539,7 @@
       connectBridge();
     } else if (type === 'APPLY') {
       connectBridge();
+      revision = event.data.revision ?? null;
       currentSettings = normalizeSettings(event.data.settings);
       effectEnabled = event.data.enabled === true;
       // State restored after a reload waits for the page's players.

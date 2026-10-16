@@ -195,7 +195,7 @@ async function createContentHarness(options = {}) {
     window.eval(engineSource);
     window.eval(settingsSource);
     window.eval(source);
-    await settle();
+    if (options.settle !== false) await settle();
   }
 
   await inject();

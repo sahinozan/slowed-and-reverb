@@ -371,7 +371,7 @@
     if (event.data.type === 'BRIDGE_READY') {
       // Also a bridge that Firefox injects again when the extension comes back.
       watchBridge();
-      window.postMessage({ channel: CHANNEL, type: 'READY' }, '*');
+      window.postMessage({ channel: CHANNEL, type: 'READY', bridgeCheck: true }, '*');
       notifyStatus();
     } else if (event.data.type === 'APPLY') {
       watchBridge();
@@ -384,6 +384,6 @@
   });
 
   for (const media of document.querySelectorAll('audio, video')) registerMedia(media);
-  window.postMessage({ channel: CHANNEL, type: 'READY' }, '*');
+  window.postMessage({ channel: CHANNEL, type: 'READY', bridgeCheck: true }, '*');
   notifyStatus();
 })();

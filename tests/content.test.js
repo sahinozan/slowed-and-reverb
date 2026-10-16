@@ -182,6 +182,26 @@ describe('content script audio processing', () => {
     assert.deepEqual(outputGains.map((node) => node.gain.value), [0, 1]);
   });
 
+  test('a late answer to the startup request does not undo a newer change', async (t) => {
+    // Lets content.js receive the remembered state and ask the engine to
+    // apply it, without letting the engine answer yet.
+    const harness = await createContentHarness({ settle: false });
+    t.after(() => close(harness));
+    for (let index = 0; index < 10; index++) await Promise.resolve();
+
+    const response = await harness.dispatch({
+      type: 'UPDATE_AUDIO',
+      settings: SETTINGS,
+      enabled: true
+    });
+    assert.equal(response.success, true);
+
+    const state = await harness.dispatch({ type: 'GET_STATE' });
+    assert.equal(state.enabled, true);
+    assert.equal(state.processingActive, true);
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+  });
+
   test('restores remembered state after reinjection', async () => {
     const harness = await createContentHarness({
       remembered: {
