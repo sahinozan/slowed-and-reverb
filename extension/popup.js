@@ -1189,6 +1189,8 @@ async function syncWithActiveTab() {
 const RATING_KEY = 'ratingPrompt';
 const RATING_DAYS = 5;
 let rating = null;
+// Set by an answer, which can come while the day count is still loading.
+let ratingAnswered = false;
 
 function localDay(date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
@@ -1198,6 +1200,7 @@ function localDay(date = new Date()) {
 async function countDayOfUse() {
   if (!els.power.checked || blocked) return;
   const { [RATING_KEY]: stored } = await api.storage.local.get(RATING_KEY);
+  if (ratingAnswered) return;
   rating = { days: 0, lastDay: null, done: false, ...stored };
   if (rating.done) return;
 
@@ -1207,11 +1210,13 @@ async function countDayOfUse() {
     rating.lastDay = today;
     await api.storage.local.set({ [RATING_KEY]: rating });
   }
+  if (ratingAnswered) return;
   els.ratePrompt.hidden = rating.days < RATING_DAYS;
 }
 
 // One write, started on the click itself: opening the store closes the popup.
 function finishRatingPrompt() {
+  ratingAnswered = true;
   els.ratePrompt.hidden = true;
   rating = { days: 0, lastDay: null, ...rating, done: true };
   api.storage.local.set({ [RATING_KEY]: rating }).catch(() => {});

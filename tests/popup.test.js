@@ -847,6 +847,36 @@ describe('popup behavior', () => {
       close(harness);
     });
 
+    test('stays answered when the answer comes while the day count is still loading', async () => {
+      const tabState = deferredTabState();
+      const harness = await createPopupHarness({
+        onTabMessage: tabState.onTabMessage,
+        local: { ratingPrompt: { days: 4, lastDay: '2000-01-01', done: false } }
+      });
+      // The popup reads the day count, but the answer to that read arrives
+      // only after the click, still holding what was stored before it.
+      let releaseRead = null;
+      const readNow = harness.local.get.bind(harness.local);
+      harness.local.get = async (query) => {
+        const stored = await readNow(query);
+        if (query === 'ratingPrompt') await new Promise((resolve) => { releaseRead = resolve; });
+        return stored;
+      };
+
+      tabState.release(PLAYING);
+      for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+      assert.equal(typeof releaseRead, 'function');
+
+      harness.window.document.getElementById('rate-prompt-dismiss').click();
+      releaseRead();
+      for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+
+      assert.equal(ratePrompt(harness).hidden, true);
+      assert.equal(harness.local.data.ratingPrompt.done, true);
+
+      close(harness);
+    });
+
     test('stops asking once answered', async () => {
       const harness = await createPopupHarness({
         contentState: PLAYING,

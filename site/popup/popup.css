@@ -1056,7 +1056,8 @@ footer #reset-btn {
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  /* Text, unlike the header icons, needs 4.5:1, which 72% gives on every theme. */
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
   text-decoration: none;
   transition: color 0.15s ease;
 }
