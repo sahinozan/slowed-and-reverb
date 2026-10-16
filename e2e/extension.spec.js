@@ -109,6 +109,45 @@ test('drops the loading warning when the player finishes loading', async ({ exte
   await expect(popup.getByText('On', { exact: true })).toBeVisible();
 });
 
+test('opens with the switch on when the effect was on, before the tab answers', async ({
+  extension
+}) => {
+  // Popups left open by earlier tests share the remembered state, so close
+  // them, and use a page of its own rather than one an earlier test turned off.
+  for (const open of extension.context.pages()) {
+    if (open.url().startsWith(`chrome-extension://${extension.extensionId}/`)) await open.close();
+  }
+  const url = `${extension.fixtureUrl}?switch`;
+  const page = await extension.context.newPage();
+  await page.goto(url);
+  await expect(page.locator('#player')).toHaveJSProperty('readyState', 4);
+  await page.bringToFront();
+  const tab = await fixtureTab(extension.serviceWorker, url);
+
+  // The popup remembers how it looked once the tab has answered, which is
+  // when the preset bar shows.
+  const first = await openPopupPage(extension, tab.id);
+  await expect(first.locator('#current-preset-label')).toHaveText('Current Preset: Slowed + Reverb');
+  await first.close();
+
+  // Read the switch once popup.js has run its first, synchronous part. The
+  // tab's answer takes a few round trips to the page, so it comes later.
+  const popup = await extension.context.newPage();
+  await popup.addInitScript(() => {
+    document.addEventListener('DOMContentLoaded', () => {
+      window.switchAtStart = document.getElementById('power-toggle').checked;
+    });
+  });
+  await extension.serviceWorker.evaluate(
+    (targetTabId) => chrome.tabs.update(targetTabId, { active: true }),
+    tab.id
+  );
+  await popup.goto(`chrome-extension://${extension.extensionId}/popup.html`);
+
+  expect(await popup.evaluate(() => window.switchAtStart)).toBe(true);
+  await expect(popup.getByText('On', { exact: true })).toBeVisible();
+});
+
 test("answers Spotify's turn-on with the effect running on a playing song", async ({
   extension
 }) => {
