@@ -3,6 +3,8 @@
 const fs = require('fs');
 const { JSDOM } = require('jsdom');
 
+const { waitFor } = require('./browser-api');
+
 function createEvent() {
   const listeners = [];
   return {
@@ -228,10 +230,22 @@ async function createContentHarness(options = {}) {
     media.preservesPitch = true;
   }
 
-  // jsdom leaves event.source unset, which both scripts check.
+  // jsdom leaves event.source unset, which both scripts check. Counts the
+  // messages between the two scripts that haven't arrived yet.
+  let messagesOnTheWay = 0;
   window.postMessage = (data) => {
-    setTimeout(() => window.dispatchEvent(new window.MessageEvent('message', { data, source: window })), 0);
+    messagesOnTheWay++;
+    setTimeout(() => {
+      messagesOnTheWay--;
+      window.dispatchEvent(new window.MessageEvent('message', { data, source: window }));
+    }, 0);
   };
+
+  // The engine checks every 250 ms that the extension is still running (see
+  // youtube-main.js). Whether content.js answered a check is known once the
+  // check is over.
+  const bridgeChecks = [];
+  window.document.addEventListener('SLOWED_REVERB_YOUTUBE_CHECK', (event) => bridgeChecks.push(event));
 
   // A new copy of the extension's messaging, as each extension instance has.
   function connectExtension() {
@@ -261,10 +275,27 @@ async function createContentHarness(options = {}) {
     window.eval(engineSource);
     window.eval(settingsSource);
     window.eval(source);
-    if (options.settle !== false) await settle();
+    // Lets content.js and the engine finish their first exchange.
+    if (options.settle !== false) await waitFor(() => messagesOnTheWay === 0);
   }
 
-  await inject();
+  // Turns the extension off as Chromium does: content.js stays in the page
+  // without the extension. Resolves once the engine's next check has gone
+  // unanswered, which turns the engine off.
+  async function turnOff() {
+    delete window.chrome.runtime.id;
+    const checked = bridgeChecks.length;
+    await waitFor(() => bridgeChecks.slice(checked).some((event) => !event.defaultPrevented));
+  }
+
+  try {
+    await inject();
+  } catch (error) {
+    // The test never gets the harness to close, and the engine's timers
+    // would keep the test file running.
+    window.close();
+    throw error;
+  }
 
   // Resolves with the content script's answer to a message from the extension.
   // A change of pitch mode reaches the player 40 ms after the answer, once
@@ -298,8 +329,7 @@ async function createContentHarness(options = {}) {
     // old content script stays without the extension, as in Chromium, and
     // a new one is injected, as both browsers do when the popup opens.
     async reinject() {
-      delete window.chrome.runtime.id;
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await turnOff();
       window.__slowedReverbInjected = false;
       await inject();
     },
@@ -309,15 +339,11 @@ async function createContentHarness(options = {}) {
     },
     runtimeMessages,
     source,
+    turnOff,
     warnings,
     getContext: () => FakeAudioContext.instances[0],
     window
   };
 }
 
-// Lets messages between the content script and the engine arrive.
-function settle(ms = 20) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-module.exports = { FakeAudioContext, FakeAudioNode, createContentHarness, settle };
+module.exports = { FakeAudioContext, FakeAudioNode, createContentHarness };
