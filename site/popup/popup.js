@@ -1185,7 +1185,9 @@ async function syncWithActiveTab() {
 
 // The rating reminder shows once, after the panel has been opened with the
 // effect on during RATING_DAYS different days. The count stays in local
-// storage and is never sent anywhere. Rating, the star, or "No thanks" ends it.
+// storage and is never sent anywhere, and private windows never add to it,
+// since nothing from private browsing may be stored. Rating, the Rate link, or
+// "No thanks" ends it.
 const RATING_KEY = 'ratingPrompt';
 const RATING_DAYS = 5;
 let rating = null;
@@ -1199,6 +1201,7 @@ function localDay(date = new Date()) {
 
 async function countDayOfUse() {
   if (!els.power.checked || blocked) return;
+  if ((await getActiveTab())?.incognito) return;
   const { [RATING_KEY]: stored } = await api.storage.local.get(RATING_KEY);
   if (ratingAnswered) return;
   rating = { days: 0, lastDay: null, done: false, ...stored };

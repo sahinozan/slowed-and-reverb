@@ -81,8 +81,9 @@ behind the palette icon. Purely cosmetic and stored globally, not per tab.
 came from (Chrome Web Store, or Firefox Add-ons in the Firefox build). After the
 popup has been opened with the effect on during 5 different days, it asks once,
 above the footer, whether you'd leave a rating. "Rate it", "No thanks" or the
-Rate link ends it for good. The day count stays in local storage. The question
-steps aside while a notice or permission panel shows, and on My Presets.
+Rate link ends it for good. The day count stays in local storage, and private
+windows never add to it. The question steps aside while a notice or permission
+panel shows, and on My Presets.
 
 ## Behavior worth knowing
 

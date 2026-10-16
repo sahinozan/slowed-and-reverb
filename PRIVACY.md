@@ -36,7 +36,7 @@ The browser's local extension storage holds only:
 - user-created preset names and their effect settings; and
 - for the one-time rating reminder, how many days the popup was opened with the
   effect on, the date of the last such day, and whether the reminder was
-  answered.
+  answered. Private windows are never counted.
 
 The rating reminder and the popup's "Rate" link open the extension's page in
 the Chrome Web Store or on Firefox Add-ons only when the user clicks them.

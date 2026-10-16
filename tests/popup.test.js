@@ -877,6 +877,20 @@ describe('popup behavior', () => {
       close(harness);
     });
 
+    test('does not count a day in a private window', async () => {
+      const harness = await createPopupHarness({
+        activeTab: { id: 9, url: 'https://www.youtube.com/watch?v=example', incognito: true },
+        contentState: PLAYING,
+        local: { ratingPrompt: { days: 4, lastDay: '2000-01-01', done: false } }
+      });
+      for (let attempt = 0; attempt < 3; attempt++) await flushPromises();
+
+      assert.equal(ratePrompt(harness).hidden, true);
+      assert.deepEqual(harness.local.data.ratingPrompt, { days: 4, lastDay: '2000-01-01', done: false });
+
+      close(harness);
+    });
+
     test('stops asking once answered', async () => {
       const harness = await createPopupHarness({
         contentState: PLAYING,
