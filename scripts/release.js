@@ -26,6 +26,7 @@ const DESCRIPTION_LIMIT = 132;
 // The raw screen captures are large and the build doesn't use them.
 const SOURCE_PATHSPEC = ['.', ':(exclude)store-assets/originals'];
 const STEP_TIMEOUT_MS = 20 * 60 * 1000;
+const INTERRUPTED = 'Stopped; nothing was recorded.';
 
 // Firefox Add-ons shows the privacy policy as Markdown that drops headings and
 // keeps only http(s) links, so its copy of PRIVACY.md has no title, section
@@ -333,7 +334,8 @@ function run(command, args, { cwd, log, stdout = log }) {
       running = null;
       fs.closeSync(out);
       fs.closeSync(err);
-      if (error) reject(new ReleaseError(stopping ?? error, log));
+      // After Ctrl+C the log only shows the tests being cancelled.
+      if (error) reject(new ReleaseError(stopping ?? error, stopping === INTERRUPTED ? undefined : log));
       else resolve(fs.readFileSync(log, 'utf8'));
     };
     child.on('error', (error) => finish(`${command}: ${error.message}`));
@@ -503,7 +505,7 @@ async function release(options) {
   };
   // The steps run in their own process groups, which Ctrl+C in the terminal
   // doesn't reach, so pass it on; the worktree is removed once they stop.
-  const interrupt = (signal) => stopRunning('Stopped', signal);
+  const interrupt = (signal) => stopRunning(INTERRUPTED, signal);
   process.on('SIGINT', interrupt);
   process.on('SIGTERM', interrupt);
 
