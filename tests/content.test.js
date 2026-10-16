@@ -106,6 +106,30 @@ describe('content script audio processing', () => {
     close(harness);
   });
 
+  test('returns the graph to neutral when the extension is turned off', async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+
+    harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    harness.runtimeMessages.length = 0;
+    delete harness.window.chrome.runtime.id;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.media.preservesPitch, false);
+    const outputGains = harness.context.gains.filter((node) =>
+      node.connections.some((connection) => connection.target === harness.context.destination)
+    );
+    assert.deepEqual(outputGains.map((node) => node.gain.value), [1, 0]);
+
+    // The orphaned script no longer reacts to the page or messages the extension.
+    harness.window.document.dispatchEvent(new harness.window.Event('yt-navigate-finish'));
+    harness.window.document.body.append(harness.window.document.createElement('video'));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.deepEqual(harness.runtimeMessages, []);
+    assert.equal(harness.context.sources.length, 1);
+  });
+
   test('restores remembered state after reinjection', async () => {
     const harness = await createContentHarness({
       remembered: {

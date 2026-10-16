@@ -31,6 +31,7 @@
   const HAVE_METADATA = 1;
   const MEDIA_SETTLE_MS = 100;
   const MAX_ACTIVE_PIPELINES = 32;
+  const SHUTDOWN_CHECK_MS = 250;
 
   const isSupportedHost =
     location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com';
@@ -50,6 +51,7 @@
   let processingUnavailable = false;
   let playerDetected = false;
   let processingActive = false;
+  let extensionGone = false;
 
   function blockReason() {
     if (!isSupportedHost) return 'unsupportedSite';
@@ -408,6 +410,7 @@
   observer.observe(document.documentElement, { childList: true, subtree: true });
 
   function notifyStateChanged() {
+    if (extensionGone) return;
     api.runtime
       .sendMessage({
         type: 'CONTENT_STATE_CHANGED',
@@ -480,11 +483,30 @@
     });
 
   // YouTube changes routes without replacing the document or reinjecting this script.
-  document.addEventListener('yt-navigate-finish', () => {
+  function handleNavigation() {
     processMediaElements();
     notifyStateChanged();
-  });
+  }
+  document.addEventListener('yt-navigate-finish', handleNavigation);
 
   // Browsers may require a later page gesture before a suspended AudioContext can resume.
   document.addEventListener('click', resumeAudioContext);
+
+  // Turning the extension off, removing it or updating it leaves this script
+  // running with the audio graph still attached, and no event says so. Chromium
+  // clears runtime.id when it happens, so check for that and put the audio back.
+  const shutdownTimer = window.setInterval(() => {
+    if (api.runtime?.id) return;
+
+    window.clearInterval(shutdownTimer);
+    extensionGone = true;
+    observer.disconnect();
+    window.clearTimeout(mediaProcessTimer);
+    document.removeEventListener('yt-navigate-finish', handleNavigation);
+    document.removeEventListener('click', resumeAudioContext);
+    if (effectEnabled) {
+      effectEnabled = false;
+      processMediaElements();
+    }
+  }, SHUTDOWN_CHECK_MS);
 })();

@@ -171,6 +171,7 @@ async function createContentHarness(options = {}) {
 
   window.chrome = {
     runtime: {
+      id: 'example',
       onMessage: runtimeMessage,
       async sendMessage(message) {
         runtimeMessages.push(structuredClone(message));
