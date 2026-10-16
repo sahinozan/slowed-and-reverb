@@ -99,6 +99,11 @@ panel shows, and on My Presets.
   stopped and explained instead of being presented as active.
 - **YouTube live streams ignore Speed.** The player's own latency correction
   fights it every tick. Reverb, EQ, and the rest still work.
+- **Spotify's own speed resets are absorbed.** Spotify sets its player back to
+  normal speed every few seconds, and to 0 while it seeks. While the effect is
+  on, the Spotify engine keeps the effect's speed through those writes and lets
+  a 0 through, so the player never changes speed and needs no silent gap to
+  hide Firefox's click. With the effect off, Spotify's speeds pass through.
 - **Embedded players may be unreachable.** Media inside iframes or shadow roots
   is not currently processed. Frame support can require broader permissions,
   and both cases need more complex lifecycle and state handling.
@@ -112,7 +117,7 @@ npm test                  # run service worker, content, popup, and package test
 npm run test:watch        # rerun tests while developing
 npx playwright install --no-shell chromium # one-time local browser install
 npm run test:e2e          # real Chromium extension smoke test
-npm run test:firefox      # real Firefox test: effects stop when the extension is turned off
+npm run test:firefox      # real Firefox tests: effects stop when the extension is turned off; Spotify speed resets cause no gaps
 npm run build:chromium    # emit dist/chromium/
 npm run build:firefox     # emit dist/firefox/
 npm run package           # build allowlisted ZIPs for both stores

@@ -56,6 +56,9 @@ function setup(options = {}) {
     runScripts: 'outside-only'
   });
   const { window } = dom;
+  if (options.userAgent) {
+    Object.defineProperty(window.navigator, 'userAgent', { value: options.userAgent });
+  }
   const warnings = [];
   const statusMessages = [];
   window.AudioContext = FakeAudioContext;
@@ -84,6 +87,15 @@ function setup(options = {}) {
   }
 
   return { apply, dom, media, statusMessages, warnings, window };
+}
+
+const FIREFOX_USER_AGENT = 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0';
+
+// The gains that reach the speakers: the unchanged path, then the effect.
+function outputGains(context) {
+  return context.gains.filter((node) =>
+    node.connections.some(({ target }) => target === context.destination)
+  );
 }
 
 describe('Spotify main-world audio engine', () => {
@@ -208,6 +220,114 @@ describe('Spotify main-world audio engine', () => {
     assert.equal(harness.media.preservesPitch, false);
     assert.equal(processed.gain.valueAt(1.07), 0);
     assert.equal(processed.gain.valueAt(1.2), 1);
+
+    harness.dom.window.close();
+  });
+
+  // Spotify sets its player back to normal speed every few seconds, and to 0
+  // while it seeks. Firefox clicks at any change of speed, and putting the
+  // speed back afterward needed a silent gap, heard as a skip.
+  test('keeps the effect speed through Spotify setting the player to normal speed', async () => {
+    const harness = setup({ userAgent: FIREFOX_USER_AGENT });
+    harness.apply(true, { ...SETTINGS, keepPitch: false });
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    const context = FakeAudioContext.instances[0];
+    const processed = outputGains(context)[1];
+    let rateChanges = 0;
+    harness.media.addEventListener('ratechange', () => rateChanges++);
+
+    context.currentTime = 2;
+    harness.media.playbackRate = 1;
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+    await settle(0);
+
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+    assert.equal(rateChanges, 0);
+    for (const time of [2.02, 2.05, 2.1, 2.2]) assert.equal(processed.gain.valueAt(time), 1);
+
+    harness.dom.window.close();
+  });
+
+  test('lets Spotify hold the player at 0 while it seeks, then keeps the effect speed', async () => {
+    const harness = setup({ userAgent: FIREFOX_USER_AGENT });
+    harness.apply(true, { ...SETTINGS, keepPitch: false });
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    const context = FakeAudioContext.instances[0];
+    const processed = outputGains(context)[1];
+
+    context.currentTime = 2;
+    harness.media.playbackRate = 0;
+    await settle(0);
+    assert.equal(harness.media.playbackRate, 0);
+
+    context.currentTime = 3;
+    harness.media.playbackRate = 1;
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+    await settle(0);
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+    for (const time of [3.02, 3.05, 3.1, 3.2]) assert.equal(processed.gain.valueAt(time), 1);
+
+    harness.dom.window.close();
+  });
+
+  // A change of pitch mode waits 40 ms for the output to fade out. Spotify's
+  // requests in that time must reach the player when the change happens.
+  test('resumes at the speed Spotify asks for during a change still waiting', async () => {
+    const harness = setup();
+    harness.apply(true);
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    // Spotify holds the player at 0 while it seeks, and the engine has seen it.
+    harness.media.playbackRate = 0;
+    await settle();
+    assert.equal(harness.media.playbackRate, 0);
+
+    // Turning the effect off changes the pitch mode, which waits; Spotify
+    // asks for normal speed in the meantime.
+    harness.apply(false);
+    harness.media.playbackRate = 1;
+    await settle();
+
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.media.preservesPitch, false);
+
+    harness.dom.window.close();
+  });
+
+  test('keeps Spotify holding the player at 0 during a change still waiting', async () => {
+    const harness = setup();
+    harness.apply(true);
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+
+    harness.apply(true, { ...SETTINGS, keepPitch: false });
+    harness.media.playbackRate = 0;
+    await settle();
+
+    assert.equal(harness.media.playbackRate, 0);
+    assert.equal(harness.media.preservesPitch, false);
+
+    harness.media.playbackRate = 1;
+    await settle();
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+
+    harness.dom.window.close();
+  });
+
+  test('leaves the speed Spotify sets alone while the effect is off', async () => {
+    const harness = setup({ userAgent: FIREFOX_USER_AGENT });
+    harness.apply(true, { ...SETTINGS, keepPitch: false });
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    harness.apply(false);
+    await settle();
+    assert.equal(harness.media.playbackRate, 1);
+
+    harness.media.playbackRate = 1.25;
+    await settle();
+    assert.equal(harness.media.playbackRate, 1.25);
 
     harness.dom.window.close();
   });

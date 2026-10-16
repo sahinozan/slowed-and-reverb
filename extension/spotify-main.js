@@ -216,6 +216,63 @@
     }
   }
 
+  // Spotify sets its player back to normal speed every few seconds, and to 0
+  // while it seeks. Putting the effect's speed back after each of those is a
+  // change of speed, which Firefox hides only with a silent gap, heard as a
+  // skip. So the speed Spotify sets on a player this engine knows is kept as a
+  // request: while the effect is on, 0 goes through and any other speed keeps
+  // the effect's, so the player never changes; while it is off, the request
+  // is the speed. The engine sets the player itself through the original
+  // setter, which Spotify's requests don't reach.
+  const nativePlaybackRate = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'playbackRate');
+  const pageRates = new WeakMap();
+
+  function setNativeRate(media, rate) {
+    if (nativePlaybackRate?.set) nativePlaybackRate.set.call(media, rate);
+    else media.playbackRate = rate;
+  }
+
+  // The speed the player should run at: the effect's, or Spotify's own when
+  // the effect is off or Spotify is holding the player still.
+  function playbackRateFor(media, effectSpeed) {
+    const pageRate = pageRates.get(media) ?? 1;
+    return effectSpeed === null || pageRate === 0 ? pageRate : effectSpeed;
+  }
+
+  function effectSpeedFor(media) {
+    return enabled && startedMedia.has(media) ? settings.speed : null;
+  }
+
+  function keepSpotifyRates(media) {
+    if (!nativePlaybackRate?.get || !nativePlaybackRate.set) return;
+    Object.defineProperty(media, 'playbackRate', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return nativePlaybackRate.get.call(this);
+      },
+      set(value) {
+        const rate = Number(value);
+        // Anything the player wouldn't take goes to it as is, to fail as usual.
+        if (!Number.isFinite(rate) || rate < 0) {
+          nativePlaybackRate.set.call(this, value);
+          return;
+        }
+        pageRates.set(this, rate);
+        // A change of the effect waiting for the output to fade out already
+        // holds the speed it will set, so it is planned again with this one.
+        if (pipelines.get(this)?.pendingPlayback) {
+          applySettings(this);
+          return;
+        }
+        const target = playbackRateFor(this, effectSpeedFor(this));
+        if (Math.abs(nativePlaybackRate.get.call(this) - target) > 0.001) {
+          nativePlaybackRate.set.call(this, target);
+        }
+      }
+    });
+  }
+
   function playbackClicks(media, speed, keepPitch) {
     if (media.preservesPitch !== keepPitch) return true;
     return FIREFOX && Math.abs(media.playbackRate - speed) > 0.001;
@@ -223,7 +280,7 @@
 
   function setPlayback(media, speed, keepPitch) {
     try {
-      if (Math.abs(media.playbackRate - speed) > 0.001) media.playbackRate = speed;
+      if (Math.abs(media.playbackRate - speed) > 0.001) setNativeRate(media, speed);
       media.preservesPitch = keepPitch;
       media.mozPreservesPitch = keepPitch;
       media.webkitPreservesPitch = keepPitch;
@@ -367,7 +424,8 @@
     if (!started && !existingPipeline) return;
 
     const active = enabled && started;
-    const { speed, keepPitch } = active ? settings : NEUTRAL_SETTINGS;
+    const keepPitch = active ? settings.keepPitch : NEUTRAL_SETTINGS.keepPitch;
+    const speed = playbackRateFor(media, active ? settings.speed : null);
 
     // The graph comes first, so a change of speed can wait for its output to
     // fade out. Without a graph only the speed can change.
@@ -413,6 +471,7 @@
   function registerMedia(media) {
     if (!(media instanceof HTMLMediaElement) || mediaElements.has(media)) return;
     mediaElements.add(media);
+    keepSpotifyRates(media);
     media.addEventListener('play', () => {
       applySettings(media);
       resumePipeline(pipelines.get(media));

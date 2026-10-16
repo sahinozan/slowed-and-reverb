@@ -259,6 +259,54 @@ async function expectEffectOff(pages) {
   assert.deepEqual(failures.map(({ reason }) => reason.message), []);
 }
 
+// Spotify sets its player back to normal speed every few seconds, and to 0
+// while it seeks. Firefox clicks at any change of speed, and the engine hides
+// a change of its own with a silent gap, which was heard as a skip each time.
+test('keeps the effect speed through Spotify resetting the player in Firefox', async () => {
+  const page = await openPlayingFixture('spotify');
+  assert.equal(await browser.installExtension(extensionDir), EXTENSION_ID);
+  await turnOn(page, 'spotify');
+  await expectPlayback(page, 'spotify', true, 5_000);
+
+  await page.evaluate(() => {
+    const player = document.getElementById('player');
+    window.speedLog = { rateChanges: 0, silences: 0 };
+    player.addEventListener('ratechange', () => window.speedLog.rateChanges++);
+    // The engine holds its output at 0 only to hide a change of the player.
+    const { setValueAtTime } = AudioParam.prototype;
+    AudioParam.prototype.setValueAtTime = function (value, time) {
+      if (value === 0) window.speedLog.silences++;
+      return setValueAtTime.call(this, value, time);
+    };
+  });
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const read = () =>
+    page.evaluate(() => ({ rate: document.getElementById('player').playbackRate, ...window.speedLog }));
+
+  for (let reset = 0; reset < 3; reset++) {
+    await page.evaluate(() => { document.getElementById('player').playbackRate = 1; });
+    await pause(300);
+  }
+  assert.deepEqual(await read(), { rate: SETTINGS.speed, rateChanges: 0, silences: 0 });
+
+  // A seek holds the player at 0, which goes through, and then asks for normal
+  // speed, which brings back the effect's. These two are real changes, so the
+  // engine looks at its settings again. Without a sound device (as on CI) the
+  // audio clock never starts, so that looks like silence there; only the
+  // speeds are checked here.
+  await page.evaluate(() => { document.getElementById('player').playbackRate = 0; });
+  await pause(300);
+  assert.equal((await read()).rate, 0);
+  await page.evaluate(() => { document.getElementById('player').playbackRate = 1; });
+  await pause(300);
+  const afterSeek = await read();
+  assert.equal(afterSeek.rate, SETTINGS.speed);
+  assert.equal(afterSeek.rateChanges, 2);
+
+  await browser.uninstallExtension(EXTENSION_ID);
+  await page.close();
+});
+
 test('puts the audio back when the extension is turned off or removed in Firefox', async () => {
   const pages = {
     youtube: await openPlayingFixture('youtube'),
