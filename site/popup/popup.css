@@ -1072,6 +1072,23 @@ footer #reset-btn {
   color: var(--fg);
 }
 
+/* At 11px the star's drawn height matches the capital letters. Each engine
+   then places it a fraction of a pixel off the text, so it is nudged to sit
+   level with the letters' ink, as measured at 1x, 2x, 3x and 6x: Chromium
+   draws it slightly low on sharp screens, and Firefox, which sets text a
+   little lower, draws it slightly high. */
+@media (min-resolution: 2dppx) {
+  .rate-link svg {
+    transform: translateY(-0.25px);
+  }
+}
+
+@supports (-moz-appearance: none) {
+  .rate-link svg {
+    transform: translateY(0.5px);
+  }
+}
+
 footer.no-divider {
   border-top-color: transparent;
 }
