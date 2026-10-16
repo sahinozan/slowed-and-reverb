@@ -255,6 +255,7 @@ let applyRevision = 0;
 let presetWriteQueue = Promise.resolve();
 let spotifyPermissionTabId = null;
 let youtubePermission = null;
+let tabSynced = false;
 
 function isSpotifyUrl(url) {
   try {
@@ -708,9 +709,37 @@ function findMatchingPresetName(settings) {
   return candidates.find((preset) => settingsMatch(preset, settings))?.name ?? null;
 }
 
+// The tab's state arrives after a few round trips to the page, often after the
+// popup's first paint. Opening with the bar as it was last shown keeps it from
+// popping in and pushing the controls down; the first sync corrects it.
+const PRESET_BAR_KEY = 'presetBarLabel';
+
+function restorePresetBar() {
+  let label = null;
+  try {
+    label = window.localStorage.getItem(PRESET_BAR_KEY);
+  } catch {}
+  if (!label) return;
+  els.presetLabel.textContent = label;
+  els.presetBar.hidden = false;
+}
+
+function rememberPresetBar() {
+  try {
+    if (els.presetBar.hidden) {
+      window.localStorage.removeItem(PRESET_BAR_KEY);
+    } else {
+      window.localStorage.setItem(PRESET_BAR_KEY, els.presetLabel.textContent);
+    }
+  } catch {}
+}
+
 function updateCurrentPresetBar() {
+  if (!tabSynced) return;
+
   if (!els.power.checked) {
     els.presetBar.hidden = true;
+    rememberPresetBar();
     return;
   }
 
@@ -729,6 +758,7 @@ function updateCurrentPresetBar() {
   }
 
   els.presetBar.hidden = false;
+  rememberPresetBar();
 }
 
 function persistCustomPresets() {
@@ -1061,6 +1091,7 @@ async function syncWithActiveTab() {
 }
 
 async function init() {
+  restorePresetBar();
   buildThemePicker();
   publishScrollbarWidth();
   bindEqHandles();
@@ -1072,6 +1103,8 @@ async function init() {
   try {
     await syncWithActiveTab();
   } finally {
+    tabSynced = true;
+    updateCurrentPresetBar();
     settlePowerUI();
   }
 }
