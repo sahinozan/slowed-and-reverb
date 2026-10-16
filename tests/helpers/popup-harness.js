@@ -32,6 +32,18 @@ async function createPopupHarness(options = {}) {
     }
   });
 
+  if (options.localStorageUnavailable) {
+    Object.defineProperty(window, 'localStorage', {
+      get() {
+        throw new window.DOMException('Storage is disabled', 'SecurityError');
+      }
+    });
+  } else {
+    for (const [key, value] of Object.entries(options.localStorage ?? {})) {
+      window.localStorage.setItem(key, value);
+    }
+  }
+
   window.chrome = harness.api;
   window.requestAnimationFrame = (callback) => {
     callback();

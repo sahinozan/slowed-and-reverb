@@ -27,6 +27,31 @@ function close(harness) {
   harness.dom.window.close();
 }
 
+const SLOWED = { ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 };
+const PRESET_BAR_KEY = 'presetBarLabel';
+
+// Holds the tab's GET_STATE answer until the test releases it.
+function deferredTabState() {
+  let release;
+  const answer = new Promise((resolve) => {
+    release = resolve;
+  });
+  return {
+    release,
+    onTabMessage(_tabId, message) {
+      return message.type === 'GET_STATE' ? answer : { success: true };
+    }
+  };
+}
+
+function presetBar(harness) {
+  const document = harness.window.document;
+  return {
+    hidden: document.getElementById('current-preset-bar').hidden,
+    label: document.getElementById('current-preset-label').textContent
+  };
+}
+
 describe('popup behavior', () => {
   test('enables the primary preset on a fresh tab', async () => {
     const harness = await createPopupHarness({
@@ -420,6 +445,102 @@ describe('popup behavior', () => {
     assert.equal(document.getElementById('power-toggle').checked, false);
     assert.equal(document.getElementById('power-toggle').disabled, true);
     assert.equal(audioUpdates(harness).length, 0);
+
+    close(harness);
+  });
+
+  test('opens with the last preset label before the tab answers', async () => {
+    const tabState = deferredTabState();
+    const harness = await createPopupHarness({
+      localStorage: { [PRESET_BAR_KEY]: 'Current Preset: Nightcore' },
+      onTabMessage: tabState.onTabMessage
+    });
+
+    assert.deepEqual(presetBar(harness), { hidden: false, label: 'Current Preset: Nightcore' });
+
+    tabState.release({ enabled: true, settings: SLOWED, blocked: false, live: false });
+    for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+
+    assert.deepEqual(presetBar(harness), {
+      hidden: false,
+      label: 'Current Preset: Slowed + Reverb'
+    });
+    assert.equal(
+      harness.window.localStorage.getItem(PRESET_BAR_KEY),
+      'Current Preset: Slowed + Reverb'
+    );
+
+    close(harness);
+  });
+
+  test('hides the remembered preset bar and forgets it on blocked pages', async () => {
+    const tabState = deferredTabState();
+    const harness = await createPopupHarness({
+      localStorage: { [PRESET_BAR_KEY]: 'Current Preset: Nightcore' },
+      onTabMessage: tabState.onTabMessage
+    });
+
+    tabState.release({ enabled: false, blocked: true, blockReason: 'drm' });
+    for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+
+    assert.equal(presetBar(harness).hidden, true);
+    assert.equal(harness.window.localStorage.getItem(PRESET_BAR_KEY), null);
+
+    close(harness);
+  });
+
+  test('forgets the preset bar when the effect is turned off', async () => {
+    const harness = await createPopupHarness({
+      contentState: { enabled: true, settings: SLOWED, blocked: false, live: false }
+    });
+    const power = harness.window.document.getElementById('power-toggle');
+
+    assert.equal(
+      harness.window.localStorage.getItem(PRESET_BAR_KEY),
+      'Current Preset: Slowed + Reverb'
+    );
+
+    power.checked = false;
+    power.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+
+    assert.equal(presetBar(harness).hidden, true);
+    assert.equal(harness.window.localStorage.getItem(PRESET_BAR_KEY), null);
+
+    close(harness);
+  });
+
+  test('keeps the preset bar hidden until the first answer when nothing is remembered', async () => {
+    const tabState = deferredTabState();
+    const harness = await createPopupHarness({ onTabMessage: tabState.onTabMessage });
+
+    assert.equal(presetBar(harness).hidden, true);
+
+    tabState.release({ enabled: true, settings: SLOWED, blocked: false, live: false });
+    for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+
+    assert.deepEqual(presetBar(harness), {
+      hidden: false,
+      label: 'Current Preset: Slowed + Reverb'
+    });
+    assert.equal(
+      harness.window.localStorage.getItem(PRESET_BAR_KEY),
+      'Current Preset: Slowed + Reverb'
+    );
+
+    close(harness);
+  });
+
+  test('shows the preset bar when local storage is unavailable', async () => {
+    const harness = await createPopupHarness({
+      localStorageUnavailable: true,
+      contentState: { enabled: true, settings: SLOWED, blocked: false, live: false }
+    });
+
+    assert.deepEqual(presetBar(harness), {
+      hidden: false,
+      label: 'Current Preset: Slowed + Reverb'
+    });
 
     close(harness);
   });
