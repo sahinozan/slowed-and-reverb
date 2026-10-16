@@ -5,6 +5,11 @@ const { DEFAULTS: DEFAULT_SETTINGS, match: settingsMatch } = SlowedReverbSetting
 const SPOTIFY_HOST = 'open.spotify.com';
 const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';
 const IS_FIREFOX = Boolean(api.runtime.getManifest?.().browser_specific_settings?.gecko);
+// Where the star and the rating reminder lead: the review page of the store
+// this copy came from. Edge and Brave install from the Chrome Web Store.
+const STORE_REVIEW_URL = IS_FIREFOX
+  ? 'https://addons.mozilla.org/firefox/addon/slowed-reverb/'
+  : 'https://chromewebstore.google.com/detail/slowed-reverb/nhndfhonlljbmkpnblndjfdefjoecpoa/reviews';
 const FIREFOX_YOUTUBE_PERMISSIONS = Object.freeze({
   'www.youtube.com': {
     name: 'YouTube',
@@ -207,7 +212,11 @@ const els = {
   eqCurve: el('eq-curve'),
   eqPath: el('eq-curve-path'),
   footer: el('app-footer'),
-  resetBtn: el('reset-btn')
+  resetBtn: el('reset-btn'),
+  rateLink: el('rate-link'),
+  ratePrompt: el('rate-prompt'),
+  ratePromptLink: el('rate-prompt-link'),
+  ratePromptDismiss: el('rate-prompt-dismiss')
 };
 
 const SLIDERS = [
@@ -1174,12 +1183,55 @@ async function syncWithActiveTab() {
   await saveAndApplySettings(true);
 }
 
+// The rating reminder shows once, after the panel has been opened with the
+// effect on during RATING_DAYS different days. The count stays in local
+// storage and is never sent anywhere. Rating, the star, or "No thanks" ends it.
+const RATING_KEY = 'ratingPrompt';
+const RATING_DAYS = 5;
+let rating = null;
+
+function localDay(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+async function countDayOfUse() {
+  if (!els.power.checked || blocked) return;
+  const { [RATING_KEY]: stored } = await api.storage.local.get(RATING_KEY);
+  rating = { days: 0, lastDay: null, done: false, ...stored };
+  if (rating.done) return;
+
+  const today = localDay();
+  if (rating.lastDay !== today) {
+    rating.days += 1;
+    rating.lastDay = today;
+    await api.storage.local.set({ [RATING_KEY]: rating });
+  }
+  els.ratePrompt.hidden = rating.days < RATING_DAYS;
+}
+
+// One write, started on the click itself: opening the store closes the popup.
+function finishRatingPrompt() {
+  els.ratePrompt.hidden = true;
+  rating = { days: 0, lastDay: null, ...rating, done: true };
+  api.storage.local.set({ [RATING_KEY]: rating }).catch(() => {});
+}
+
+function bindRating() {
+  for (const link of [els.rateLink, els.ratePromptLink]) {
+    link.href = STORE_REVIEW_URL;
+    link.addEventListener('click', finishRatingPrompt);
+  }
+  els.ratePromptDismiss.addEventListener('click', finishRatingPrompt);
+}
+
 async function init() {
   restorePresetBar();
   buildThemePicker();
   publishScrollbarWidth();
   bindEqHandles();
   bindControls();
+  bindRating();
 
   await loadCustomPresets();
   applySettingsToUI(await api.storage.local.get(DEFAULT_SETTINGS));
@@ -1191,6 +1243,7 @@ async function init() {
     updateCurrentPresetBar();
     settlePowerUI();
   }
+  await countDayOfUse().catch(() => {});
 }
 
 init();
