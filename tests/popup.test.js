@@ -69,6 +69,47 @@ describe('popup behavior', () => {
     close(harness);
   });
 
+  test('resets to the defaults and keeps a playing effect on', async () => {
+    const settings = { ...SLOWED, echo: 25, eqLow: 4 };
+    const harness = await createPopupHarness({
+      contentState: { enabled: true, settings, blocked: false, live: false }
+    });
+    const document = harness.window.document;
+
+    document.getElementById('reset-btn').click();
+    for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+
+    assert.equal(document.getElementById('power-toggle').checked, true);
+    assert.equal(document.getElementById('power-status').textContent, 'On');
+    assert.equal(document.getElementById('speed-slider').value, '1');
+    assert.equal(document.getElementById('reverb-slider').value, '0');
+    assert.deepEqual(presetBar(harness), { hidden: false, label: 'Current Preset: Default' });
+    assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
+    assert.deepEqual(audioUpdates(harness).at(-1).message.settings, DEFAULT_SETTINGS);
+
+    close(harness);
+  });
+
+  test('resets to the defaults and leaves an effect that is off turned off', async () => {
+    const harness = await createPopupHarness({
+      session: {
+        'tabState:9': { origin: 'https://www.youtube.com', enabled: false, settings: { ...SLOWED, echo: 25 } }
+      },
+      contentState: { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+    });
+    const document = harness.window.document;
+    assert.equal(document.getElementById('power-toggle').checked, false);
+
+    document.getElementById('reset-btn').click();
+    for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+
+    assert.equal(document.getElementById('power-toggle').checked, false);
+    assert.equal(document.getElementById('speed-slider').value, '1');
+    assert.equal(presetBar(harness).hidden, true);
+
+    close(harness);
+  });
+
   test('shows settings that are already active in the tab', async () => {
     const settings = { ...DEFAULT_SETTINGS, speed: 1.15, echo: 25, width: 140 };
     const harness = await createPopupHarness({

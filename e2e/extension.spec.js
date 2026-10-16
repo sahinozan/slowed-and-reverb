@@ -68,14 +68,23 @@ test('loads the real popup page and applies audio settings to the active tab', a
     contentType: 'image/png'
   });
 
+  // Reset Defaults puts the song back to normal but leaves the effect on.
+  await popup.getByRole('button', { name: 'Reset Defaults' }).click();
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 1);
+  await expect(popup.getByLabel('Toggle audio effects')).toBeChecked();
+  await expect(popup.locator('#current-preset-label')).toHaveText('Current Preset: Default');
+  await popup.locator('#speed-slider').fill('0.8');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+
   await popup.locator('.header-power .switch-slider').click();
   await expect(popup.getByLabel('Toggle audio effects')).not.toBeChecked();
   await expect(popup.getByText('Off', { exact: true })).toBeVisible();
   await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 1);
 
   const stored = await extension.serviceWorker.evaluate(() => chrome.storage.local.get());
+  // The last settings: Reset Defaults, then the speed moved back to 0.8.
   expect(stored.speed).toBe(0.8);
-  expect(stored.reverb).toBe(40);
+  expect(stored.reverb).toBe(0);
   expect(stored.uiTheme).toBe('midnight');
 });
 

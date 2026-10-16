@@ -767,6 +767,13 @@ function setBlocked(isBlocked, reason) {
   renderCustomPresets();
 }
 
+// What the bar calls the current settings: a preset's name, Default for the
+// settings Reset Defaults gives, or Custom.
+function currentPresetName(settings) {
+  return findMatchingPresetName(settings)
+    ?? (settingsMatch(DEFAULT_SETTINGS, settings) ? 'Default' : 'Custom');
+}
+
 function findMatchingPresetName(settings) {
   const candidates = [...Object.values(PRESETS), ...customPresets];
   return candidates.find((preset) => settingsMatch(preset, settings))?.name ?? null;
@@ -819,7 +826,7 @@ function updateCurrentPresetBar() {
     els.presetLabel.textContent = `Editing: ${name}${dirty ? ' *' : ''}`;
     els.presetBar.title = dirty ? 'Unsaved changes' : '';
   } else {
-    els.presetLabel.textContent = `Current Preset: ${findMatchingPresetName(getCurrentSettings()) ?? 'Custom'}`;
+    els.presetLabel.textContent = `Current Preset: ${currentPresetName(getCurrentSettings())}`;
     els.presetBar.title = '';
   }
 
@@ -1030,9 +1037,11 @@ function bindControls() {
     handleTabReport(message, sender);
   });
 
+  // Reset only the settings, so a song that is playing with the effect on
+  // keeps it on and the next slider change is heard straight away.
   els.resetBtn.addEventListener('click', () => {
     applySettingsToUI(DEFAULT_SETTINGS);
-    saveAndApplySettings(false);
+    saveAndApplySettings(els.power.checked);
     setActivePreset(null);
   });
 
