@@ -12,6 +12,30 @@ const builtExtensionDir = process.env.SLOWED_REVERB_E2E_EXTENSION_DIR
   ? path.resolve(process.env.SLOWED_REVERB_E2E_EXTENSION_DIR)
   : path.join(root, 'dist', 'chromium');
 
+// Starts Chromium with the extension in `extensionDir`, with its profile in
+// `tempRoot`, and waits for the extension's service worker.
+async function launchWithExtension(tempRoot, extensionDir) {
+  const context = await chromium.launchPersistentContext(path.join(tempRoot, 'profile'), {
+    channel: 'chromium',
+    headless: true,
+    viewport: { width: 340, height: 600 },
+    args: [
+      `--disable-extensions-except=${extensionDir}`,
+      `--load-extension=${extensionDir}`
+    ]
+  });
+
+  try {
+    let [serviceWorker] = context.serviceWorkers();
+    if (!serviceWorker) serviceWorker = await context.waitForEvent('serviceworker');
+    const extensionId = serviceWorker.url().split('/')[2];
+    return { context, extensionId, serviceWorker };
+  } catch (error) {
+    await context.close();
+    throw error;
+  }
+}
+
 const test = base.extend({
   fixtureUrl: [
     async ({}, use) => {
@@ -28,21 +52,9 @@ const test = base.extend({
       let context;
 
       try {
-        context = await chromium.launchPersistentContext(path.join(tempRoot, 'profile'), {
-          channel: 'chromium',
-          headless: true,
-          viewport: { width: 340, height: 600 },
-          args: [
-            `--disable-extensions-except=${extensionDir}`,
-            `--load-extension=${extensionDir}`
-          ]
-        });
-
-        let [serviceWorker] = context.serviceWorkers();
-        if (!serviceWorker) serviceWorker = await context.waitForEvent('serviceworker');
-        const extensionId = serviceWorker.url().split('/')[2];
-
-        await use({ context, extensionId, fixtureUrl, serviceWorker });
+        const launched = await launchWithExtension(tempRoot, extensionDir);
+        context = launched.context;
+        await use({ ...launched, fixtureUrl });
       } finally {
         await context?.close();
         fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -52,4 +64,4 @@ const test = base.extend({
   ]
 });
 
-module.exports = { expect: test.expect, test };
+module.exports = { builtExtensionDir, expect: test.expect, launchWithExtension, test };

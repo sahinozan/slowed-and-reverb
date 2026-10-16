@@ -11,6 +11,12 @@
   const CHANNEL = 'SLOWED_REVERB_YOUTUBE';
   const BRIDGE_CHECK_EVENT = `${CHANNEL}_CHECK`;
   const BRIDGE_CHECK_MS = 250;
+  // The extension's version, which content.js compares with its own. This
+  // engine stays in an open tab when the extension is updated, and the new
+  // version's copy of this file then stops at the check above, leaving the
+  // new content.js to talk to this one. tests/settings.test.js keeps this
+  // equal to the manifest's version.
+  const VERSION = '1.1.1';
 
   // Copies of SlowedReverbSettings.DEFAULTS and BOUNDS (settings.js), which
   // the page's world does not load; tests/settings.test.js keeps them equal.
@@ -596,6 +602,7 @@
       {
         channel: CHANNEL,
         type: 'STATE',
+        version: VERSION,
         requestId,
         notify,
         revision,

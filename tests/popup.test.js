@@ -641,69 +641,89 @@ describe('popup behavior', () => {
     assert.equal(document.getElementById('power-toggle').disabled, false);
   });
 
-  test('asks for a Spotify reload when the page still has the previous version', async (t) => {
-    let updated = false;
-    const harness = await createPopupHarness({
+  // After an update the page can still have the previous version's audio
+  // engine, which content.js and the Spotify bridge keep off.
+  const outdatedPages = [
+    {
+      site: 'YouTube',
+      activeTab: { id: 9, url: 'https://www.youtube.com/watch?v=example' },
+      grantedOrigins: [],
+      text: 'Reload the page to finish updating the extension.',
+      button: 'Reload page',
+      progress: 'Reloading the page…'
+    },
+    {
+      site: 'Spotify',
       activeTab: { id: 9, url: 'https://open.spotify.com/track/example' },
       grantedOrigins: ['https://open.spotify.com/*'],
-      onTabMessage(_tabId, message) {
-        if (message.type === 'GET_STATE') {
-          return updated
-            ? { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false }
-            : { enabled: false, blocked: true, blockReason: 'outdated' };
+      text: 'Reload Spotify to finish updating the extension.',
+      button: 'Reload Spotify',
+      progress: 'Reloading Spotify…'
+    }
+  ];
+  for (const { site, activeTab, grantedOrigins, text, button, progress } of outdatedPages) {
+    test(`asks for a reload when ${site} still has the previous version`, async (t) => {
+      let updated = false;
+      const harness = await createPopupHarness({
+        activeTab,
+        grantedOrigins,
+        onTabMessage(_tabId, message) {
+          if (message.type === 'GET_STATE') {
+            return updated
+              ? { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+              : { enabled: false, blocked: true, blockReason: 'outdated' };
+          }
+          return { success: true };
         }
-        return { success: true };
-      }
+      });
+      t.after(() => close(harness));
+      const document = harness.window.document;
+
+      assert.equal(document.getElementById('blocked-banner').hidden, true);
+      assert.equal(document.getElementById('reload-panel').hidden, false);
+      assert.equal(document.getElementById('reload-text').textContent, text);
+      assert.equal(document.getElementById('reload-btn').textContent, button);
+      assert.equal(document.getElementById('power-toggle').disabled, true);
+      assert.equal(audioUpdates(harness).length, 0);
+
+      let shownWhileReloading = null;
+      const reload = harness.api.tabs.reload;
+      harness.api.tabs.reload = (tabId) => {
+        shownWhileReloading = document.getElementById('reload-status').textContent;
+        updated = true;
+        return reload(tabId);
+      };
+      document.getElementById('reload-btn').click();
+      for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
+
+      assert.equal(shownWhileReloading, progress);
+      assert.deepEqual(harness.calls.reloadedTabs, [9]);
+      assert.equal(document.getElementById('reload-panel').hidden, true);
+      assert.equal(document.getElementById('power-toggle').disabled, false);
     });
-    t.after(() => close(harness));
-    const document = harness.window.document;
 
-    assert.equal(document.getElementById('blocked-banner').hidden, true);
-    assert.equal(document.getElementById('reload-panel').hidden, false);
-    assert.equal(
-      document.getElementById('reload-text').textContent,
-      'Reload Spotify to finish updating the extension.'
-    );
-    assert.equal(document.getElementById('reload-btn').textContent, 'Reload Spotify');
-    assert.equal(document.getElementById('power-toggle').disabled, true);
-    assert.equal(audioUpdates(harness).length, 0);
-
-    let progress = null;
-    const reload = harness.api.tabs.reload;
-    harness.api.tabs.reload = (tabId) => {
-      progress = document.getElementById('reload-status').textContent;
-      updated = true;
-      return reload(tabId);
-    };
-    document.getElementById('reload-btn').click();
-    for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
-
-    assert.equal(progress, 'Reloading Spotify…');
-    assert.deepEqual(harness.calls.reloadedTabs, [9]);
-    assert.equal(document.getElementById('reload-panel').hidden, true);
-    assert.equal(document.getElementById('power-toggle').disabled, false);
-  });
-
-  test('asks for a Spotify reload when turning the effect on finds the previous version', async (t) => {
-    const harness = await createPopupHarness({
-      activeTab: { id: 9, url: 'https://open.spotify.com/track/example' },
-      grantedOrigins: ['https://open.spotify.com/*'],
-      onTabMessage(_tabId, message) {
-        if (message.type === 'GET_STATE') {
-          return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false };
+    test(`asks for a reload when turning the effect on finds the previous version on ${site}`, async (t) => {
+      const harness = await createPopupHarness({
+        activeTab,
+        grantedOrigins,
+        onTabMessage(_tabId, message) {
+          if (message.type === 'GET_STATE') {
+            return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false };
+          }
+          return { success: false, blocked: true, blockReason: 'outdated' };
         }
-        return { success: false, blocked: true, blockReason: 'outdated' };
-      }
-    });
-    t.after(() => close(harness));
-    const document = harness.window.document;
+      });
+      t.after(() => close(harness));
+      const document = harness.window.document;
 
-    // A fresh tab turns the effect on as the popup opens.
-    assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
-    assert.equal(document.getElementById('reload-panel').hidden, false);
-    assert.match(document.getElementById('reload-text').textContent, /finish updating/);
-    assert.equal(document.getElementById('power-toggle').checked, false);
-  });
+      // A fresh tab turns the effect on as the popup opens.
+      assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
+      assert.equal(document.getElementById('reload-panel').hidden, false);
+      assert.equal(document.getElementById('reload-text').textContent, text);
+      assert.equal(document.getElementById('reload-btn').textContent, button);
+      assert.equal(document.getElementById('power-toggle').checked, false);
+    });
+  }
 
   test('keeps other blocked reasons as a warning without a reload', async (t) => {
     const harness = await createPopupHarness({

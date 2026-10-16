@@ -11,6 +11,8 @@
   const BRIDGE_CHECK_EVENT = `${CHANNEL}_CHECK`;
   // The engine answers within a task or two; no answer means it never loaded.
   const ENGINE_TIMEOUT_MS = 2000;
+  // The engine reports the version it came with, to compare with this one.
+  const VERSION = api.runtime.getManifest().version;
 
   // The defaults from settings.js, which is injected before this file; they also
   // mean "effect off".
@@ -24,6 +26,13 @@
   let stateRevision = 0;
   let nextRequestId = 1;
   const pendingRequests = new Map();
+  // The engine stays in an open tab when the extension is updated, and the
+  // new version's engine then stops at its guard, so this script can find
+  // the previous version's engine in the page. That one works the way its
+  // version did, so it is kept off until the page is reloaded. Until the
+  // engine has answered once, nothing turns it on.
+  let engineAnswered = false;
+  let engineOutdated = false;
 
   function extensionRunning() {
     return Boolean(api.runtime?.id);
@@ -66,22 +75,37 @@
     if (state && !state.enabled && state.revision === stateRevision) effectEnabled = false;
   }
 
+  // Resolves with false if the engine never answers. Turning the effect on
+  // first asks an engine that hasn't answered yet, since its answer says
+  // which version it is.
+  function checkEngine() {
+    if (engineAnswered || !effectEnabled) return Promise.resolve(true);
+    return askEngine({ type: 'GET_STATE' }).then((state) => state !== null);
+  }
+
   function applyToEngine(restoring = false) {
-    return askEngine({
-      type: 'APPLY',
-      settings: currentSettings,
-      enabled: effectEnabled,
-      revision: stateRevision,
-      restoring
-    }).then((state) => {
-      adoptEngineState(state);
-      return state;
-    });
+    return checkEngine()
+      .then((answers) => {
+        if (!answers) return null;
+        if (engineOutdated) effectEnabled = false;
+        return askEngine({
+          type: 'APPLY',
+          settings: currentSettings,
+          enabled: effectEnabled,
+          revision: stateRevision,
+          restoring
+        });
+      })
+      .then((state) => {
+        adoptEngineState(state);
+        return state;
+      });
   }
 
   function blockReasonOf(state) {
     if (!isSupportedHost) return 'unsupportedSite';
-    return state ? state.blockReason : 'unsupported';
+    if (!state) return 'unsupported';
+    return engineOutdated ? 'outdated' : state.blockReason;
   }
 
   function describeState(state) {
@@ -103,6 +127,9 @@
     if (!extensionRunning()) return;
     if (event.source !== window || event.data?.channel !== CHANNEL) return;
     if (event.data.type !== 'STATE') return;
+    engineAnswered = true;
+    // Engines from 1.1.1 and earlier report no version.
+    if (event.data.version !== VERSION) engineOutdated = true;
 
     const state = {
       revision: event.data.revision,

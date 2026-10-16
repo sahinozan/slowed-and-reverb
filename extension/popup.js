@@ -39,7 +39,8 @@ const BLOCKED_TEXT = {
   unsupportedSite:
     "This site isn't supported. It works on YouTube, YouTube Music and Spotify.",
   unsupported: "The effects can't start on this page. Reloading it usually fixes this.",
-  outdated: 'Reload Spotify to finish updating the extension.',
+  outdated: 'Reload the page to finish updating the extension.',
+  outdatedSpotify: 'Reload Spotify to finish updating the extension.',
   noPlayer: 'Play a song to start the effects.',
   loadingPlayer: 'The effects start once the song loads.',
   spotifyEffects: 'Only speed works on Spotify here.'
@@ -48,7 +49,8 @@ const BLOCKED_TEXT = {
 // The reasons a reload fixes, with the reload panel's button and progress.
 const RELOAD_ACTIONS = {
   unsupported: { button: 'Reload page', progress: 'Reloading the page…' },
-  outdated: { button: 'Reload Spotify', progress: 'Reloading Spotify…' }
+  outdated: { button: 'Reload page', progress: 'Reloading the page…' },
+  outdatedSpotify: { button: 'Reload Spotify', progress: 'Reloading Spotify…' }
 };
 
 const THEMES = [
@@ -282,6 +284,7 @@ let liveBlocked = false;
 let applyRevision = 0;
 let presetWriteQueue = Promise.resolve();
 let spotifyPermissionTabId = null;
+let tabOnSpotify = false;
 let youtubePermission = null;
 let tabSynced = false;
 let processingPending = false;
@@ -759,6 +762,9 @@ function setLiveState(live) {
 
 function setBlocked(isBlocked, reason) {
   blocked = isBlocked;
+  // An update is finished the same way on every site, but on Spotify the
+  // reload panel names it.
+  if (reason === 'outdated' && tabOnSpotify) reason = 'outdatedSpotify';
 
   if (isBlocked) {
     els.blockedBannerText.textContent = BLOCKED_TEXT[reason] ?? BLOCKED_TEXT.drm;
@@ -1098,8 +1104,8 @@ function bindControls() {
 
 async function syncWithActiveTab() {
   const tab = await getActiveTab();
-  spotifyPermissionTabId =
-    tab?.id !== undefined && isSpotifyUrl(tab.url) ? tab.id : null;
+  tabOnSpotify = isSpotifyUrl(tab?.url);
+  spotifyPermissionTabId = tab?.id !== undefined && tabOnSpotify ? tab.id : null;
   if (tab?.id === undefined) return;
 
   const spotify = isSpotifyUrl(tab.url);
