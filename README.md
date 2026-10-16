@@ -75,6 +75,16 @@ Each toggles off if that exact preset is already what's playing.
 Five themes (Glow, the default, plus Terminal, Midnight, Paper and Frost)
 behind the palette icon. Purely cosmetic and stored globally, not per tab.
 
+### Rating
+
+**Rate** next to Reset Defaults opens the review page of the store the build
+came from (Chrome Web Store, or Firefox Add-ons in the Firefox build). After the
+popup has been opened with the effect on during 5 different days, it asks once,
+above the footer, whether you'd leave a rating. "Rate it", "No thanks" or the
+Rate link ends it for good. The day count stays in local storage, and private
+windows never add to it. The question steps aside while a notice or permission
+panel shows, and on My Presets.
+
 ## Behavior worth knowing
 
 - **The support list is intentionally small.** YouTube, YouTube Music, and

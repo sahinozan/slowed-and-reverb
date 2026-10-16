@@ -63,12 +63,17 @@
     </p>
 
     <h2>Stored on your computer</h2>
-    <p>Your browser keeps three things for the extension:</p>
+    <p>Your browser keeps four things for the extension:</p>
     <ul>
       <li>your effect settings, such as speed, reverb, EQ and pan;</li>
       <li>the color theme you picked;</li>
-      <li>the presets you saved, with their names and settings.</li>
+      <li>the presets you saved, with their names and settings;</li>
+      <li>how many days you've opened the panel with the effect on, so it can ask once for a rating, and whether you answered. Private windows don't count.</li>
     </ul>
+    <p>
+      The panel's Rate link and that one question open the extension's store page only when
+      you click them.
+    </p>
     <p>
       To turn the effect back on after you reload a page, it also keeps a short note for each
       tab you used it in. The browser deletes these notes when you close the tab or the
@@ -128,7 +133,7 @@
       <ul>
         <li><strong>activeTab</strong>: temporary access to the current tab after you open the panel or press a shortcut on it. It is used only to start or control the audio effects on a supported page.</li>
         <li><strong>scripting</strong>: loads the audio code packaged with the extension into that tab.</li>
-        <li><strong>storage</strong>: keeps the settings, theme and presets, and the per-tab session entries described above.</li>
+        <li><strong>storage</strong>: keeps the settings, theme, presets and rating reminder count, and the per-tab session entries described above.</li>
         <li><strong>Optional access to open.spotify.com</strong>: lets the packaged Spotify audio code start before Spotify's player does. It is requested only when you choose to turn on Spotify support and can be revoked at any time.</li>
         <li><strong>In Firefox, optional access to www.youtube.com and music.youtube.com</strong>: lets the extension restore effects after a reload. Each site is requested separately the first time and can be revoked.</li>
       </ul>

@@ -779,4 +779,140 @@ describe('popup behavior', () => {
 
     close(harness);
   });
+
+  describe('rating', () => {
+    const PLAYING = { enabled: true, settings: SLOWED, blocked: false, live: false };
+    const today = () => {
+      const date = new Date();
+      const pad = (value) => String(value).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    };
+    const ratePrompt = (harness) => harness.window.document.getElementById('rate-prompt');
+
+    test('links to the store the build came from', async () => {
+      const chromium = await createPopupHarness({ contentState: PLAYING });
+      assert.match(
+        chromium.window.document.getElementById('rate-link').href,
+        /^https:\/\/chromewebstore\.google\.com\/detail\/slowed-reverb\/[a-z]+\/reviews$/
+      );
+      close(chromium);
+
+      const firefox = await createPopupHarness({
+        contentState: PLAYING,
+        manifest: { browser_specific_settings: { gecko: {} } },
+        grantedOrigins: ['https://www.youtube.com/*']
+      });
+      for (const id of ['rate-link', 'rate-prompt-link']) {
+        assert.equal(
+          firefox.window.document.getElementById(id).href,
+          'https://addons.mozilla.org/firefox/addon/slowed-reverb/'
+        );
+      }
+      close(firefox);
+    });
+
+    test('counts each day once and asks on the fifth', async () => {
+      const sameDay = await createPopupHarness({
+        contentState: PLAYING,
+        local: { ratingPrompt: { days: 4, lastDay: today(), done: false } }
+      });
+      for (let attempt = 0; attempt < 3; attempt++) await flushPromises();
+      assert.equal(ratePrompt(sameDay).hidden, true);
+      assert.equal(sameDay.local.data.ratingPrompt.days, 4);
+      close(sameDay);
+
+      const fifthDay = await createPopupHarness({
+        contentState: PLAYING,
+        local: { ratingPrompt: { days: 4, lastDay: '2000-01-01', done: false } }
+      });
+      for (let attempt = 0; attempt < 3; attempt++) await flushPromises();
+      assert.equal(ratePrompt(fifthDay).hidden, false);
+      assert.deepEqual(fifthDay.local.data.ratingPrompt, { days: 5, lastDay: today(), done: false });
+      close(fifthDay);
+    });
+
+    test('does not count a day when the effect is off', async () => {
+      const harness = await createPopupHarness({
+        session: {
+          'tabState:9': { origin: 'https://www.youtube.com', enabled: false, settings: SLOWED }
+        },
+        contentState: { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false },
+        local: { ratingPrompt: { days: 4, lastDay: '2000-01-01', done: false } }
+      });
+      for (let attempt = 0; attempt < 3; attempt++) await flushPromises();
+
+      assert.equal(ratePrompt(harness).hidden, true);
+      assert.equal(harness.local.data.ratingPrompt.days, 4);
+
+      close(harness);
+    });
+
+    test('stays answered when the answer comes while the day count is still loading', async () => {
+      const tabState = deferredTabState();
+      const harness = await createPopupHarness({
+        onTabMessage: tabState.onTabMessage,
+        local: { ratingPrompt: { days: 4, lastDay: '2000-01-01', done: false } }
+      });
+      // The popup reads the day count, but the answer to that read arrives
+      // only after the click, still holding what was stored before it.
+      let releaseRead = null;
+      const readNow = harness.local.get.bind(harness.local);
+      harness.local.get = async (query) => {
+        const stored = await readNow(query);
+        if (query === 'ratingPrompt') await new Promise((resolve) => { releaseRead = resolve; });
+        return stored;
+      };
+
+      tabState.release(PLAYING);
+      for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+      assert.equal(typeof releaseRead, 'function');
+
+      harness.window.document.getElementById('rate-prompt-dismiss').click();
+      releaseRead();
+      for (let attempt = 0; attempt < 5; attempt++) await flushPromises();
+
+      assert.equal(ratePrompt(harness).hidden, true);
+      assert.equal(harness.local.data.ratingPrompt.done, true);
+
+      close(harness);
+    });
+
+    test('does not count a day in a private window', async () => {
+      const harness = await createPopupHarness({
+        activeTab: { id: 9, url: 'https://www.youtube.com/watch?v=example', incognito: true },
+        contentState: PLAYING,
+        local: { ratingPrompt: { days: 4, lastDay: '2000-01-01', done: false } }
+      });
+      for (let attempt = 0; attempt < 3; attempt++) await flushPromises();
+
+      assert.equal(ratePrompt(harness).hidden, true);
+      assert.deepEqual(harness.local.data.ratingPrompt, { days: 4, lastDay: '2000-01-01', done: false });
+
+      close(harness);
+    });
+
+    test('stops asking once answered', async () => {
+      const harness = await createPopupHarness({
+        contentState: PLAYING,
+        local: { ratingPrompt: { days: 7, lastDay: '2000-01-01', done: false } }
+      });
+      for (let attempt = 0; attempt < 3; attempt++) await flushPromises();
+      assert.equal(ratePrompt(harness).hidden, false);
+
+      harness.window.document.getElementById('rate-prompt-dismiss').click();
+      await flushPromises();
+      assert.equal(ratePrompt(harness).hidden, true);
+      assert.equal(harness.local.data.ratingPrompt.done, true);
+      close(harness);
+
+      const later = await createPopupHarness({
+        contentState: PLAYING,
+        local: { ratingPrompt: { days: 8, lastDay: '2000-01-01', done: true } }
+      });
+      for (let attempt = 0; attempt < 3; attempt++) await flushPromises();
+      assert.equal(ratePrompt(later).hidden, true);
+      assert.equal(later.local.data.ratingPrompt.days, 8);
+      close(later);
+    });
+  });
 });
