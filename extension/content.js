@@ -11,8 +11,12 @@
   const BRIDGE_CHECK_EVENT = `${CHANNEL}_CHECK`;
   // The engine answers within a task or two; no answer means it never loaded.
   const ENGINE_TIMEOUT_MS = 2000;
-  // The engine reports the version it came with, to compare with this one.
-  const VERSION = api.runtime.getManifest().version;
+  // The version this code was released as. The engine reports the version
+  // it came with, to compare with this one. A store rolls back to earlier
+  // code by putting it out again with only the manifest's version raised, so
+  // this is not read from the manifest. tests/settings.test.js keeps it equal
+  // to the manifest's version in the repository.
+  const VERSION = '1.1.1';
 
   // The defaults from settings.js, which is injected before this file; they also
   // mean "effect off".

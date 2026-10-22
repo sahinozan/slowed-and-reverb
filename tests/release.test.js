@@ -139,6 +139,8 @@ describe('Version bump', () => {
   const files = (version) => ({
     'package.json': JSON.stringify({ version }),
     'package-lock.json': JSON.stringify({ version, packages: { '': { version } } }),
+    'extension/content.js': `  const VERSION = '${version}';`,
+    'extension/spotify-bridge.js': `  const VERSION = '${version}';`,
     'extension/spotify-main.js': `  const VERSION = '${version}';`,
     'extension/youtube-main.js': `  const VERSION = '${version}';`,
     'site/index.html': footer(version),
@@ -160,6 +162,8 @@ describe('Version bump', () => {
 
     assert.deepEqual(versionBumpProblems((file) => repo[file], pages, '1.1.2'), [
       'package-lock.json has another version in its root entries',
+      'extension/content.js has VERSION 1.1.1',
+      'extension/spotify-bridge.js has VERSION 1.1.1',
       'extension/youtube-main.js has VERSION 1.1.1',
       "site/index.html doesn't show 1.1.2 in its footer",
       "site/changelog.html doesn't show 1.1.2 in its footer",

@@ -115,7 +115,12 @@ function versionBumpProblems(read, pages, version) {
     lock.version === version && lock.packages?.['']?.version === version,
     'package-lock.json has another version in its root entries'
   );
-  for (const file of ['extension/spotify-main.js', 'extension/youtube-main.js']) {
+  for (const file of [
+    'extension/content.js',
+    'extension/spotify-bridge.js',
+    'extension/spotify-main.js',
+    'extension/youtube-main.js'
+  ]) {
     const literal = /const VERSION = '([^']*)';/.exec(read(file));
     expect(literal?.[1] === version, `${file} has VERSION ${literal?.[1]}`);
   }

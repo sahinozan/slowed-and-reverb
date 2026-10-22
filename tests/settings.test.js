@@ -83,10 +83,12 @@ describe('shared settings', () => {
     }
   });
 
-  test('the audio engines report the version in the manifest', () => {
-    // The Spotify bridge and content.js keep an engine from any other version off.
+  test('the audio engines and the scripts that talk to them have the version in the manifest', () => {
+    // The Spotify bridge and content.js keep an engine from any other version
+    // off. Each file has its own copy, since a store's rollback changes only
+    // the manifest, and Spotify's registered scripts must stay self-contained.
     const { version } = JSON.parse(fs.readFileSync(path.join(root, 'extension/manifest.json'), 'utf8'));
-    for (const file of ['spotify-main.js', 'youtube-main.js']) {
+    for (const file of ['content.js', 'spotify-bridge.js', 'spotify-main.js', 'youtube-main.js']) {
       const source = fs.readFileSync(path.join(root, 'extension', file), 'utf8');
       const literal = source.match(/const VERSION = '([^']*)';/);
       assert.ok(literal, `${file} no longer defines VERSION the expected way`);

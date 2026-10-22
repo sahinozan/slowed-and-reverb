@@ -340,31 +340,73 @@ describe('content script audio processing', () => {
   });
 
   // An update leaves the engine in open tabs, and the new version's copy
-  // stops at its guard, so the new content.js finds the previous engine.
-  test("keeps the previous version's engine off after an update", async (t) => {
-    const harness = await createContentHarness({ engineVersion: '1.1.2', extensionVersion: '1.1.2' });
+  // stops at its guard, so the new content.js finds the previous engine. A
+  // store's rollback is an update too: it puts earlier code out again, with
+  // only the version in the manifest raised.
+  const updates = [
+    ['an update', { version: '99.0.1' }],
+    ['a store rollback', { manifestVersion: '99.0.1' }]
+  ];
+  for (const [update, copy] of updates) {
+    test(`keeps the previous version's engine off after ${update}`, async (t) => {
+      const harness = await createContentHarness({
+        engineVersion: '99.0.0',
+        version: '99.0.0',
+        // The new content.js asks for this again as soon as it starts.
+        remembered: { enabled: true, settings: SETTINGS, url: 'https://www.youtube.com/watch?v=example' }
+      });
+      t.after(() => close(harness));
+
+      assert.equal(harness.media.playbackRate, SETTINGS.speed);
+      const sent = harness.pageMessages.length;
+      await harness.reinject(copy);
+      // The player's speed changes back once the output has faded out.
+      await waitFor(() => harness.media.playbackRate === 1);
+
+      const state = await harness.dispatch({ type: 'GET_STATE' });
+      assert.equal(state.enabled, false);
+      assert.equal(state.blocked, true);
+      assert.equal(state.blockReason, 'outdated');
+      const response = await harness.dispatch({
+        type: 'UPDATE_AUDIO',
+        settings: SETTINGS,
+        enabled: true
+      });
+      assert.equal(response.success, false);
+      assert.equal(response.blocked, true);
+      assert.equal(response.blockReason, 'outdated');
+      const turnedOn = harness.pageMessages
+        .slice(sent)
+        .filter(({ type, enabled }) => type === 'APPLY' && enabled);
+      assert.deepEqual(turnedOn, []);
+      assert.equal(harness.media.playbackRate, 1);
+      assert.deepEqual(outputGains(harness.context).map((node) => node.gain.value), [1, 0]);
+    });
+  }
+
+  // After a store's rollback, a page loaded again gets content.js and the
+  // engine from the same earlier code, under a manifest that says a later
+  // version than that code.
+  test('turns on the engine it came with when the manifest says another version', async (t) => {
+    const harness = await createContentHarness({
+      manifestVersion: '99.0.1',
+      remembered: { enabled: true, settings: SETTINGS, url: 'https://www.youtube.com/watch?v=example' }
+    });
     t.after(() => close(harness));
 
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    // The effect comes back on its own after the reload.
     assert.equal(harness.media.playbackRate, SETTINGS.speed);
-    await harness.reinject('1.2.0');
-    // The player's speed changes back once the output has faded out.
-    await waitFor(() => harness.media.playbackRate === 1);
-
     const state = await harness.dispatch({ type: 'GET_STATE' });
-    assert.equal(state.enabled, false);
-    assert.equal(state.blocked, true);
-    assert.equal(state.blockReason, 'outdated');
+    assert.equal(state.enabled, true);
+    assert.equal(state.blocked, false);
     const response = await harness.dispatch({
       type: 'UPDATE_AUDIO',
       settings: SETTINGS,
       enabled: true
     });
-    assert.equal(response.success, false);
-    assert.equal(response.blocked, true);
-    assert.equal(response.blockReason, 'outdated');
-    assert.equal(harness.media.playbackRate, 1);
-    assert.deepEqual(outputGains(harness.context).map((node) => node.gain.value), [1, 0]);
+    assert.equal(response.success, true);
+    assert.equal(response.processingActive, true);
+    assert.deepEqual(outputGains(harness.context).map((node) => node.gain.value), [0, 1]);
   });
 
   test('never turns on an engine from 1.1.1 or earlier, which reports no version', async (t) => {
