@@ -444,6 +444,15 @@ function count(log, pattern) {
 // A release needs exactly one summary in which every test passed: none
 // failed, was cancelled, skipped or left to do. The only skips in the suites
 // are for Windows, which the release doesn't run on, so none are allowed.
+//
+// The summary doesn't count a skipped suite, whose tests never run, so it can
+// show every test passing. A skipped suite's result line is marked as a
+// skipped test's is: "﹣ name (1ms) # SKIP" from the spec reporter, which uses
+// that symbol only for skips, or "ok 1 - name # SKIP" from TAP, which escapes
+// a # in a name as \#. Marks beyond the counted skips are skipped suites. A
+// to-do suite needs no mark: its tests run and are counted as to-do.
+const SKIPPED_RESULT = /^[ \t]*(?:﹣ |(?:not )?ok \d+(?: - (?:[^#\\\n]|\\.)*)? # SKIP\b)/gm;
+
 function nodeTestSummary(log) {
   const counts = {};
   const problems = [];
@@ -458,6 +467,8 @@ function nodeTestSummary(log) {
     }
     if (!counts.tests) problems.push('no tests');
     else if (counts.pass !== counts.tests) problems.push(`${counts.pass} of ${counts.tests} passed`);
+    const skippedSuites = (log.match(SKIPPED_RESULT) ?? []).length - counts.skipped;
+    if (skippedSuites > 0) problems.push(plural(skippedSuites, 'skipped suite'));
   }
   return { counts, problems };
 }
@@ -502,10 +513,12 @@ function zipFiles(zipPath) {
 
 // Writes the release folder's files, each { from: path } or { text }, under
 // names that may include a subfolder ("logs/check.log"). The files go into a
-// hidden folder next to it first, which is renamed into place once they are all
-// written, so a failure leaves no partial version folder. The folder must not
-// exist yet: verified files are never replaced, even when the folder appeared
-// while the checks ran.
+// hidden folder next to it first, so a failure leaves no partial version
+// folder. The folder must not exist yet: nothing already there is replaced,
+// even when it appeared while the checks ran. rename() would replace an empty
+// folder, so once the files are written, mkdir claims the name, failing if
+// anything has it, and the hidden folder is renamed onto the empty folder
+// this made.
 function writeReleaseFolder(outDir, files) {
   const appeared = () => new ReleaseError(`${outDir} appeared while the checks ran. Nothing was written to it.`);
   fs.mkdirSync(path.dirname(outDir), { recursive: true });
@@ -518,12 +531,22 @@ function writeReleaseFolder(outDir, files) {
       if ('from' in file) fs.copyFileSync(file.from, target, fs.constants.COPYFILE_EXCL);
       else fs.writeFileSync(target, file.text, { flag: 'wx' });
     }
-    // Renaming onto a folder that holds files fails, so this can't replace
-    // one that appeared since the check above.
+    try {
+      fs.mkdirSync(outDir);
+    } catch (error) {
+      if (error.code === 'EEXIST') throw appeared();
+      throw error;
+    }
     try {
       fs.renameSync(staging, outDir);
     } catch (error) {
-      if (['EEXIST', 'ENOTEMPTY', 'EPERM'].includes(error.code) && fs.existsSync(outDir)) throw appeared();
+      // Files put into the claimed folder meanwhile stop the rename; leave them.
+      if (['EEXIST', 'ENOTEMPTY'].includes(error.code)) throw appeared();
+      try {
+        fs.rmdirSync(outDir);
+      } catch {
+        // It holds files now, so it isn't only the folder made above.
+      }
       throw error;
     }
   } catch (error) {

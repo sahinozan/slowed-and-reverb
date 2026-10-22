@@ -100,10 +100,10 @@ what the commit builds. Then it writes the packages, the Firefox Add-ons copy
 of the privacy policy, a draft `RELEASE-<version>.txt` and each check's log
 (in `logs/`) to `dist/packages/<version>/` in the main checkout, next to the
 earlier releases; fill in the draft's TODO lines. It never replaces an
-existing version folder or leaves a partial one. It fails if any Node test is
-skipped, left to do or missing from the summary (the only skips are for
-Windows, where it doesn't run), and a failed run leaves its logs in the
-scratch folder it names.
+existing version folder, even an empty one, or leaves a partial one. It
+fails if any Node test or suite is skipped, or any test is left to do or
+missing from the summary (the only skips are for Windows, where it doesn't
+run), and a failed run leaves its logs in the scratch folder it names.
 `npm test` rebuilds `dist/packages/*.zip`, so keep the verified files in the
 version folder.
 

@@ -417,6 +417,32 @@ describe('Release folder', () => {
     assert.equal(fs.readFileSync(path.join(outDir, 'RELEASE-1.1.2.txt'), 'utf8'), 'verified');
   });
 
+  // rename() replaces an empty folder, so this one must be refused too.
+  test('never replaces an empty folder that appeared while the files were written', (t) => {
+    const dir = temporary(t);
+    const { files } = scratch(dir);
+    const packages = path.join(dir, 'packages');
+    const outDir = path.join(packages, '1.1.2');
+    // Another release's hidden folder isn't this one's to clean up.
+    const other = path.join(packages, '.1.1.2.incomplete-other');
+    fs.mkdirSync(other, { recursive: true });
+    let appeared;
+    const source = files['slowed-reverb-firefox-source.zip'].from;
+    files['slowed-reverb-firefox-source.zip'] = {
+      get from() {
+        fs.mkdirSync(outDir);
+        appeared = fs.statSync(outDir);
+        return source;
+      }
+    };
+
+    assert.throws(() => writeReleaseFolder(outDir, files), /appeared while the checks ran/);
+    assert.deepEqual(fs.readdirSync(packages).sort(), ['.1.1.2.incomplete-other', '1.1.2']);
+    assert.deepEqual(fs.readdirSync(outDir), []);
+    const now = fs.statSync(outDir);
+    assert.deepEqual([now.dev, now.ino], [appeared.dev, appeared.ino]);
+  });
+
   test('leaves no partial folder when a file cannot be written, and the logs stay in scratch', (t) => {
     const dir = temporary(t);
     const { logs, files } = scratch(dir);
@@ -435,7 +461,7 @@ describe('Node test summaries', () => {
   const summaries = (t, body) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-release-test-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-    fs.writeFileSync(path.join(dir, 'sample.test.js'), `const { test } = require('node:test');\n${body}`);
+    fs.writeFileSync(path.join(dir, 'sample.test.js'), `const { before, describe, test } = require('node:test');\n${body}`);
     return ['spec', 'tap'].map((reporter) => {
       const result = spawnSync(process.execPath, ['--test', `--test-reporter=${reporter}`, 'sample.test.js'], {
         cwd: dir,
@@ -466,6 +492,41 @@ describe('Node test summaries', () => {
     const body = "test('a', () => { throw new Error('no'); });\ntest('b', { timeout: 50 }, () => new Promise(() => {}));\n";
     for (const { reporter, log } of summaries(t, body)) {
       assert.deepEqual(nodeTestSummary(log).problems, ['1 failed', '1 cancelled', '0 of 2 passed'], reporter);
+    }
+  });
+
+  test('rejects skipped suites, which the summary does not count', (t) => {
+    const body = [
+      "describe.skip('required', () => { test('a', () => {}); });",
+      "describe('outer', () => { describe('later', { skip: 'reason' }, () => { test('b', () => {}); }); test('c', () => {}); });",
+      "test('d', () => {});"
+    ].join('\n');
+    for (const { reporter, log } of summaries(t, body)) {
+      assert.deepEqual(nodeTestSummary(log).counts, { tests: 2, pass: 2, fail: 0, cancelled: 0, skipped: 0, todo: 0 }, reporter);
+      assert.deepEqual(nodeTestSummary(log).problems, ['2 skipped suites'], reporter);
+    }
+  });
+
+  test('counts the tests of to-do and cancelled suites', (t) => {
+    const body = [
+      "describe('later', { todo: true }, () => { test('a', () => {}); });",
+      "describe('broken', () => { before(() => { throw new Error('no'); }); test('b', () => {}); });",
+      "test('c', () => {});"
+    ].join('\n');
+    for (const { reporter, log } of summaries(t, body)) {
+      assert.deepEqual(nodeTestSummary(log).problems, ['1 cancelled', '1 todo', '1 of 3 passed'], reporter);
+    }
+  });
+
+  test('accepts nested suites and names that only look skipped', (t) => {
+    const body = [
+      "describe('outer', () => { describe('inner', () => { test('skips nothing # SKIP', () => {}); }); });",
+      "test('\\uFE63 skip', () => {});",
+      "test('ok 1 - x # SKIP', () => {});"
+    ].join('\n');
+    for (const { reporter, log } of summaries(t, body)) {
+      assert.deepEqual(nodeTestSummary(log).problems, [], reporter);
+      assert.equal(nodeTestSummary(log).counts.tests, 3, reporter);
     }
   });
 
