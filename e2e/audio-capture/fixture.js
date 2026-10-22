@@ -114,11 +114,26 @@ const PAGE_HTML = `<!doctype html>
         );
       });
       document.getElementById('activate').addEventListener('click', (event) => recordClick(event, false));
-      // Every change of the player's speed, as the page sees it.
+      // Every change of the player's speed, and every time it pauses or
+      // plays, as the page sees it.
       window.rateChanges = [];
-      document.getElementById('player').addEventListener('ratechange', (event) => {
-        window.rateChanges.push({ atMs: performance.now(), rate: event.target.playbackRate });
+      window.playerEvents = [];
+      const player = document.getElementById('player');
+      player.addEventListener('ratechange', () => {
+        window.rateChanges.push({ atMs: performance.now(), rate: player.playbackRate });
       });
+      for (const type of ['pause', 'play']) {
+        player.addEventListener(type, () => window.playerEvents.push({ atMs: performance.now(), type }));
+      }
+      // The browser passes media keys and the system's Now Playing controls
+      // to the page that played last, which would pause and play the test's
+      // player from outside. The page takes them and does nothing.
+      window.ignoredMediaActions = [];
+      for (const action of ['play', 'pause', 'stop', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack']) {
+        try {
+          navigator.mediaSession.setActionHandler(action, () => window.ignoredMediaActions.push({ atMs: performance.now(), action }));
+        } catch {}
+      }
     </script>
   </body>
 </html>`;

@@ -332,6 +332,23 @@ function defineRegression(browser) {
           });
         }
       }
+      // The player paused by anything but the check itself, such as another
+      // app taking the system's media controls: an interrupted recording,
+      // not the extension's sound.
+      const playerEvents = await span.page.evaluate(() => window.playerEvents ?? []);
+      const ignoredMediaActions = await span.page.evaluate(() => window.ignoredMediaActions ?? []);
+      const startMs = span.start.wallMs;
+      const byAction = (atMs) =>
+        span.actions.some((action) => {
+          const before = span.marks.find((mark) => mark.label === `${action.label}: before`);
+          const done = span.marks.find((mark) => mark.label === `${action.label}: after`);
+          return before && done ? atMs >= before.wallMs && atMs <= done.wallMs + 100 : false;
+        });
+      for (const event of playerEvents.filter((candidate) => candidate.type === 'pause' && candidate.atMs >= startMs)) {
+        if (!byAction(event.atMs)) {
+          problems.push({ code: 'interrupted', message: `the player paused ${Math.round(event.atMs - startMs)} ms into the span, not by the check` });
+        }
+      }
       problems.push(...span.checks);
 
       const name = span.name;
@@ -375,6 +392,8 @@ function defineRegression(browser) {
         excerpts,
         marks: span.marks,
         rateChanges: await span.page.evaluate(() => window.rateChanges ?? []),
+        playerEvents,
+        ignoredMediaActions,
         engineRequests: await span.page.evaluate(() => window.engineRequests ?? []),
         envelope10ms: envelope(left, right, sampleRate),
         snapshots: { start: span.start, end }
@@ -784,7 +803,11 @@ function defineRegression(browser) {
           const matching = problems.filter((problem) => problem.code === code && problem.message.includes(during));
           assert.ok(matching.length, `${entry.id} should fail with ${code} in "${during}"; got ${JSON.stringify(listed)}`);
         }
-        const broken = problems.filter((problem) => RECORDER_PROBLEMS.includes(problem.code) || ['setup', 'not-covered', 'onset-not-observed', 'not-overlapping', 'non-finite'].includes(problem.code));
+        const broken = problems.filter(
+          (problem) =>
+            RECORDER_PROBLEMS.includes(problem.code) ||
+            ['setup', 'not-covered', 'onset-not-observed', 'not-overlapping', 'non-finite', 'interrupted'].includes(problem.code)
+        );
         assert.deepEqual(broken.map(({ code, message }) => `${code}: ${message}`), [], `${entry.id} must fail for its sound, not its setup`);
       });
     }
