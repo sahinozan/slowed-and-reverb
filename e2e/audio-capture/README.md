@@ -166,7 +166,13 @@ measurements were the same.
 | macOS 27 (Apple silicon), built-in output | Chromium 156 (Playwright 1.64.0), headless, without `--mute-audio` | 3 | All passed |
 | Same | Chromium 156, Playwright's defaults (`--mute-audio`) | 3 | Same levels |
 | Same | Firefox 158.0.1 (puppeteer-core 25.13.0), headless | 3 | All passed |
-| Ubuntu (GitHub-hosted), PulseAudio null sink | Chromium and Firefox | | Pending: the first hosted run of pull request #91 |
+| Same, after the level comparison and request deadline changes | Chromium 156 with and without `--mute-audio`, Firefox 158.0.1 | 1 | All passed, same levels |
+| Ubuntu (GitHub-hosted, image `ubuntu26` 20261021.171.10), PulseAudio 17.0 null sink | Chromium 156 with and without `--mute-audio`, Firefox 158.0.1 | 1 | All passed, same levels (see below) |
+
+The Ubuntu run is [Audio capture trial run 39837845967](https://github.com/sahinozan/slowed-and-reverb/actions/runs/39837845967).
+It tested commit `c0dcc13`, GitHub's merge of `9e94e3e` into `main`, so it
+came before the level comparison and request deadline changes. Its
+evidence is kept for 14 days.
 
 What the Mac runs show, in both browsers:
 
@@ -181,10 +187,10 @@ What the Mac runs show, in both browsers:
   disconnected branch disappeared completely.
 - The YouTube and Spotify engines both put 352 and 528 Hz on the left at
   0.287 each, with the right channel exactly 0. The players advanced at
-  0.78 to 0.84 times the wall clock. Each had one context, and the recorder
-  was ready before the first frame (context frame 0), so nothing at the
-  start was missed. The level is above 0.25 because of the compressor's
-  automatic makeup gain.
+  0.78 to 0.84 times the wall clock. Each had one context. Recording began
+  at context frame 0 in Firefox, and at frame 0 to 256 (up to 5 ms) in
+  Chromium. The level is above 0.25 because of the compressor's automatic
+  makeup gain.
 - Every control failed with the codes in the table, and with no clock or
   recorder problem where the table says so. With everything disconnected,
   the recorder kept receiving frames: they were empty blocks, not a
@@ -198,6 +204,30 @@ What the Mac runs show, in both browsers:
   after the graph, where the recorder doesn't look; how Chromium does it
   wasn't examined.
 
+What the Ubuntu run shows, in both browsers:
+
+- Every context ran at 44.1 kHz, the sound server's default, with
+  128-frame blocks and the same destination as on the Mac.
+- Context clocks advanced at 0.99 to 1.013 times the wall clock, and
+  recorded frames always equaled the context frames they spanned, with no
+  lost, dropped or skipped frames.
+- The native tones, summing, disconnect and media element recorded at the
+  same levels as on the Mac. The engines put 352 and 528 Hz on the left at
+  0.287 each, with the right channel exactly 0, and the players advanced
+  at 0.79 to 0.82 times the wall clock.
+- Recording of the engines began at context frame 0 in Firefox, and at
+  1024 to 1536 (23 to 35 ms) in Chromium.
+- Every control failed with the codes in the table, and with no clock or
+  recorder problem where the table says so. In Firefox the broken engine also reported empty
+  blocks (`no-input`), as everything disconnected does.
+- `--mute-audio` made no difference (0 dB).
+- During the first window the sound server listed the browser's audio
+  streams on the null sink (two for Chromium, one for Firefox), as 32-bit
+  float stereo at 44.1 kHz.
+- Firefox took 39 seconds to start, against about 1 second for Chromium.
+  The job took 3 minutes, with Playwright's Chromium restored from the
+  cache.
+
 ## Limits
 
 - This is the graph's output, recorded inside the browser. It doesn't prove
@@ -206,25 +236,28 @@ What the Mac runs show, in both browsers:
   during the first window (`sinkInputs`).
 - The observer adds nodes to the graph. Its effect on timing hasn't been
   measured against an uninstrumented recording, such as OS loopback.
-- The recorder starts once its worklet has loaded. For the YouTube engine on
-  the Mac that was before the first frame, but the trial doesn't guarantee
-  it. `firstContextFrame` in each window records where recording began.
-- Only steady tones, two settings and one sample rate (48 kHz) were used.
+- The recorder starts once its worklet has loaded, which can be after the
+  first frames (up to 35 ms in so far). `firstContextFrame` in each window
+  records where recording began.
+- Only steady tones, two settings and two sample rates (48 kHz on the Mac,
+  44.1 kHz on Ubuntu) were used.
   Transitions, clicks, gaps, enable and disable, Spotify's speed resets and
   effect accuracy are left for the next stage. So is any historical
   regression as a control. One deliberately broken engine was used.
-- The Mac and hosted runs are a handful each, enough to catch obvious
-  instability but not to give a flake rate.
+- There were four Mac runs of each browser and one hosted run, enough to
+  catch obvious instability but not to give a flake rate.
 - Windows runners weren't tried.
 
 ## Recommendation
 
 **Measured so far:** recording real engine output works on a Mac in both
 browsers, without new dependencies or production changes, and the
-`destination` bus works as intended.
+`destination` bus works as intended. One hosted Ubuntu run with a null sink
+also gave running clocks, every frame and the expected levels in both
+browsers.
 
-**Pending:** whether a hosted Ubuntu runner with a null sink gives running
-clocks and real frames in both browsers. Until its run is read, Linux CI is
-not shown to be feasible. If it is, the next stage can build its audio
-cases on this harness and gate on Linux. If it isn't, the fallback is to
-run the trial on the Mac as part of the release, where it already works.
+**Pending:** a hosted run of the current code, and enough hosted runs to
+show Linux is steady, not just that it can work. If it is, the next stage
+can build its audio cases on this harness and gate on Linux. If it isn't,
+the fallback is to run the trial on the Mac as part of the release, where
+it already works.
