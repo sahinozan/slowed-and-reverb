@@ -11,13 +11,15 @@ const {
   describeEntries,
   firefoxPrivacyText,
   lineChanges,
-  nodeTestSummary,
+  nodeTestResults,
   previousVersion,
   pullRequests,
   releaseFiles,
   releaseRecord,
+  resultsReporter,
   run,
   stillRunning,
+  TEST_SCRIPTS,
   versionBumpProblems,
   wrap,
   writeReleaseFolder
@@ -456,132 +458,212 @@ describe('Release folder', () => {
   });
 });
 
-describe('Node test summaries', () => {
-  // Runs node --test on a throwaway test file with each reporter.
-  const summaries = (t, body) => {
+describe('Node test results', () => {
+  // Without NODE_TEST_CONTEXT, a node --test run inside one reports to its parent.
+  const plainEnv = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
+
+  // Writes throwaway test files (by name, or one sample.test.js), and runs
+  // node --test on them with the release's reporters.
+  const runTests = (t, files) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-release-test-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-    fs.writeFileSync(path.join(dir, 'sample.test.js'), `const { before, describe, test } = require('node:test');\n${body}`);
-    return ['spec', 'tap'].map((reporter) => {
-      const result = spawnSync(process.execPath, ['--test', `--test-reporter=${reporter}`, 'sample.test.js'], {
-        cwd: dir,
-        encoding: 'utf8',
-        // Without this, a node --test run inside one reports to its parent.
-        env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'))
-      });
-      return { reporter, log: result.stdout + result.stderr };
+    if (typeof files === 'string') files = { 'sample.test.js': files };
+    for (const [name, body] of Object.entries(files)) {
+      fs.writeFileSync(path.join(dir, name), `const { before, describe, test } = require('node:test');\n${body}`);
+    }
+    const results = path.join(dir, 'results.json');
+    const run = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...resultsReporter(results)], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: plainEnv()
     });
+    return { dir, results, status: run.status, log: run.stdout + run.stderr, ...nodeTestResults(results) };
   };
 
-  test('accepts a run in which every test passed', (t) => {
-    for (const { reporter, log } of summaries(t, "test('a', () => {});\ntest('b', () => {});\n")) {
-      assert.deepEqual(nodeTestSummary(log).problems, [], reporter);
-      assert.equal(nodeTestSummary(log).counts.tests, 2, reporter);
-    }
+  // The printed report is interrupted by output without a newline before a
+  // required suite's result, which hid it from the summary's readers.
+  const interrupted = (suite) => [
+    "process.stdout.write('Loading required fixture... ');",
+    `${suite}('required regression suite', () => {`,
+    "  require('./missing-fixture.json');",
+    "  test('required regression', () => {});",
+    '});',
+    "test('unrelated pass', () => {});"
+  ].join('\n');
+
+  test('accepts a run in which every test passed, whatever the tests print', (t) => {
+    const run = runTests(t, {
+      'a.test.js': [
+        "process.stdout.write('partial stdout ');",
+        "process.stderr.write('partial stderr ');",
+        "describe('outer # TODO', () => { test('a (1ms) # TODO', () => { process.stdout.write('\\u2139 todo 0\\n# skipped 0'); }); });",
+        "test('\\u26A0 b (1ms) # TODO', () => {});",
+        "test('\\uFE63 c # SKIP', () => { console.log('not ok 1 - c # TODO'); });"
+      ].join('\n'),
+      'b.test.js': "test('d', async (t) => { await t.test('e', () => {}); });"
+    });
+    assert.equal(run.status, 0, run.log);
+    assert.deepEqual(run.problems, []);
+    assert.equal(run.counts.tests, 5);
+    assert.equal(run.counts.passed, 5);
   });
 
-  test('rejects passing runs with skipped or to-do tests', (t) => {
-    const body = "test('a', () => {});\ntest('b', { skip: true }, () => {});\ntest('c', { todo: true }, () => {});\n";
-    for (const { reporter, log } of summaries(t, body)) {
-      assert.deepEqual(nodeTestSummary(log).problems, ['1 skipped', '1 todo', '1 of 3 passed'], reporter);
-    }
+  test('rejects to-do and skipped suites after output without a newline', (t) => {
+    const todo = runTests(t, interrupted('describe.todo'));
+    // node --test itself passes this run, and its summary counts one test.
+    assert.equal(todo.status, 0, todo.log);
+    assert.match(todo.log, /^ℹ todo 0$/m);
+    assert.deepEqual(todo.problems, [
+      '1 failed (suite "required regression suite")',
+      '1 to-do (suite "required regression suite")'
+    ]);
+
+    const skip = runTests(t, interrupted('describe.skip'));
+    assert.equal(skip.status, 0, skip.log);
+    assert.deepEqual(skip.problems, ['1 skipped (suite "required regression suite")']);
   });
 
-  test('rejects failed and cancelled tests', (t) => {
-    // A test that times out is cancelled.
-    const body = "test('a', () => { throw new Error('no'); });\ntest('b', { timeout: 50 }, () => new Promise(() => {}));\n";
-    for (const { reporter, log } of summaries(t, body)) {
-      assert.deepEqual(nodeTestSummary(log).problems, ['1 failed', '1 cancelled', '0 of 2 passed'], reporter);
-    }
-  });
-
-  test('rejects skipped suites, which the summary does not count', (t) => {
-    const body = [
-      "describe.skip('required', () => { test('a', () => {}); });",
-      "describe('outer', () => { describe('later', { skip: 'reason' }, () => { test('b', () => {}); }); test('c', () => {}); });",
-      "test('d', () => {});"
-    ].join('\n');
-    for (const { reporter, log } of summaries(t, body)) {
-      assert.deepEqual(nodeTestSummary(log).counts, { tests: 2, pass: 2, fail: 0, cancelled: 0, skipped: 0, todo: 0 }, reporter);
-      assert.deepEqual(nodeTestSummary(log).problems, ['2 skipped suites'], reporter);
-    }
-  });
-
-  test('counts the tests of to-do and cancelled suites', (t) => {
-    const body = [
-      "describe('later', { todo: true }, () => { test('a', () => {}); });",
-      "describe('broken', () => { before(() => { throw new Error('no'); }); test('b', () => {}); });",
-      "test('c', () => {});"
-    ].join('\n');
-    for (const { reporter, log } of summaries(t, body)) {
-      assert.deepEqual(nodeTestSummary(log).problems, ['1 cancelled', '1 todo', '1 of 3 passed', '1 to-do suite'], reporter);
-    }
-  });
-
-  test('rejects to-do suites that fail before their tests are counted', (t) => {
-    const body = [
-      "describe.todo('required', () => { require('./missing-fixture.json'); test('a', () => {}); });",
+  test('rejects to-do suites, with or without a reason, nested or empty', (t) => {
+    const run = runTests(t, [
       "describe('later', { todo: 'reason' }, () => { throw new Error('no'); });",
       "describe('outer', () => { describe.todo('inner', () => { throw new Error('no'); }); test('b', () => {}); });",
       "describe.todo('empty', () => {});",
-      "test('c', () => {});"
-    ].join('\n');
-    for (const { reporter, log } of summaries(t, body)) {
-      assert.deepEqual(nodeTestSummary(log).counts, { tests: 2, pass: 2, fail: 0, cancelled: 0, skipped: 0, todo: 0 }, reporter);
-      assert.deepEqual(nodeTestSummary(log).problems, ['4 to-do suites'], reporter);
-    }
-  });
-
-  test('counts a failed to-do test once, though the spec reporter repeats it', (t) => {
-    const body = "test('a', { todo: true }, () => { throw new Error('no'); });\ntest('b', () => {});\n";
-    for (const { reporter, log } of summaries(t, body)) {
-      assert.deepEqual(nodeTestSummary(log).problems, ['1 todo', '1 of 2 passed'], reporter);
-    }
-  });
-
-  test('accepts names that only look to-do', (t) => {
-    const body = [
-      "describe('outer # TODO', () => { test('a (1ms) # TODO', () => {}); });",
-      "test('\\u26A0 b (1ms) # TODO', () => {});",
-      "test('ok 1 - c # TODO', () => {});"
-    ].join('\n');
-    for (const { reporter, log } of summaries(t, body)) {
-      assert.deepEqual(nodeTestSummary(log).problems, [], reporter);
-      assert.equal(nodeTestSummary(log).counts.tests, 3, reporter);
-    }
-  });
-
-  test('accepts nested suites and names that only look skipped', (t) => {
-    const body = [
-      "describe('outer', () => { describe('inner', () => { test('skips nothing # SKIP', () => {}); }); });",
-      "test('\\uFE63 skip', () => {});",
-      "test('ok 1 - x # SKIP', () => {});"
-    ].join('\n');
-    for (const { reporter, log } of summaries(t, body)) {
-      assert.deepEqual(nodeTestSummary(log).problems, [], reporter);
-      assert.equal(nodeTestSummary(log).counts.tests, 3, reporter);
-    }
-  });
-
-  test('rejects a missing, incomplete or repeated summary', () => {
-    const complete = ['ℹ tests 2', 'ℹ pass 2', 'ℹ fail 0', 'ℹ cancelled 0', 'ℹ skipped 0', 'ℹ todo 0'];
-    assert.deepEqual(nodeTestSummary(complete.join('\n')).problems, []);
-
-    assert.deepEqual(nodeTestSummary('').problems, [
-      'no "tests" count',
-      'no "pass" count',
-      'no "fail" count',
-      'no "cancelled" count',
-      'no "skipped" count',
-      'no "todo" count'
+      "describe.todo('passing', () => { test('c', () => {}); });",
+      "test('d', () => {});"
+    ].join('\n'));
+    assert.deepEqual(run.problems, [
+      '2 failed (suite "later" and suite "inner")',
+      '5 to-do (suite "later", suite "inner", suite "empty" and 2 more)'
     ]);
-    assert.deepEqual(nodeTestSummary(complete.filter((line) => !/skipped/.test(line)).join('\n')).problems, [
-      'no "skipped" count'
+  });
+
+  test('rejects skipped suites, with or without a reason, and nested', (t) => {
+    const run = runTests(t, [
+      "describe.skip('required', () => { test('a', () => {}); });",
+      "describe('outer', () => { describe('later', { skip: 'reason' }, () => { test('b', () => {}); }); test('c', () => {}); });",
+      "test('d', () => {});"
+    ].join('\n'));
+    assert.equal(run.status, 0, run.log);
+    assert.deepEqual(run.problems, ['2 skipped (suite "required" and suite "later")']);
+  });
+
+  test('rejects skipped and to-do tests', (t) => {
+    const run = runTests(t, "test('a', () => {});\ntest('b', { skip: true }, () => {});\ntest('c', { todo: 'reason' }, () => {});\n");
+    assert.deepEqual(run.problems, ['1 skipped (test "b")', '1 to-do (test "c")']);
+    assert.deepEqual([run.counts.tests, run.counts.passed, run.counts.skipped, run.counts.todo], [3, 1, 1, 1]);
+  });
+
+  test('rejects failed and cancelled tests and suites', (t) => {
+    // A test that times out is cancelled, and so are a suite's tests when its
+    // hook fails.
+    const run = runTests(t, [
+      "test('a', () => { throw new Error('no'); });",
+      "test('b', { timeout: 50 }, () => new Promise(() => {}));",
+      "describe('broken', () => { before(() => { throw new Error('no'); }); test('c', () => {}); });",
+      "test('d', () => {});"
+    ].join('\n'));
+    assert.notEqual(run.status, 0);
+    assert.deepEqual(run.problems, [
+      '2 failed (test "a" and suite "broken")',
+      '2 cancelled (test "b" and test "c")',
+      'a summary that says the run failed'
     ]);
-    assert.deepEqual(nodeTestSummary([...complete, '# skipped 1'].join('\n')).problems, ['2 "skipped" counts']);
-    assert.deepEqual(nodeTestSummary(complete.map((line) => line.replace(/ 2$/, ' 0')).join('\n')).problems, [
-      'no tests'
-    ]);
+  });
+
+  test('counts a failed to-do test once, though the printed report repeats it', (t) => {
+    const run = runTests(t, "test('a', { todo: true }, () => { throw new Error('no'); });\ntest('b', () => {});\n");
+    assert.equal(run.log.match(/⚠ a \(/g)?.length, 2, run.log);
+    assert.deepEqual(run.problems, ['1 failed (test "a")', '1 to-do (test "a")']);
+  });
+
+  test('rejects a test file that exits before its summary', (t) => {
+    const run = runTests(t, {
+      'early.test.js': "test('a', () => {});\ntest('b', () => new Promise((resolve) => setTimeout(resolve, 50)));\nsetTimeout(() => process.exit(0), 1);",
+      'later.test.js': "test('c', () => {});"
+    });
+    assert.equal(run.status, 0, run.log);
+    assert.deepEqual(run.problems, ['1 file without a summary (early.test.js)']);
+    assert.equal(run.counts.tests, 2);
+  });
+
+  // The release's own tests run node --test inside a test, as this does.
+  test("ignores a node --test run inside a test, and its printed report", (t) => {
+    const run = runTests(t, [
+      "const { spawnSync } = require('child_process');",
+      "require('fs').writeFileSync('inner.js', \"require('node:test').test('inner', () => { throw new Error('no'); });\\n\");",
+      "test('runs a failing inner run', () => {",
+      "  const env = { ...process.env };",
+      '  delete env.NODE_TEST_CONTEXT;',
+      "  const inner = spawnSync(process.execPath, ['--test', 'inner.js'], { env, stdio: ['ignore', 'inherit', 'inherit'] });",
+      "  if (inner.status !== 1) throw new Error('the inner run should fail');",
+      "  process.stdout.write('\\u2139 tests 9');",
+      '});'
+    ].join('\n'));
+    assert.match(run.log, /^ℹ fail 1$/m);
+    assert.deepEqual(run.problems, []);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(run.results, 'utf8')).results.map((result) => result.name),
+      ['runs a failing inner run']
+    );
+  });
+
+  test('rejects a missing, partial or foreign results file', (t) => {
+    const { results } = runTests(t, "test('a', () => {});\n");
+    const text = fs.readFileSync(results, 'utf8');
+    const report = JSON.parse(text);
+    assert.deepEqual(nodeTestResults(results).problems, []);
+
+    const check = (contents) => {
+      fs.writeFileSync(results, typeof contents === 'string' ? contents : JSON.stringify(contents));
+      return nodeTestResults(results).problems;
+    };
+    assert.deepEqual(check(''), ['no complete results file']);
+    assert.deepEqual(check(text.slice(0, -20)), ['no complete results file']);
+    assert.deepEqual(check({ ...report, format: 'another' }), ['no complete results file']);
+    assert.deepEqual(check({ ...report, summaries: report.summaries.filter((summary) => summary.file) }), ['0 run summaries']);
+    const runSummary = report.summaries.find((summary) => summary.file === null);
+    assert.deepEqual(check({ ...report, summaries: [...report.summaries, runSummary] }), ['2 run summaries']);
+    assert.deepEqual(check({ ...report, results: [] }), ['no tests passed', "a summary that doesn't match the results"]);
+    fs.rmSync(results);
+    assert.deepEqual(nodeTestResults(results).problems, ['no complete results file']);
+  });
+
+  test(
+    'rejects an interrupted to-do or skipped suite through npm test, as the release runs it',
+    { skip: process.platform === 'win32' && 'process groups are POSIX-only' },
+    async (t) => {
+      // Run as from a plain shell, as the release is, not as a test file.
+      const context = process.env.NODE_TEST_CONTEXT;
+      delete process.env.NODE_TEST_CONTEXT;
+      t.after(() => {
+        if (context !== undefined) process.env.NODE_TEST_CONTEXT = context;
+      });
+      const expected = {
+        'describe.todo': ['1 failed (suite "required regression suite")', '1 to-do (suite "required regression suite")'],
+        'describe.skip': ['1 skipped (suite "required regression suite")'],
+        // With its fixture there, the same suite passes.
+        describe: []
+      };
+      for (const [suite, problems] of Object.entries(expected)) {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-release-test-'));
+        t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+        const scripts = { test: TEST_SCRIPTS.test };
+        fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'sample', private: true, scripts }));
+        if (suite === 'describe') fs.writeFileSync(path.join(dir, 'missing-fixture.json'), '{}');
+        fs.writeFileSync(path.join(dir, 'sample.test.js'), `const { describe, test } = require('node:test');\n${interrupted(suite)}`);
+        const results = path.join(dir, 'results.json');
+        const log = path.join(dir, 'check.log');
+
+        await run('npm', ['test', '--', ...resultsReporter(results)], { cwd: dir, log });
+        assert.match(fs.readFileSync(log, 'utf8'), /^Loading required fixture\.\.\. \S/m, suite);
+        assert.deepEqual(nodeTestResults(results).problems, problems, suite);
+      }
+    }
+  );
+
+  test("runs the package's test scripts as the release does", () => {
+    const { scripts } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    for (const [name, script] of Object.entries(TEST_SCRIPTS)) assert.equal(scripts[name], script, name);
   });
 });
 

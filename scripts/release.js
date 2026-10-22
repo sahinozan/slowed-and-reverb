@@ -9,8 +9,11 @@
 // (the browser tests are timing-sensitive, so run nothing else meanwhile),
 // checks that the packages are exactly what the commit builds, and writes a
 // draft RELEASE-<version>.txt to finish by hand, with each check's log in
-// logs/. It never replaces an existing version folder. Needs macOS or Linux,
-// Chromium for Playwright and Firefox.
+// logs/. The Node tests' results come from a second reporter
+// (scripts/node-test-results.js) writing to its own file in logs/, not from
+// their printed output, which the tests' own output can interrupt. It never
+// replaces an existing version folder. Needs macOS or Linux, Chromium for
+// Playwright and Firefox.
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -18,6 +21,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync, spawn } = require('child_process');
 const AdmZip = require('adm-zip');
+const { FORMAT: RESULTS_FORMAT } = require('./node-test-results');
 
 const root = path.join(__dirname, '..');
 const TARGETS = ['chromium', 'firefox'];
@@ -440,54 +444,77 @@ function count(log, pattern) {
   return match ? Number(match[1]) : 0;
 }
 
-// node --test's summary: "ℹ pass 12" (spec reporter) or "# pass 12" (TAP).
-// A release needs exactly one summary in which every test passed: none
-// failed, was cancelled, skipped or left to do. The only skips in the suites
-// are for Windows, which the release doesn't run on, so none are allowed.
-//
-// The summary doesn't count a skipped suite, whose tests never run, so it can
-// show every test passing. A skipped suite's result line is marked as a
-// skipped test's is: "﹣ name (1ms) # SKIP" from the spec reporter, which uses
-// that symbol only for skips, or "ok 1 - name # SKIP" from TAP, which escapes
-// a # in a name as \#. Marks beyond the counted skips are skipped suites.
-//
-// A to-do suite isn't counted either, and neither is its failure: when its
-// callback throws before registering its tests, the run exits 0 and the
-// summary counts no failed or to-do test. Its result line is marked as a
-// to-do test's is. TAP writes "not ok 1 - name # TODO" or "ok 1 - name #
-// TODO reason". The spec reporter writes a failed to-do as "⚠ name (1ms) #
-// reason", a symbol it otherwise uses only to list tests interrupted by
-// Ctrl+C, and a passed one as "✔ name (1ms) # TODO", with the mark after the
-// duration, which follows the whole name. A passed to-do with a reason ("✔
-// name (1ms) # reason") looks like a test named so and isn't recognized.
-// Marks beyond the counted to-dos are to-do suites. The spec reporter repeats
-// failed results after the summary, so only marks before it count. A release
-// needs a count of no to-dos, so then every mark is a suite; the only one
-// missed is a passed, empty suite with a reason, which hides no test. With
-// to-dos counted, which fails anyway, unrecognized ones can hide suites.
-const SKIPPED_RESULT = /^[ \t]*(?:﹣ |(?:not )?ok \d+(?: - (?:[^#\\\n]|\\.)*)? # SKIP\b)/gm;
-const TODO_RESULT = /^[ \t]*(?:⚠ |✔ .* \(\d+(?:\.\d+)?ms\) # TODO$|(?:not )?ok \d+(?: - (?:[^#\\\n]|\\.)*)? # TODO\b)/gm;
+// What the release runs of npm run check and npm run test:firefox. node --test
+// reads options only before the files it's given, and npm run check passes no
+// arguments on, so the release runs the parts of these scripts itself to add
+// the results reporter, and stops if the scripts no longer match.
+const TEST_SCRIPTS = {
+  check: 'npm run lint && npm test && npm run lint:firefox',
+  test: 'node --test --test-concurrency=1',
+  'test:firefox': 'npm run build:firefox && node --test e2e/firefox-shutdown.js'
+};
 
-function nodeTestSummary(log) {
-  const counts = {};
-  const problems = [];
-  let summaryAt = 0;
-  for (const name of ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo']) {
-    const found = [...log.matchAll(new RegExp(`^(?:ℹ|#) ${name} (\\d+)$`, 'gm'))];
-    if (found.length !== 1) problems.push(found.length ? `${found.length} "${name}" counts` : `no "${name}" count`);
-    counts[name] = found.length ? Number(found[0][1]) : 0;
-    if (name === 'tests') summaryAt = found[0]?.index ?? 0;
+// node --test's options for the usual printed report, in the log, and the
+// results from scripts/node-test-results.js, in file.
+function resultsReporter(file) {
+  return [
+    '--test-reporter=spec',
+    '--test-reporter-destination=stdout',
+    `--test-reporter=${path.join(__dirname, 'node-test-results.js')}`,
+    `--test-reporter-destination=${file}`
+  ];
+}
+
+// The results file of a node --test run (scripts/node-test-results.js). A
+// release needs every test and suite to have passed: none failed, was
+// cancelled, skipped or left to do. The run's summary leaves some of these
+// out, such as a skipped suite's tests or a to-do suite that failed before its
+// tests were registered, so each result is checked, and the counts are only
+// reported. The only skips in the suites are for Windows, which the release
+// doesn't run on, so none are allowed. A file that exits early reports only
+// the tests before that and no summary of its own, so each file with results
+// needs one, and the run's summary must match the results.
+const CANCELLED = new Set(['cancelledByParent', 'testTimeoutFailure']);
+
+function nodeTestResults(file) {
+  let report = null;
+  try {
+    report = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    // Missing, empty or cut short.
   }
-  if (!problems.length) {
-    for (const name of ['fail', 'cancelled', 'skipped', 'todo']) {
-      if (counts[name]) problems.push(`${counts[name]} ${name === 'fail' ? 'failed' : name}`);
-    }
-    if (!counts.tests) problems.push('no tests');
-    else if (counts.pass !== counts.tests) problems.push(`${counts.pass} of ${counts.tests} passed`);
-    const skippedSuites = (log.match(SKIPPED_RESULT) ?? []).length - counts.skipped;
-    if (skippedSuites > 0) problems.push(plural(skippedSuites, 'skipped suite'));
-    const todoSuites = (log.slice(0, summaryAt).match(TODO_RESULT) ?? []).length - counts.todo;
-    if (todoSuites > 0) problems.push(plural(todoSuites, 'to-do suite'));
+  if (report?.format !== RESULTS_FORMAT || !Array.isArray(report.results) || !Array.isArray(report.summaries)) {
+    return { counts: null, problems: ['no complete results file'] };
+  }
+  const { results, summaries } = report;
+  const runSummaries = summaries.filter((summary) => summary.file === null);
+  if (runSummaries.length !== 1) return { counts: null, problems: [`${runSummaries.length} run summaries`] };
+  const { counts, success } = runSummaries[0];
+
+  const problems = [];
+  const names = (items, name) => {
+    const shown = items.slice(0, 3).map(name);
+    return listWords(items.length > 3 ? [...shown, `${items.length - 3} more`] : shown);
+  };
+  const expect = (kind, failing) => {
+    if (failing.length) problems.push(`${failing.length} ${kind} (${names(failing, (result) => `${result.type} "${result.name}"`)})`);
+  };
+  expect('failed', results.filter((result) => !result.passed && !CANCELLED.has(result.failureType)));
+  expect('cancelled', results.filter((result) => !result.passed && CANCELLED.has(result.failureType)));
+  expect('skipped', results.filter((result) => result.skip !== false));
+  expect('to-do', results.filter((result) => result.todo !== false));
+
+  const tests = results.filter((result) => result.type === 'test');
+  const passed = tests.filter((result) => result.passed && result.skip === false && result.todo === false);
+  if (!passed.length) problems.push('no tests passed');
+  if (counts?.tests !== tests.length || counts?.passed !== passed.length) {
+    problems.push("a summary that doesn't match the results");
+  }
+  if (success !== true) problems.push('a summary that says the run failed');
+  const summarized = new Set(summaries.map((summary) => summary.file));
+  const unfinished = [...new Set(results.map((result) => result.file))].filter((name) => !summarized.has(name));
+  if (unfinished.length) {
+    problems.push(`${plural(unfinished.length, 'file')} without a summary (${names(unfinished, (name) => path.basename(name))})`);
   }
   return { counts, problems };
 }
@@ -722,12 +749,29 @@ async function release(options) {
       if (problems.length) throw new ReleaseError(`The version bump to ${version} is incomplete:\n  ${problems.join('\n  ')}`);
       return `everything shows ${version}`;
     });
-    await step('npm ci', () => inTree('install', 'npm', ['ci', '--no-audit', '--no-fund']).then(() => null));
-    await step('npm run check', async () => {
-      const { counts, problems } = nodeTestSummary(await inTree('check', 'npm', ['run', 'check']));
-      if (problems.length) {
-        throw new ReleaseError(`npm test didn't pass every test: ${listWords(problems)}`, path.join(logs, 'check.log'));
+    await step('Test scripts', () => {
+      const scripts = JSON.parse(read('package.json')).scripts ?? {};
+      const changed = Object.keys(TEST_SCRIPTS).filter((name) => scripts[name] !== TEST_SCRIPTS[name]);
+      if (changed.length) {
+        throw new ReleaseError(
+          `package.json's ${listWords(changed)} ${changed.length === 1 ? 'script has' : 'scripts have'} changed; ` +
+            'update TEST_SCRIPTS in scripts/release.js and how it runs them'
+        );
       }
+      return 'as expected';
+    });
+    await step('npm ci', () => inTree('install', 'npm', ['ci', '--no-audit', '--no-fund']).then(() => null));
+    // Each results file is new, in the scratch folder made above, so a run
+    // that writes none leaves none to read.
+    await step('npm run check', async () => {
+      const results = path.join(logs, 'check-results.json');
+      await inTree('check', 'npm', ['run', 'lint']);
+      await inTree('check', 'npm', ['test', '--', ...resultsReporter(results)]);
+      const { counts, problems } = nodeTestResults(results);
+      if (problems.length) {
+        throw new ReleaseError(`npm test didn't pass every test: ${problems.join('; ')}`, path.join(logs, 'check.log'));
+      }
+      await inTree('check', 'npm', ['run', 'lint:firefox']);
       checks.tests = counts.tests;
       return `passed, ${counts.tests} tests`;
     });
@@ -746,9 +790,12 @@ async function release(options) {
       return `${passed} passed`;
     });
     await step('npm run test:firefox', async () => {
-      const { counts, problems } = nodeTestSummary(await inTree('firefox', 'npm', ['run', 'test:firefox']));
+      const results = path.join(logs, 'firefox-results.json');
+      await inTree('firefox', 'npm', ['run', 'build:firefox']);
+      await inTree('firefox', 'node', ['--test', ...resultsReporter(results), 'e2e/firefox-shutdown.js']);
+      const { counts, problems } = nodeTestResults(results);
       if (problems.length) {
-        throw new ReleaseError(`The Firefox tests didn't all pass: ${listWords(problems)}`, path.join(logs, 'firefox.log'));
+        throw new ReleaseError(`The Firefox tests didn't all pass: ${problems.join('; ')}`, path.join(logs, 'firefox.log'));
       }
       checks.firefox = counts.pass;
       return `${counts.pass} passed`;
@@ -917,13 +964,15 @@ module.exports = {
   describeEntries,
   firefoxPrivacyText,
   lineChanges,
-  nodeTestSummary,
+  nodeTestResults,
   previousVersion,
   pullRequests,
   releaseFiles,
   releaseRecord,
+  resultsReporter,
   run,
   stillRunning,
+  TEST_SCRIPTS,
   versionBumpProblems,
   wrap,
   writeReleaseFolder
