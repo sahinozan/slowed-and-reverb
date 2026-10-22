@@ -103,7 +103,9 @@ earlier releases; fill in the draft's TODO lines. It never replaces an
 existing version folder, even an empty one, or leaves a partial one. It
 fails if any Node test or suite failed, was cancelled, skipped or left to do
 (the only skips are for Windows, where it doesn't run), or if a test file
-stopped before its tests finished, judged from the results a second reporter
+stopped before its tests finished. A test file with no tests or suites of its
+own, such as an empty one or one with only hooks, fails the same way, though
+`node --test` passes it. It judges these from the results a second reporter
 (`scripts/node-test-results.js`) writes to its own file in `logs/`, not from
 the printed output. To add that reporter it runs
 the parts of `npm run check` and `npm run test:firefox` itself, so when those

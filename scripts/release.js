@@ -478,7 +478,10 @@ function resultsReporter(file) {
 // run's summary, which counts every result from every file (and a file that
 // reported none as a test of its own), must be what the files' summaries add
 // up to. A result can't say which file ran it: its file is where test() was
-// called, and a test file may import another's tests.
+// called, and a test file may import another's tests. So a test file with no
+// tests or suites of its own, such as an empty one or one with only hooks, is
+// rejected as unfinished too, though node --test passes it; an empty suite is
+// a result of its own and passes.
 const CANCELLED = new Set(['cancelledByParent', 'testTimeoutFailure']);
 const COUNTS = ['tests', 'suites', 'passed', 'failed', 'cancelled', 'skipped', 'todo', 'topLevel'];
 
