@@ -130,7 +130,13 @@ Controls, which must fail, and fail for the right reason:
 
 In Chromium the trial runs twice: the full trial without Playwright's
 default `--mute-audio`, then the stereo tones and the YouTube engine with
-Playwright's defaults. The second run compares levels with the first.
+Playwright's defaults. The second run compares levels with the first. The
+comparison uses only valid data: every window on both sides must pass the
+checks above other than those for the level, the tones and the player.
+Silence, with or without anything connected, is valid and counts as a
+changed level. Any other problem, such as a stalled clock, lost frames or
+a sample that isn't a number, fails the comparison and is listed under
+`invalid` in `comparison.json`.
 
 ### Driving the engines
 
@@ -139,6 +145,9 @@ The disposable copy starts as the one the browser tests use
 of that, `background.js` treats localhost as Spotify, and a test-only
 content script lets the page ask the background script to call
 `queueTabApply`. That's the call the popup's `APPLY_TO_TAB` message makes.
+Each request carries its own ID, and the page waits at most 10 seconds for
+the reply with that ID. No reply, or one that can't be read, fails the
+case with that reason, and the browser is still closed as usual.
 
 **This skips the popup page and its permission prompts.** The background
 script, the injection of `youtube-main.js` and `content.js`, Spotify's

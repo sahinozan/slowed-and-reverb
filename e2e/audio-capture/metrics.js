@@ -278,6 +278,64 @@ function captureProblems(m, expect = {}) {
   return problems;
 }
 
+// The problems that still leave a window's levels meaningful: silence, with
+// or without anything connected, is a level like any other. Anything else
+// (a failed clock or recorder, lost frames, samples that aren't numbers...)
+// means the window's levels can't be trusted.
+const LEVEL_PROBLEMS = ['no-signal', 'no-input'];
+
+// Compares tone levels between two runs. `reference` and `compared` are
+// { label, results }, with results[key] a list of measured windows, and
+// `picks` lists [key, channel, hz]. A window that isn't valid data, on
+// either side, makes the comparison invalid instead of a difference in
+// level; `invalid` then says why and `rows` is null. A level more than
+// `toleranceDb` apart, or missing on one side (silence), counts as affected.
+function compareLevels(reference, compared, picks, toleranceDb = 1) {
+  const invalid = [];
+  for (const { label, results } of [reference, compared]) {
+    for (const key of new Set(picks.map(([key]) => key))) {
+      const list = results?.[key];
+      if (!list?.length) {
+        invalid.push(`${label} ${key}: no measurements`);
+        continue;
+      }
+      list.forEach((m, index) => {
+        const problems = captureProblems(m).filter((problem) => !LEVEL_PROBLEMS.includes(problem.code));
+        if (problems.length) {
+          invalid.push(`${label} ${key} window ${index + 1}: ${problems.map(({ code, message }) => `${code}: ${message}`).join('; ')}`);
+        }
+      });
+    }
+  }
+  const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+  const level = ({ label, results }, key, channel, hz) => {
+    const values = results[key].map((m) => m.channels[channel]?.tones.find((tone) => tone.expectedHz === hz)?.amplitude);
+    if (values.every((value) => Number.isFinite(value) && value >= 0)) return median(values);
+    invalid.push(`${label} ${key}: ${hz} Hz on channel ${channel} wasn't measured`);
+    return null;
+  };
+  const rows = invalid.length
+    ? null
+    : picks.map(([key, channel, hz]) => {
+        const before = level(reference, key, channel, hz);
+        const after = level(compared, key, channel, hz);
+        return {
+          capture: key,
+          channel,
+          hz,
+          [reference.label]: before,
+          [compared.label]: after,
+          differenceDb: before > 0 && after > 0 ? round(20 * Math.log10(after / before), 2) : null
+        };
+      });
+  if (invalid.length) return { invalid, rows: null, affected: null };
+  return {
+    invalid,
+    rows,
+    affected: rows.some((row) => row.differenceDb === null || Math.abs(row.differenceDb) > toleranceDb)
+  };
+}
+
 function assertHealthyCapture(m, expect) {
   const problems = captureProblems(m, expect);
   if (problems.length) {
@@ -288,10 +346,12 @@ function assertHealthyCapture(m, expect) {
 }
 
 module.exports = {
+  LEVEL_PROBLEMS,
   SIGNAL_FLOOR_RMS,
   assertHealthyCapture,
   captureProblems,
   channelStats,
+  compareLevels,
   decodeChannels,
   dominantTone,
   maxSilentRunMs,

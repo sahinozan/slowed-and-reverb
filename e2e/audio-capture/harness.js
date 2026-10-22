@@ -15,7 +15,7 @@ const { after, before, describe, test } = require('node:test');
 const { prepareTestExtension } = require('../extension-copy');
 const { installAudioTrialObserver } = require('./capture-observer');
 const { TONE, encodeWav, startTrialServer } = require('./fixture');
-const { captureProblems, decodeChannels, measureWindow } = require('./metrics');
+const { captureProblems, compareLevels, decodeChannels, measureWindow } = require('./metrics');
 
 const root = path.join(__dirname, '..', '..');
 const ARTIFACT_ROOT = path.join(root, 'test-results', 'audio-trial');
@@ -27,6 +27,10 @@ const WINDOWS = Math.min(10, Math.max(1, Number(process.env.AUDIO_TRIAL_WINDOWS)
 const WINDOW_SECONDS = 1;
 const SETTLE_MS = 750;
 const READY_TIMEOUT_MS = 10_000;
+// How long a request to the extension's test driver may take. Applying
+// settings took well under a second on the Mac.
+const APPLY_TIMEOUT_MS = 10_000;
+const APPLY_BACKSTOP_MS = 2_000;
 const EXCERPT_SECONDS = 0.2;
 
 // Slowed to 0.8 with the pitch following, and panned hard left. Only the
@@ -199,21 +203,52 @@ async function waitFor(check, timeoutMs, message) {
 }
 
 // Asks the extension to apply settings to the page's tab, through the
-// test driver and the background script.
-async function applyThroughExtension(page, settings, enabled) {
-  const reply = await page.evaluate(
-    ({ channel, settings, enabled }) =>
-      new Promise((resolve) => {
-        const id = Math.random().toString(36).slice(2);
-        window.addEventListener('message', function listener(event) {
-          if (event.data?.channel !== channel || event.data.type !== 'RESULT' || event.data.id !== id) return;
-          window.removeEventListener('message', listener);
-          resolve(JSON.parse(event.data.reply));
-        });
-        window.postMessage({ channel, type: 'APPLY', id, settings, enabled }, '*');
-      }),
-    { channel: CHANNEL, settings, enabled }
-  );
+// test driver and the background script. The page gives up after
+// `timeoutMs` without a matching reply (no driver, or no answer from the
+// background script), and the Node side shortly after, in case the page
+// itself stops answering.
+async function applyThroughExtension(
+  page,
+  settings,
+  enabled,
+  { timeoutMs = APPLY_TIMEOUT_MS, backstopMs = APPLY_BACKSTOP_MS } = {}
+) {
+  let backstop;
+  const reply = await Promise.race([
+    page.evaluate(
+      ({ channel, settings, enabled, timeoutMs }) =>
+        new Promise((resolve) => {
+          const id = Math.random().toString(36).slice(2);
+          const timer = setTimeout(
+            () => finish({ error: `no reply from the extension's test driver within ${timeoutMs} ms` }),
+            timeoutMs
+          );
+          function finish(reply) {
+            clearTimeout(timer);
+            window.removeEventListener('message', listener);
+            resolve(reply);
+          }
+          function listener(event) {
+            if (event.data?.channel !== channel || event.data.type !== 'RESULT' || event.data.id !== id) return;
+            try {
+              finish(JSON.parse(event.data.reply));
+            } catch (error) {
+              finish({ error: `the test driver's reply couldn't be read: ${error.message}` });
+            }
+          }
+          window.addEventListener('message', listener);
+          window.postMessage({ channel, type: 'APPLY', id, settings, enabled }, '*');
+        }),
+      { channel: CHANNEL, settings, enabled, timeoutMs }
+    ),
+    new Promise((resolve) => {
+      backstop = setTimeout(
+        () => resolve({ error: `the page didn't finish the request within ${timeoutMs + backstopMs} ms` }),
+        timeoutMs + backstopMs
+      );
+    })
+  ]).finally(() => clearTimeout(backstop));
+  assert.ok(reply && typeof reply === 'object', `applying settings failed: the reply was ${JSON.stringify(reply)}`);
   assert.equal(reply.error, undefined, `applying settings failed: ${reply.error}`);
   return reply.result;
 }
@@ -569,40 +604,23 @@ function defineTrial(browser, { full = true, compareWith } = {}) {
           ['youtube', 0, TONE.leftHz * ENGINE_SETTINGS.speed],
           ['youtube', 0, TONE.rightHz * ENGINE_SETTINGS.speed]
         ];
-        const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
-        const level = (list, channel, hz) =>
-          median(list.map((m) => m.channels[channel].tones.find((tone) => tone.expectedHz === hz)?.amplitude ?? 0));
-        // Levels only count where the clock and the recorder were sound.
-        for (const key of ['stereoTones', 'youtube']) {
-          for (const [label, list] of [[compareWith.label, compareWith.results[key]], [browser.label, results[key]]]) {
-            assert.ok(list?.length, `${label} has no ${key} measurements to compare`);
-            for (const m of list) {
-              const codes = captureProblems(m, {}).map((problem) => problem.code).filter((code) => RECORDER_PROBLEMS.includes(code));
-              assert.deepEqual(codes, [], `${label} ${key}: the clock or recorder failed, so levels can't be compared`);
-            }
-          }
-        }
-        const rows = picks.map(([key, channel, hz]) => {
-          const reference = level(compareWith.results[key], channel, hz);
-          const compared = level(results[key], channel, hz);
-          return {
-            capture: key,
-            channel,
-            hz,
-            [compareWith.label]: reference,
-            [browser.label]: compared,
-            differenceDb: reference > 0 && compared > 0 ? Math.round(2000 * Math.log10(compared / reference)) / 100 : null
-          };
-        });
-        const affected = rows.some((row) => row.differenceDb === null || Math.abs(row.differenceDb) > 1);
+        // Levels only count where both runs recorded valid data. Silence is
+        // valid data, and counts as a changed level.
+        const { invalid, rows, affected } = compareLevels(
+          { label: compareWith.label, results: compareWith.results },
+          { label: browser.label, results },
+          picks
+        );
         const comparison = {
           reference: compareWith.label,
           compared: browser.label,
-          rule: 'affected if any level is missing or differs by more than 1 dB',
+          rule: 'affected if any level is missing or differs by more than 1 dB; invalid if any window on either side is not valid data',
+          invalid,
           upstreamAffected: affected,
           rows
         };
         fs.writeFileSync(path.join(artifacts, 'comparison.json'), `${JSON.stringify(comparison, null, 2)}\n`);
+        assert.deepEqual(invalid, [], "the captures aren't valid data, so their levels can't be compared");
         t.diagnostic(`recorded levels ${affected ? 'differ' : 'match'}: ${JSON.stringify(rows)}`);
       });
     }
@@ -630,4 +648,4 @@ function defineTrial(browser, { full = true, compareWith } = {}) {
   return results;
 }
 
-module.exports = { ARTIFACT_ROOT, defineTrial, installAudioTrialObserver, root };
+module.exports = { ARTIFACT_ROOT, applyThroughExtension, defineTrial, installAudioTrialObserver, root };
