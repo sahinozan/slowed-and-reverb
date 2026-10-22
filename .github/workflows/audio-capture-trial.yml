@@ -19,9 +19,10 @@ on:
 permissions:
   contents: read
 
+# Each finished run is evidence, so a newer run waits instead of cancelling.
 concurrency:
   group: audio-capture-trial-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   linux-null-sink:

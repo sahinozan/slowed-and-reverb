@@ -125,6 +125,8 @@ npm run test:watch        # rerun tests while developing
 npx playwright install --no-shell chromium # one-time local browser install
 npm run test:e2e          # real Chromium extension smoke test
 npm run test:firefox      # real Firefox tests: effects stop when the extension is turned off; Spotify speed resets cause no gaps; an update asks for a reload
+npm run test:audio-trial:chromium # experiment: record the engines' audio in Chromium (e2e/audio-capture/README.md)
+npm run test:audio-trial:firefox  # the same in the installed Firefox
 npm run build:chromium    # emit dist/chromium/
 npm run build:firefox     # emit dist/firefox/
 npm run package           # build allowlisted ZIPs for both stores

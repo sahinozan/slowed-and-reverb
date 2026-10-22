@@ -28,6 +28,12 @@ covers the features and development commands in full.
   that Spotify's own speed resets don't cause silent gaps, and that an
   update keeps the previous version's audio engines off until the page is
   reloaded.
+- `npm run test:audio-trial:chromium` and `npm run test:audio-trial:firefox`
+  are an experiment that records the engines' real audio
+  (`e2e/audio-capture/README.md`). They aren't part of `npm run check`, CI's
+  required check or releases, and they need a sound device (on Linux, a
+  PulseAudio or PipeWire sink). Run them one at a time, with no other
+  browser tests.
 - Check popup changes in both engines. Firefox draws the popup inside rounded
   panel corners (see the `@supports (-moz-appearance: none)` rule in
   `popup.css`) and needs a manual look. In Chromium, `npm run test:e2e` opens
