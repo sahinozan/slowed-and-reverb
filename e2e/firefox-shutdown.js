@@ -13,6 +13,7 @@ const { after, before, test } = require('node:test');
 const puppeteer = require('puppeteer-core');
 
 const { prepareTestExtension, startFixtureServer } = require('./extension-copy');
+const { launchFirefox } = require('./firefox-launch');
 
 const root = path.join(__dirname, '..');
 const builtExtensionDir = path.join(root, 'dist', 'firefox');
@@ -97,7 +98,7 @@ before(async () => {
   extensionDir = prepareTestExtension(tempRoot, builtExtensionDir, 'firefox');
   addTestDriver(extensionDir);
   server = await startFixtureServer();
-  browser = await puppeteer.launch({
+  browser = await launchFirefox((options) => puppeteer.launch(options), {
     browser: 'firefox',
     executablePath: firefoxPath(),
     headless: true,
