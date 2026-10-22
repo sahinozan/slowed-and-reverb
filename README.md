@@ -171,7 +171,10 @@ through the unchanged path; it does the same again after turning the extension
 back on and removing it. It also updates an earlier version with a YouTube page
 open, and with a Spotify page open before turning the extension off and on, and
 checks that each old engine stays off until the page is reloaded. It can't hear
-the audio, so a final listen is still a manual check.
+the audio, so a final listen is still a manual check. Before its tests it prints
+which Firefox it started, how long Firefox took to open its WebDriver BiDi port
+and what Firefox printed meanwhile; when Firefox doesn't start, it adds the
+browser's processes and how they ended.
 GitHub Actions runs `npm run check` for every change, and the browser tests on
 disposable Ubuntu and Windows machines unless the change can't affect them. The
 pull request's base commit decides that with its copy of
