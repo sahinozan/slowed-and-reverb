@@ -19,6 +19,8 @@
     "site:stamp": "node scripts/stamp-site-assets.js",
     "store:assets": "node scripts/render-store-assets.js",
     "test": "node --test --test-concurrency=1",
+    "test:audio-trial:chromium": "npm run build:chromium && node --test --test-concurrency=1 e2e/audio-capture/chromium-trial.js",
+    "test:audio-trial:firefox": "npm run build:firefox && node --test --test-concurrency=1 e2e/audio-capture/firefox-trial.js",
     "test:e2e": "npm run build:chromium && playwright test",
     "test:firefox": "npm run build:firefox && node --test e2e/firefox-shutdown.js",
     "test:watch": "node --test --test-concurrency=1 --watch"
