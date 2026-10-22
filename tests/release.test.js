@@ -4,14 +4,17 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { Buffer } = require('buffer');
+const { spawn, spawnSync } = require('child_process');
 const { describe, test } = require('node:test');
 const {
   describeEntries,
   firefoxPrivacyText,
   lineChanges,
+  nodeTestSummary,
   previousVersion,
   pullRequests,
+  releaseFiles,
   releaseRecord,
   run,
   stillRunning,
@@ -233,7 +236,10 @@ describe('Release record', () => {
     assert.match(record, /^- Archive inventories: the same 16 files as 1\.1\.1$/m);
     assert.match(flat, / - Compared with the 1\.1\.1 archives, content\.js and manifest\.json differ, in both packages - /);
     assert.match(record, /^- TODO: what was checked by hand/m);
-    assert.match(flat, /Upload the files in this folder\. Do not rebuild them without repeating verification and replacing this record\. $/);
+    assert.match(
+      flat,
+      /Upload the files in this folder; logs\/ holds the output of each check and is not for upload\. Do not rebuild them without repeating verification and replacing this record\. $/
+    );
     // Only the files' headings and the command are longer, as in earlier records.
     for (const line of record.split('\n').filter((line) => !/^(slowed-reverb|firefox-privacy|Made with)/.test(line))) {
       assert.ok(line.length <= 78, line);
@@ -309,6 +315,33 @@ describe('Release folder', () => {
     return dir;
   };
 
+  // A scratch folder as a release leaves it: built packages, the source zip
+  // and each check's log.
+  const scratch = (dir) => {
+    const work = path.join(dir, 'work');
+    const builtDir = path.join(work, 'tree', 'dist', 'packages');
+    const logs = path.join(work, 'logs');
+    fs.mkdirSync(builtDir, { recursive: true });
+    fs.mkdirSync(logs);
+    fs.writeFileSync(path.join(builtDir, 'slowed-reverb-chromium.zip'), Buffer.from([0x50, 0x4b, 0, 1, 2, 0xff]));
+    fs.writeFileSync(path.join(builtDir, 'slowed-reverb-firefox.zip'), Buffer.from([0x50, 0x4b, 3, 4, 0xfe]));
+    fs.writeFileSync(path.join(work, 'slowed-reverb-firefox-source.zip'), 'source');
+    fs.writeFileSync(path.join(logs, 'check.log'), 'ℹ tests 3\nℹ pass 3\n');
+    fs.writeFileSync(path.join(logs, 'web-ext-lint.json'), '{"count":{}}');
+    return {
+      work,
+      logs,
+      files: releaseFiles({
+        version: '1.1.2',
+        builtDir,
+        sourceZip: path.join(work, 'slowed-reverb-firefox-source.zip'),
+        privacy: 'policy\n',
+        record: 'record\n',
+        logs
+      })
+    };
+  };
+
   test('writes the files into a new folder', (t) => {
     const dir = temporary(t);
     const zip = path.join(dir, 'built.zip');
@@ -319,6 +352,32 @@ describe('Release folder', () => {
 
     assert.deepEqual(fs.readdirSync(outDir).sort(), ['RELEASE-1.1.2.txt', 'slowed-reverb-chromium.zip']);
     assert.equal(fs.readFileSync(path.join(outDir, 'slowed-reverb-chromium.zip'), 'utf8'), 'zip');
+    assert.deepEqual(fs.readdirSync(path.dirname(outDir)), ['1.1.2']);
+  });
+
+  test("keeps the checks' logs and the exact packages after the scratch folder is removed", (t) => {
+    const dir = temporary(t);
+    const { work, files } = scratch(dir);
+    const before = Object.fromEntries(
+      Object.entries(files)
+        .filter(([, file]) => 'from' in file)
+        .map(([name, file]) => [name, fs.readFileSync(file.from)])
+    );
+    const outDir = path.join(dir, 'packages', '1.1.2');
+
+    writeReleaseFolder(outDir, files);
+    fs.rmSync(work, { recursive: true, force: true });
+
+    assert.deepEqual(fs.readdirSync(outDir).sort(), [
+      'RELEASE-1.1.2.txt',
+      'firefox-privacy-policy.txt',
+      'logs',
+      'slowed-reverb-chromium.zip',
+      'slowed-reverb-firefox-source.zip',
+      'slowed-reverb-firefox.zip'
+    ]);
+    assert.deepEqual(fs.readdirSync(path.join(outDir, 'logs')), ['check.log', 'web-ext-lint.json']);
+    for (const [name, bytes] of Object.entries(before)) assert.ok(fs.readFileSync(path.join(outDir, name)).equals(bytes), name);
   });
 
   test('never writes into a folder that appeared during the checks', (t) => {
@@ -333,6 +392,102 @@ describe('Release folder', () => {
     );
     assert.deepEqual(fs.readdirSync(outDir), ['RELEASE-1.1.2.txt']);
     assert.equal(fs.readFileSync(path.join(outDir, 'RELEASE-1.1.2.txt'), 'utf8'), 'verified');
+    assert.deepEqual(fs.readdirSync(dir), ['1.1.2']);
+  });
+
+  test('never replaces a folder that appeared while the files were written', (t) => {
+    const dir = temporary(t);
+    const zip = path.join(dir, 'built.zip');
+    fs.writeFileSync(zip, 'zip');
+    const outDir = path.join(dir, 'packages', '1.1.2');
+    const appearing = {
+      get from() {
+        fs.mkdirSync(outDir);
+        fs.writeFileSync(path.join(outDir, 'RELEASE-1.1.2.txt'), 'verified');
+        return zip;
+      }
+    };
+
+    assert.throws(
+      () => writeReleaseFolder(outDir, { 'RELEASE-1.1.2.txt': { text: 'draft' }, 'slowed-reverb-chromium.zip': appearing }),
+      /appeared while the checks ran/
+    );
+    assert.deepEqual(fs.readdirSync(path.dirname(outDir)), ['1.1.2']);
+    assert.deepEqual(fs.readdirSync(outDir), ['RELEASE-1.1.2.txt']);
+    assert.equal(fs.readFileSync(path.join(outDir, 'RELEASE-1.1.2.txt'), 'utf8'), 'verified');
+  });
+
+  test('leaves no partial folder when a file cannot be written, and the logs stay in scratch', (t) => {
+    const dir = temporary(t);
+    const { logs, files } = scratch(dir);
+    fs.rmSync(files['slowed-reverb-firefox-source.zip'].from);
+    const packages = path.join(dir, 'packages');
+    const outDir = path.join(packages, '1.1.2');
+
+    assert.throws(() => writeReleaseFolder(outDir, files), { code: 'ENOENT' });
+    assert.deepEqual(fs.readdirSync(packages), []);
+    assert.deepEqual(fs.readdirSync(logs).sort(), ['check.log', 'web-ext-lint.json']);
+  });
+});
+
+describe('Node test summaries', () => {
+  // Runs node --test on a throwaway test file with each reporter.
+  const summaries = (t, body) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-release-test-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(dir, 'sample.test.js'), `const { test } = require('node:test');\n${body}`);
+    return ['spec', 'tap'].map((reporter) => {
+      const result = spawnSync(process.execPath, ['--test', `--test-reporter=${reporter}`, 'sample.test.js'], {
+        cwd: dir,
+        encoding: 'utf8',
+        // Without this, a node --test run inside one reports to its parent.
+        env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'))
+      });
+      return { reporter, log: result.stdout + result.stderr };
+    });
+  };
+
+  test('accepts a run in which every test passed', (t) => {
+    for (const { reporter, log } of summaries(t, "test('a', () => {});\ntest('b', () => {});\n")) {
+      assert.deepEqual(nodeTestSummary(log).problems, [], reporter);
+      assert.equal(nodeTestSummary(log).counts.tests, 2, reporter);
+    }
+  });
+
+  test('rejects passing runs with skipped or to-do tests', (t) => {
+    const body = "test('a', () => {});\ntest('b', { skip: true }, () => {});\ntest('c', { todo: true }, () => {});\n";
+    for (const { reporter, log } of summaries(t, body)) {
+      assert.deepEqual(nodeTestSummary(log).problems, ['1 skipped', '1 todo', '1 of 3 passed'], reporter);
+    }
+  });
+
+  test('rejects failed and cancelled tests', (t) => {
+    // A test that times out is cancelled.
+    const body = "test('a', () => { throw new Error('no'); });\ntest('b', { timeout: 50 }, () => new Promise(() => {}));\n";
+    for (const { reporter, log } of summaries(t, body)) {
+      assert.deepEqual(nodeTestSummary(log).problems, ['1 failed', '1 cancelled', '0 of 2 passed'], reporter);
+    }
+  });
+
+  test('rejects a missing, incomplete or repeated summary', () => {
+    const complete = ['ℹ tests 2', 'ℹ pass 2', 'ℹ fail 0', 'ℹ cancelled 0', 'ℹ skipped 0', 'ℹ todo 0'];
+    assert.deepEqual(nodeTestSummary(complete.join('\n')).problems, []);
+
+    assert.deepEqual(nodeTestSummary('').problems, [
+      'no "tests" count',
+      'no "pass" count',
+      'no "fail" count',
+      'no "cancelled" count',
+      'no "skipped" count',
+      'no "todo" count'
+    ]);
+    assert.deepEqual(nodeTestSummary(complete.filter((line) => !/skipped/.test(line)).join('\n')).problems, [
+      'no "skipped" count'
+    ]);
+    assert.deepEqual(nodeTestSummary([...complete, '# skipped 1'].join('\n')).problems, ['2 "skipped" counts']);
+    assert.deepEqual(nodeTestSummary(complete.map((line) => line.replace(/ 2$/, ' 0')).join('\n')).problems, [
+      'no tests'
+    ]);
   });
 });
 

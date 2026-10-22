@@ -97,15 +97,22 @@ version bump touches shows the new version, works in a clean worktree of the
 commit, runs `npm run check`, the packaging and both browser tests one at a
 time (run no other tests meanwhile), and checks that the packages are exactly
 what the commit builds. Then it writes the packages, the Firefox Add-ons copy
-of the privacy policy and a draft `RELEASE-<version>.txt` to
-`dist/packages/<version>/` in the main checkout, next to the earlier releases;
-fill in the draft's TODO lines. It never replaces an existing version folder.
+of the privacy policy, a draft `RELEASE-<version>.txt` and each check's log
+(in `logs/`) to `dist/packages/<version>/` in the main checkout, next to the
+earlier releases; fill in the draft's TODO lines. It never replaces an
+existing version folder or leaves a partial one. It fails if any Node test is
+skipped, left to do or missing from the summary (the only skips are for
+Windows, where it doesn't run), and a failed run leaves its logs in the
+scratch folder it names.
 `npm test` rebuilds `dist/packages/*.zip`, so keep the verified files in the
 version folder.
 
 ## Git
 
 Branch from `main` and open a pull request; don't push to `main`. CI's
-required check is "Lint, test, and package", and every review conversation
+required check is "Lint, test, and package". It needs `npm run check` to pass
+for every change, and the browser tests too unless the base commit's
+`scripts/classify-ci-changes.js` says the change can't affect them; changing
+the workflows or the classifier always runs them. Every review conversation
 must be resolved before merging. Don't merge unless asked. Commit messages
 and pull request descriptions are plain prose about what changed and why.

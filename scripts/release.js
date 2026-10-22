@@ -8,8 +8,9 @@
 // It works in a clean worktree of the commit, runs every check one at a time
 // (the browser tests are timing-sensitive, so run nothing else meanwhile),
 // checks that the packages are exactly what the commit builds, and writes a
-// draft RELEASE-<version>.txt to finish by hand. It never replaces an existing
-// version folder. Needs macOS or Linux, Chromium for Playwright and Firefox.
+// draft RELEASE-<version>.txt to finish by hand, with each check's log in
+// logs/. It never replaces an existing version folder. Needs macOS or Linux,
+// Chromium for Playwright and Firefox.
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -311,7 +312,8 @@ function releaseRecord(release) {
     wrap(
       `These files live in dist/packages/${version}/ because npm test rebuilds ` +
         'dist/packages/*.zip, and the zips record file times, so a rebuild changes the ' +
-        'SHA-256 even when the contents are the same. Upload the files in this folder. ' +
+        'SHA-256 even when the contents are the same. Upload the files in this folder; ' +
+        'logs/ holds the output of each check and is not for upload. ' +
         'Do not rebuild them without repeating verification and replacing this record.'
     )
   ].join('\n\n') + '\n';
@@ -439,12 +441,25 @@ function count(log, pattern) {
 }
 
 // node --test's summary: "ℹ pass 12" (spec reporter) or "# pass 12" (TAP).
-function nodeTestCounts(log) {
+// A release needs exactly one summary in which every test passed: none
+// failed, was cancelled, skipped or left to do. The only skips in the suites
+// are for Windows, which the release doesn't run on, so none are allowed.
+function nodeTestSummary(log) {
   const counts = {};
-  for (const name of ['tests', 'pass', 'fail', 'skipped', 'todo', 'cancelled']) {
-    counts[name] = count(log, new RegExp(`^(?:ℹ|#) ${name} (\\d+)$`, 'm'));
+  const problems = [];
+  for (const name of ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo']) {
+    const found = [...log.matchAll(new RegExp(`^(?:ℹ|#) ${name} (\\d+)$`, 'gm'))].map((match) => Number(match[1]));
+    if (found.length !== 1) problems.push(found.length ? `${found.length} "${name}" counts` : `no "${name}" count`);
+    counts[name] = found[0] ?? 0;
   }
-  return counts;
+  if (!problems.length) {
+    for (const name of ['fail', 'cancelled', 'skipped', 'todo']) {
+      if (counts[name]) problems.push(`${counts[name]} ${name === 'fail' ? 'failed' : name}`);
+    }
+    if (!counts.tests) problems.push('no tests');
+    else if (counts.pass !== counts.tests) problems.push(`${counts.pass} of ${counts.tests} passed`);
+  }
+  return { counts, problems };
 }
 
 function listFiles(dir, base = dir) {
@@ -485,22 +500,55 @@ function zipFiles(zipPath) {
   );
 }
 
-// Writes the release folder's files, each { from: path } or { text }. The
-// folder must not exist yet: verified files are never replaced, even when the
-// folder appeared while the checks ran.
+// Writes the release folder's files, each { from: path } or { text }, under
+// names that may include a subfolder ("logs/check.log"). The files go into a
+// hidden folder next to it first, which is renamed into place once they are all
+// written, so a failure leaves no partial version folder. The folder must not
+// exist yet: verified files are never replaced, even when the folder appeared
+// while the checks ran.
 function writeReleaseFolder(outDir, files) {
+  const appeared = () => new ReleaseError(`${outDir} appeared while the checks ran. Nothing was written to it.`);
   fs.mkdirSync(path.dirname(outDir), { recursive: true });
+  if (fs.existsSync(outDir)) throw appeared();
+  const staging = fs.mkdtempSync(path.join(path.dirname(outDir), `.${path.basename(outDir)}.incomplete-`));
   try {
-    fs.mkdirSync(outDir);
+    for (const [name, file] of Object.entries(files)) {
+      const target = path.join(staging, name);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      if ('from' in file) fs.copyFileSync(file.from, target, fs.constants.COPYFILE_EXCL);
+      else fs.writeFileSync(target, file.text, { flag: 'wx' });
+    }
+    // Renaming onto a folder that holds files fails, so this can't replace
+    // one that appeared since the check above.
+    try {
+      fs.renameSync(staging, outDir);
+    } catch (error) {
+      if (['EEXIST', 'ENOTEMPTY', 'EPERM'].includes(error.code) && fs.existsSync(outDir)) throw appeared();
+      throw error;
+    }
   } catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    throw new ReleaseError(`${outDir} appeared while the checks ran. Nothing was written to it.`);
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw error;
   }
-  for (const [name, file] of Object.entries(files)) {
-    const target = path.join(outDir, name);
-    if ('from' in file) fs.copyFileSync(file.from, target, fs.constants.COPYFILE_EXCL);
-    else fs.writeFileSync(target, file.text, { flag: 'wx' });
-  }
+}
+
+// What the release folder holds: the verified packages, the privacy policy
+// copy, the record, and each check's log from the scratch folder's logs/.
+function releaseFiles({ version, builtDir, sourceZip, privacy, record, logs }) {
+  return {
+    ...Object.fromEntries(
+      TARGETS.map((target) => [`slowed-reverb-${target}.zip`, { from: path.join(builtDir, `slowed-reverb-${target}.zip`) }])
+    ),
+    'slowed-reverb-firefox-source.zip': { from: sourceZip },
+    'firefox-privacy-policy.txt': { text: privacy },
+    [`RELEASE-${version}.txt`]: { text: record },
+    ...Object.fromEntries(
+      fs
+        .readdirSync(logs)
+        .sort()
+        .map((name) => [`logs/${name}`, { from: path.join(logs, name) }])
+    )
+  };
 }
 
 function fileInfo(file, entries) {
@@ -558,6 +606,8 @@ async function step(title, action) {
 }
 
 async function release(options) {
+  // The steps run in process groups, and the test suites skip only on Windows.
+  if (process.platform === 'win32') throw new ReleaseError('Releases need macOS or Linux.');
   let sha;
   try {
     sha = git(['rev-parse', '--verify', '--quiet', `${options.commit}^{commit}`]);
@@ -632,12 +682,12 @@ async function release(options) {
     });
     await step('npm ci', () => inTree('install', 'npm', ['ci', '--no-audit', '--no-fund']).then(() => null));
     await step('npm run check', async () => {
-      const counts = nodeTestCounts(await inTree('check', 'npm', ['run', 'check']));
-      if (!counts.pass || counts.fail || counts.cancelled) {
-        throw new ReleaseError(`npm test reported ${counts.pass} passed, ${counts.fail} failed`, path.join(logs, 'check.log'));
+      const { counts, problems } = nodeTestSummary(await inTree('check', 'npm', ['run', 'check']));
+      if (problems.length) {
+        throw new ReleaseError(`npm test didn't pass every test: ${listWords(problems)}`, path.join(logs, 'check.log'));
       }
       checks.tests = counts.tests;
-      return `passed, ${counts.tests} tests${counts.skipped ? `, ${counts.skipped} skipped` : ''}`;
+      return `passed, ${counts.tests} tests`;
     });
     await step('npm run package', () => inTree('package', 'npm', ['run', 'package']).then(() => null));
     await step('npm run test:e2e', async () => {
@@ -654,12 +704,9 @@ async function release(options) {
       return `${passed} passed`;
     });
     await step('npm run test:firefox', async () => {
-      const counts = nodeTestCounts(await inTree('firefox', 'npm', ['run', 'test:firefox']));
-      if (!counts.pass || counts.fail || counts.skipped || counts.todo || counts.cancelled) {
-        throw new ReleaseError(
-          `The Firefox tests reported ${counts.pass} passed, ${counts.fail} failed, ${counts.skipped} skipped`,
-          path.join(logs, 'firefox.log')
-        );
+      const { counts, problems } = nodeTestSummary(await inTree('firefox', 'npm', ['run', 'test:firefox']));
+      if (problems.length) {
+        throw new ReleaseError(`The Firefox tests didn't all pass: ${listWords(problems)}`, path.join(logs, 'firefox.log'));
       }
       checks.firefox = counts.pass;
       return `${counts.pass} passed`;
@@ -785,17 +832,11 @@ async function release(options) {
       checks
     });
 
-    writeReleaseFolder(outDir, {
-      ...Object.fromEntries(
-        TARGETS.map((target) => [
-          `slowed-reverb-${target}.zip`,
-          { from: path.join(tree, 'dist', 'packages', `slowed-reverb-${target}.zip`) }
-        ])
-      ),
-      'slowed-reverb-firefox-source.zip': { from: sourceZip },
-      'firefox-privacy-policy.txt': { text: privacy },
-      [`RELEASE-${version}.txt`]: { text: record }
-    });
+    // The logs are copied before the scratch folder is removed below.
+    writeReleaseFolder(
+      outDir,
+      releaseFiles({ version, builtDir: path.join(tree, 'dist', 'packages'), sourceZip, privacy, record, logs })
+    );
 
     console.log(`\nRecorded in ${outDir}:`);
     for (const [file, info] of [
@@ -805,7 +846,7 @@ async function release(options) {
     ]) {
       console.log(`  ${file}  ${info.size} bytes  ${info.sha256}`);
     }
-    console.log(`  firefox-privacy-policy.txt\n  RELEASE-${version}.txt (a draft: fill in the lines marked TODO)`);
+    console.log(`  firefox-privacy-policy.txt\n  RELEASE-${version}.txt (a draft: fill in the lines marked TODO)\n  logs/`);
     finished = true;
   } finally {
     process.off('SIGINT', interrupt);
@@ -834,8 +875,10 @@ module.exports = {
   describeEntries,
   firefoxPrivacyText,
   lineChanges,
+  nodeTestSummary,
   previousVersion,
   pullRequests,
+  releaseFiles,
   releaseRecord,
   run,
   stillRunning,

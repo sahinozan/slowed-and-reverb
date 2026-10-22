@@ -172,8 +172,11 @@ back on and removing it. It also updates an earlier version with a YouTube page
 open, and with a Spotify page open before turning the extension off and on, and
 checks that each old engine stays off until the page is reloaded. It can't hear
 the audio, so a final listen is still a manual check.
-GitHub Actions runs that smoke test on disposable Ubuntu and Windows machines in
-addition to `npm run check`. A final manual smoke test in current Chromium and
+GitHub Actions runs `npm run check` for every change, and the browser tests on
+disposable Ubuntu and Windows machines unless the change can't affect them. The
+pull request's base commit decides that with its copy of
+`scripts/classify-ci-changes.js`, and changes to the workflows or the
+classifier always run them. A final manual smoke test in current Chromium and
 Firefox is still recommended before a store release because browser and media-site
 behavior cannot be reproduced completely in an automated environment.
 
