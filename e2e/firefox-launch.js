@@ -51,6 +51,50 @@ function installedVersion(executablePath) {
   return `unknown (no application.ini near ${directory})`;
 }
 
+// Splits text from one output stream into lines where puppeteer's readline
+// does (at \n, \r\n or a lone \r) and calls onLine(text, cut) for each. Only
+// the first MAX_LINE_LENGTH characters of a line are kept, with cut set if
+// there were more; the rest is skipped up to the line's real end, however the
+// output is split into chunks, so a long line is still one line and the next
+// one starts where the browser started it.
+function lineReader(onLine) {
+  let pending = '';
+  let cut = false;
+  const add = (text) => {
+    if (cut) return;
+    pending += text;
+    if (pending.length > MAX_LINE_LENGTH) {
+      pending = pending.slice(0, MAX_LINE_LENGTH);
+      cut = true;
+    }
+  };
+  const finish = () => {
+    const line = pending;
+    const wasCut = cut;
+    pending = '';
+    cut = false;
+    onLine(line, wasCut);
+  };
+  return {
+    write(text) {
+      const parts = text.split(/\r\n|\r|\n/);
+      add(parts[0]);
+      for (const part of parts.slice(1)) {
+        finish();
+        add(part);
+      }
+    },
+    // Like readline, counts text left without a line end as a last line.
+    end() {
+      if (pending) finish();
+    },
+    // How many characters are held for the unfinished line.
+    get buffered() {
+      return pending.length;
+    }
+  };
+}
+
 // Watches for the first process started from `executablePath` and records
 // when it started, its first lines of output and how it ended. stop() lets go
 // of the process without pausing its output, which puppeteer still reads.
@@ -76,16 +120,17 @@ function watchLaunch(executablePath, now = () => performance.now()) {
 
   const elapsed = () => Math.round(now() - startedAt);
 
-  const addLine = (stream, line) => {
+  const addLine = (stream, line, cut) => {
     if (!line.trim()) return;
     const at = elapsed();
+    // The announcement is short, so the kept start of a line is enough to
+    // tell whether puppeteer will take it as one.
     if (record.endpointAt === null && ENDPOINT_LINE.test(line)) record.endpointAt = at;
     if (record.lines.length >= MAX_LINES) {
       record.droppedLines += 1;
       return;
     }
-    const text = line.length > MAX_LINE_LENGTH ? `${line.slice(0, MAX_LINE_LENGTH)}…` : line;
-    record.lines.push({ at, stream, text });
+    record.lines.push({ at, stream, text: cut ? `${line}…` : line });
   };
 
   // A 'data' listener rather than readline, whose close() would pause the
@@ -93,21 +138,11 @@ function watchLaunch(executablePath, now = () => performance.now()) {
   const follow = (stream, name) => {
     if (!stream) return;
     const decoder = new StringDecoder('utf8');
-    let pending = '';
-    const take = (text) => {
-      const parts = (pending + text).split(/\r?\n/);
-      pending = parts.pop();
-      if (pending.length > MAX_LINE_LENGTH) {
-        parts.push(pending);
-        pending = '';
-      }
-      for (const part of parts) addLine(name, part);
-    };
-    const onData = (chunk) => take(decoder.write(chunk));
+    const reader = lineReader((line, cut) => addLine(name, line, cut));
+    const onData = (chunk) => reader.write(decoder.write(chunk));
     const onEnd = () => {
-      take(decoder.end());
-      if (pending) addLine(name, pending);
-      pending = '';
+      reader.write(decoder.end());
+      reader.end();
     };
     stream.on('data', onData);
     stream.once('end', onEnd);
@@ -243,4 +278,4 @@ async function launchFirefox(launch, options, { log = console.error, exitWait = 
   return browser;
 }
 
-module.exports = { MAX_LINES, MAX_LINE_LENGTH, installedVersion, launchFirefox };
+module.exports = { MAX_LINES, MAX_LINE_LENGTH, installedVersion, launchFirefox, lineReader };

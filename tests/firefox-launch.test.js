@@ -1,7 +1,10 @@
 'use strict';
 
 // e2e/firefox-launch.js, with Node standing in for Firefox and a stand-in for
-// puppeteer.launch that waits for the WebDriver BiDi line as puppeteer does.
+// puppeteer.launch that waits for the WebDriver BiDi line as puppeteer does,
+// reading whole lines with readline and matching them with puppeteer's
+// pattern. One test runs the installed puppeteer itself against a Node
+// stand-in.
 
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
@@ -9,11 +12,14 @@ const diagnosticsChannel = require('node:diagnostics_channel');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const readline = require('node:readline');
 const { test } = require('node:test');
 
-const { MAX_LINES, installedVersion, launchFirefox } = require('../e2e/firefox-launch');
+const { MAX_LINES, MAX_LINE_LENGTH, installedVersion, launchFirefox, lineReader } = require('../e2e/firefox-launch');
 
 const ENDPOINT = 'WebDriver BiDi listening on ws://127.0.0.1:9222';
+// WEBDRIVER_BIDI_WEBSOCKET_ENDPOINT_REGEX in @puppeteer/browsers.
+const PUPPETEER_ENDPOINT = /^WebDriver BiDi listening on (ws:\/\/.*)$/;
 
 // Starts Node with `script` and resolves once it prints the endpoint line, or
 // rejects after `timeout` ms and kills it `killAfter` ms later.
@@ -26,19 +32,20 @@ function fakeLaunch(script, { timeout = 2_000, killAfter = 100, onChild } = {}) 
         stdio: ['ignore', 'pipe', 'pipe']
       });
       onChild?.(child);
-      let text = '';
-      const onData = (chunk) => {
-        text += chunk;
-        if (!text.includes(ENDPOINT)) return;
-        clearTimeout(timer);
+      // Both streams stay read after the start, as puppeteer reads them.
+      const lines = [readline.createInterface(child.stdout), readline.createInterface(child.stderr)];
+      const onLine = (line) => {
+        if (!PUPPETEER_ENDPOINT.test(line)) return;
+        stopWaiting();
         resolve({ child, version: async () => 'fake/1.0' });
       };
-      child.stderr.on('data', onData);
-      // Keeps reading after the start, as puppeteer does.
-      child.stdout.resume();
+      const stopWaiting = () => {
+        clearTimeout(timer);
+        for (const rl of lines) rl.off('line', onLine);
+      };
+      for (const rl of lines) rl.on('line', onLine);
       const timer = setTimeout(() => {
-        child.stderr.off('data', onData);
-        child.stderr.resume();
+        stopWaiting();
         setTimeout(() => child.kill('SIGKILL'), killAfter).unref();
         reject(new Error(`Timed out after ${timeout} ms while waiting for the WS endpoint URL to appear in stdout!`));
       }, timeout);
@@ -164,3 +171,134 @@ test('reads the installed version from application.ini beside the executable', (
   assert.match(installedVersion(executable), /^157\.0 \(build 20261006000000, .*application\.ini\)$/);
   assert.match(installedVersion(path.join(directory, 'missing')), /^unknown \(ENOENT\)$/);
 });
+
+// The lines lineReader finds in `chunks`, leaving out empty ones, which the
+// report and puppeteer both skip.
+function readLines(chunks) {
+  const lines = [];
+  const reader = lineReader((text, cut) => {
+    if (text) lines.push({ text, cut });
+  });
+  for (const chunk of chunks) reader.write(chunk);
+  reader.end();
+  return lines;
+}
+
+function chunked(text, size) {
+  const chunks = [];
+  for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size));
+  return chunks;
+}
+
+test('keeps cutting a long line until it really ends, however the output is split', () => {
+  const output = [
+    'x'.repeat(MAX_LINE_LENGTH + 1) + ENDPOINT + '\n',
+    'y'.repeat(MAX_LINE_LENGTH * 3) + '\r\n',
+    ENDPOINT + '\n',
+    'e'.repeat(MAX_LINE_LENGTH) + '\n',
+    'before\rafter\n',
+    'z'.repeat(MAX_LINE_LENGTH + 200)
+  ].join('');
+  const expected = [
+    { text: 'x'.repeat(MAX_LINE_LENGTH), cut: true },
+    { text: 'y'.repeat(MAX_LINE_LENGTH), cut: true },
+    { text: ENDPOINT, cut: false },
+    { text: 'e'.repeat(MAX_LINE_LENGTH), cut: false },
+    { text: 'before', cut: false },
+    { text: 'after', cut: false },
+    { text: 'z'.repeat(MAX_LINE_LENGTH), cut: true }
+  ];
+  // The announcement arriving on its own after an unfinished long line is
+  // still part of that line.
+  assert.deepEqual(readLines(['x'.repeat(MAX_LINE_LENGTH + 1), ENDPOINT + '\n']), [
+    { text: 'x'.repeat(MAX_LINE_LENGTH), cut: true }
+  ]);
+  for (const size of [1, 2, 3, 7, 64, MAX_LINE_LENGTH - 1, MAX_LINE_LENGTH, MAX_LINE_LENGTH + 1, 1000, output.length]) {
+    assert.deepEqual(readLines(chunked(output, size)), expected, `chunks of ${size}`);
+  }
+});
+
+test('holds no more than one line of text however long a line runs', () => {
+  const lines = [];
+  const reader = lineReader((text, cut) => lines.push({ length: text.length, cut }));
+  const chunk = 'w'.repeat(64 * 1024);
+  for (let i = 0; i < 64; i += 1) {
+    reader.write(chunk);
+    assert.ok(reader.buffered <= MAX_LINE_LENGTH);
+  }
+  assert.deepEqual(lines, []);
+  reader.write('\nnext');
+  assert.deepEqual(lines, [{ length: MAX_LINE_LENGTH, cut: true }]);
+  assert.equal(reader.buffered, 4);
+  reader.end();
+  assert.deepEqual(lines, [
+    { length: MAX_LINE_LENGTH, cut: true },
+    { length: 4, cut: false }
+  ]);
+});
+
+test('reports a long line written in pieces as one line and finds the announcement after it', async () => {
+  // Pieces written a moment apart usually reach the test as separate chunks.
+  const script = `
+    const pieces = Array.from({ length: 7 }, () => 'y'.repeat(100));
+    const next = () => {
+      if (pieces.length) {
+        process.stderr.write(pieces.shift());
+        setTimeout(next, 10);
+      } else {
+        process.stderr.write('\\n' + ${JSON.stringify(ENDPOINT)} + '\\n');
+      }
+    };
+    next();
+    setTimeout(() => {}, 5000);`;
+  const { result, reports } = await launch(script);
+  const browser = await result;
+  try {
+    const [report] = reports;
+    assert.match(report, /WebDriver BiDi port announced at \d+\.\d s/);
+    assert.match(report, /output \(2 lines\):\n/);
+    assert.match(report, new RegExp(`stderr: y{${MAX_LINE_LENGTH}}…\\n.*stderr: ${ENDPOINT}$`));
+  } finally {
+    browser.child.kill('SIGKILL');
+    await ended(browser.child);
+  }
+});
+
+test(
+  'does not report an announcement that puppeteer itself rejects',
+  { skip: process.platform === 'win32' && 'the stand-in is started through a #! line', timeout: 20_000 },
+  async (t) => {
+    const puppeteer = require('puppeteer-core');
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'firefox-launch-test-'));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    // Node standing in for Firefox: the announcement continues an unfinished
+    // long line, so puppeteer never sees a line that starts with it.
+    const executablePath = path.join(directory, 'firefox');
+    fs.writeFileSync(
+      executablePath,
+      `#!${process.execPath}
+      process.stderr.write('x'.repeat(${MAX_LINE_LENGTH + 1}));
+      setTimeout(() => process.stderr.write(${JSON.stringify(ENDPOINT + '\n')}), 60);
+      setTimeout(() => process.exit(0), 1_500);
+      `,
+      { mode: 0o755 }
+    );
+    const reports = [];
+    let original;
+    const launching = launchFirefox(
+      (options) =>
+        puppeteer.launch(options).catch((error) => {
+          original = error;
+          throw error;
+        }),
+      { browser: 'firefox', executablePath, headless: true, timeout: 1_000 },
+      { log: (report) => reports.push(report) }
+    );
+    await assert.rejects(launching, (error) => error === original);
+    assert.match(original.message, /Timed out after 1000 ms while waiting for the WS endpoint URL/);
+    const [report] = reports;
+    assert.match(report, /WebDriver BiDi port announced at never/);
+    assert.match(report, new RegExp(`output \\(1 lines\\):\\n\\s+\\+\\d+\\.\\d s stderr: x{${MAX_LINE_LENGTH}}…$`));
+    assert.equal(diagnosticsChannel.hasSubscribers('child_process'), false);
+  }
+);
