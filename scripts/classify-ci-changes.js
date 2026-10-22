@@ -1,6 +1,22 @@
 'use strict';
 
+// Decides whether a change needs the browser smoke tests. CI always runs the
+// repository checks; this only says whether the browser tests may be skipped.
+//
+// Reads the changed paths, NUL-separated, on standard input (git diff
+// --no-renames --name-only -z, so a rename lists the old path as well as the
+// new one) and prints "browser=true" or "browser=false".
+//
+// CI runs the copy of this file from the pull request's base commit, not the
+// one in the pull request, so a change can't choose its own checks. It first
+// asks that copy for its policy version (--policy-version); a base commit
+// without this file, or with a copy that doesn't answer POLICY_VERSION, has no
+// policy CI can read, so CI runs everything. The copy runs alone from a
+// temporary folder, so it can't require other repository files.
+
 const fs = require('node:fs');
+
+const POLICY_VERSION = '2';
 
 const NON_BROWSER_PATHS = new Set([
   '.gitattributes',
@@ -8,7 +24,6 @@ const NON_BROWSER_PATHS = new Set([
   '.npmrc',
   '.nvmrc',
   'eslint.config.js',
-  'scripts/classify-ci-changes.js',
   'scripts/popup-preview.js',
   'scripts/release.js',
   'scripts/render-icons.js',
@@ -21,52 +36,52 @@ const NON_BROWSER_PATHS = new Set([
 
 const NON_BROWSER_DIRECTORIES = ['.github/', 'site/', 'store-assets/', 'tests/'];
 
-// The workflow that defines the browser smoke tests, so changing it (including
-// Dependabot's action updates) runs them.
-const BROWSER_WORKFLOW = '.github/workflows/ci.yml';
-
-// Markdown files the tests read (tests/package.test.js and tests/site.test.js),
-// so editing them needs the full checks even though they are documentation.
-const TESTED_DOCUMENTS = new Set(['README.md', 'site/README.md', 'store-assets/README.md']);
+// What decides and enforces which checks run: the workflows (including
+// Dependabot's action updates) and this file. Changing them runs everything.
+const CHECK_INFRASTRUCTURE_DIRECTORIES = ['.github/workflows/'];
+const CHECK_INFRASTRUCTURE_PATHS = new Set(['scripts/classify-ci-changes.js']);
 
 function isDocumentation(file) {
-  return !TESTED_DOCUMENTS.has(file) && (file === 'LICENSE' || file.endsWith('.md'));
+  return file === 'LICENSE' || file.endsWith('.md');
 }
 
-function isKnownNonBrowserChange(file) {
-  if (file === BROWSER_WORKFLOW) return false;
+function isCheckInfrastructure(file) {
   return (
-    TESTED_DOCUMENTS.has(file) ||
+    CHECK_INFRASTRUCTURE_PATHS.has(file) ||
+    CHECK_INFRASTRUCTURE_DIRECTORIES.some((directory) => file.startsWith(directory))
+  );
+}
+
+function needsBrowser(file) {
+  if (isCheckInfrastructure(file)) return true;
+  return !(
+    isDocumentation(file) ||
     NON_BROWSER_PATHS.has(file) ||
     NON_BROWSER_DIRECTORIES.some((directory) => file.startsWith(directory))
   );
 }
 
+// An empty list means the comparison found nothing, which shouldn't happen
+// for a real change, so it runs everything too.
 function classifyFiles(files) {
-  if (files.length === 0) return { full: true, browser: true };
+  return { browser: files.length === 0 || files.some(needsBrowser) };
+}
 
-  let docsOnly = true;
-  let browser = false;
-
-  for (const file of files) {
-    if (isDocumentation(file)) continue;
-
-    docsOnly = false;
-    if (!isKnownNonBrowserChange(file)) browser = true;
-  }
-
-  return { full: !docsOnly, browser };
+function parsePaths(input) {
+  return input.split('\0').filter(Boolean);
 }
 
 if (require.main === module) {
-  const files = fs
-    .readFileSync(0, 'utf8')
-    .split('\0')
-    .filter(Boolean);
-  const classification = classifyFiles(files);
-
-  process.stdout.write(`full=${classification.full}\n`);
-  process.stdout.write(`browser=${classification.browser}\n`);
+  const args = process.argv.slice(2);
+  if (args.length === 1 && args[0] === '--policy-version') {
+    process.stdout.write(`${POLICY_VERSION}\n`);
+  } else if (args.length === 0) {
+    const { browser } = classifyFiles(parsePaths(fs.readFileSync(0, 'utf8')));
+    process.stdout.write(`browser=${browser}\n`);
+  } else {
+    process.stderr.write(`Unexpected arguments: ${args.join(' ')}\n`);
+    process.exitCode = 2;
+  }
 }
 
-module.exports = { classifyFiles };
+module.exports = { POLICY_VERSION, classifyFiles, parsePaths };

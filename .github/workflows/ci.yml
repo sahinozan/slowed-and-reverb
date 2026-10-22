@@ -14,13 +14,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The repository checks run for every change. This job only decides whether
+  # a change may skip the browser smoke tests, using the policy in the base
+  # commit's scripts/classify-ci-changes.js rather than the pull request's own
+  # copy. The workflow itself still comes from the pull request, so this keeps
+  # a change from choosing its checks by accident; it isn't a security
+  # boundary. Changing the workflow or the classifier runs every check.
   classify:
     name: Classify changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      full: ${{ steps.changes.outputs.full }}
       browser: ${{ steps.changes.outputs.browser }}
+      policy: ${{ steps.changes.outputs.policy }}
 
     steps:
       - name: Check out repository
@@ -35,6 +41,8 @@ jobs:
         with:
           node-version: 24.19.0
 
+      # tests/ci-workflow.test.js runs this script and the gate's in throwaway
+      # repositories, so keep GitHub expressions out of them and pass values in env.
       - name: Classify changed paths
         id: changes
         shell: bash
@@ -46,28 +54,53 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "browser=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          classifier=scripts/classify-ci-changes.js
+          policy_copy="${RUNNER_TEMP:?}/ci-policy/classify-ci-changes.js"
 
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            range="$BASE_SHA...$HEAD_SHA"
-          elif git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
-            range="$BEFORE_SHA..$HEAD_SHA"
+          case "$EVENT_NAME" in
+            pull_request) baseline="$BASE_SHA" range="$BASE_SHA...$HEAD_SHA" ;;
+            push) baseline="$BEFORE_SHA" range="$BEFORE_SHA..$HEAD_SHA" ;;
+            workflow_dispatch) baseline="" range="" ;;
+            *) echo "::error::No classification for $EVENT_NAME events"; exit 1 ;;
+          esac
+
+          # Without a readable policy in the baseline, run everything.
+          policy=none
+          browser=true
+          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
+            policy=manual
+          elif [[ -z "$baseline" ]] || ! git cat-file -e "$baseline^{commit}" 2>/dev/null; then
+            echo "::notice::No baseline commit to compare with, so every check runs."
+            if git cat-file -e "$HEAD_SHA^" 2>/dev/null; then git diff --check "$HEAD_SHA^" "$HEAD_SHA"; fi
           else
-            range="$HEAD_SHA^..$HEAD_SHA"
+            git diff --check "$range"
+            if ! git cat-file -e "$baseline:$classifier" 2>/dev/null; then
+              echo "::notice::The baseline has no $classifier, so every check runs."
+            else
+              mkdir -p "$(dirname "$policy_copy")"
+              git show "$baseline:$classifier" > "$policy_copy"
+              version=$(node "$policy_copy" --policy-version < /dev/null)
+              if [[ "$version" != 2 ]]; then
+                echo "::notice::The baseline's $classifier has another policy format, so every check runs."
+              else
+                # --no-renames lists a renamed file's old path too.
+                decision=$(git diff --no-renames --name-only -z "$range" | node "$policy_copy")
+                case "$decision" in
+                  browser=true | browser=false) policy=base browser="${decision#browser=}" ;;
+                  *) echo "::error::The classifier printed something unexpected: $decision"; exit 1 ;;
+                esac
+              fi
+            fi
           fi
 
-          git diff --check "$range"
-          git diff --name-only -z "$range" |
-            node scripts/classify-ci-changes.js >> "$GITHUB_OUTPUT"
+          echo "Policy: $policy; browser smoke tests required: $browser"
+          {
+            echo "policy=$policy"
+            echo "browser=$browser"
+          } >> "$GITHUB_OUTPUT"
 
   repository-checks:
     name: Repository checks
-    needs: classify
-    if: needs.classify.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -177,27 +210,43 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      # Passes only when the repository checks passed, the classification
+      # gave a valid decision, and the browser tests passed or were skipped
+      # because the base commit's policy allowed it.
       - name: Require every applicable check
+        id: gate
         shell: bash
         env:
           BROWSER_REQUIRED: ${{ needs.classify.outputs.browser }}
           BROWSER_RESULT: ${{ needs.browser-smoke.result }}
           CLASSIFY_RESULT: ${{ needs.classify.result }}
-          FULL_REQUIRED: ${{ needs.classify.outputs.full }}
-          FULL_RESULT: ${{ needs.repository-checks.result }}
+          POLICY: ${{ needs.classify.outputs.policy }}
+          REPOSITORY_RESULT: ${{ needs.repository-checks.result }}
         run: |
           set -euo pipefail
 
-          [[ "$CLASSIFY_RESULT" == "success" ]]
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
 
-          if [[ "$FULL_REQUIRED" == "true" ]]; then
-            [[ "$FULL_RESULT" == "success" ]]
-          else
-            [[ "$FULL_RESULT" == "skipped" ]]
-          fi
+          [[ "$CLASSIFY_RESULT" == success ]] || fail "Classifying the changes ended as '$CLASSIFY_RESULT'."
+          [[ "$REPOSITORY_RESULT" == success ]] || fail "The repository checks ended as '$REPOSITORY_RESULT'."
 
-          if [[ "$BROWSER_REQUIRED" == "true" ]]; then
-            [[ "$BROWSER_RESULT" == "success" ]]
-          else
-            [[ "$BROWSER_RESULT" == "skipped" ]]
-          fi
+          case "$POLICY" in
+            base | none | manual) ;;
+            *) fail "The classification gave no valid policy ('$POLICY')." ;;
+          esac
+
+          case "$BROWSER_REQUIRED" in
+            true)
+              [[ "$BROWSER_RESULT" == success ]] || fail "The browser smoke tests ended as '$BROWSER_RESULT'."
+              ;;
+            false)
+              [[ "$POLICY" == base ]] || fail "Only the base commit's policy can skip the browser smoke tests."
+              [[ "$BROWSER_RESULT" == skipped ]] || fail "The browser smoke tests ended as '$BROWSER_RESULT' but weren't required."
+              ;;
+            *) fail "The classification gave no valid browser decision ('$BROWSER_REQUIRED')." ;;
+          esac
+
+          echo "Repository checks passed; browser smoke tests: $BROWSER_RESULT (policy: $POLICY)."

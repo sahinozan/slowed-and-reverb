@@ -4,17 +4,24 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
-const { describe, test } = require('node:test');
+const { Buffer } = require('buffer');
+const { spawn, spawnSync } = require('child_process');
+const { after, before, describe, test } = require('node:test');
 const {
   describeEntries,
   firefoxPrivacyText,
   lineChanges,
+  nodeTestResults,
   previousVersion,
   pullRequests,
+  releaseFiles,
   releaseRecord,
+  resultsReporter,
   run,
+  runCheck,
+  runFirefoxTests,
   stillRunning,
+  TEST_SCRIPTS,
   versionBumpProblems,
   wrap,
   writeReleaseFolder
@@ -233,7 +240,10 @@ describe('Release record', () => {
     assert.match(record, /^- Archive inventories: the same 16 files as 1\.1\.1$/m);
     assert.match(flat, / - Compared with the 1\.1\.1 archives, content\.js and manifest\.json differ, in both packages - /);
     assert.match(record, /^- TODO: what was checked by hand/m);
-    assert.match(flat, /Upload the files in this folder\. Do not rebuild them without repeating verification and replacing this record\. $/);
+    assert.match(
+      flat,
+      /Upload the files in this folder; logs\/ holds the output of each check and is not for upload\. Do not rebuild them without repeating verification and replacing this record\. $/
+    );
     // Only the files' headings and the command are longer, as in earlier records.
     for (const line of record.split('\n').filter((line) => !/^(slowed-reverb|firefox-privacy|Made with)/.test(line))) {
       assert.ok(line.length <= 78, line);
@@ -309,6 +319,33 @@ describe('Release folder', () => {
     return dir;
   };
 
+  // A scratch folder as a release leaves it: built packages, the source zip
+  // and each check's log.
+  const scratch = (dir) => {
+    const work = path.join(dir, 'work');
+    const builtDir = path.join(work, 'tree', 'dist', 'packages');
+    const logs = path.join(work, 'logs');
+    fs.mkdirSync(builtDir, { recursive: true });
+    fs.mkdirSync(logs);
+    fs.writeFileSync(path.join(builtDir, 'slowed-reverb-chromium.zip'), Buffer.from([0x50, 0x4b, 0, 1, 2, 0xff]));
+    fs.writeFileSync(path.join(builtDir, 'slowed-reverb-firefox.zip'), Buffer.from([0x50, 0x4b, 3, 4, 0xfe]));
+    fs.writeFileSync(path.join(work, 'slowed-reverb-firefox-source.zip'), 'source');
+    fs.writeFileSync(path.join(logs, 'check.log'), 'ℹ tests 3\nℹ pass 3\n');
+    fs.writeFileSync(path.join(logs, 'web-ext-lint.json'), '{"count":{}}');
+    return {
+      work,
+      logs,
+      files: releaseFiles({
+        version: '1.1.2',
+        builtDir,
+        sourceZip: path.join(work, 'slowed-reverb-firefox-source.zip'),
+        privacy: 'policy\n',
+        record: 'record\n',
+        logs
+      })
+    };
+  };
+
   test('writes the files into a new folder', (t) => {
     const dir = temporary(t);
     const zip = path.join(dir, 'built.zip');
@@ -319,6 +356,32 @@ describe('Release folder', () => {
 
     assert.deepEqual(fs.readdirSync(outDir).sort(), ['RELEASE-1.1.2.txt', 'slowed-reverb-chromium.zip']);
     assert.equal(fs.readFileSync(path.join(outDir, 'slowed-reverb-chromium.zip'), 'utf8'), 'zip');
+    assert.deepEqual(fs.readdirSync(path.dirname(outDir)), ['1.1.2']);
+  });
+
+  test("keeps the checks' logs and the exact packages after the scratch folder is removed", (t) => {
+    const dir = temporary(t);
+    const { work, files } = scratch(dir);
+    const before = Object.fromEntries(
+      Object.entries(files)
+        .filter(([, file]) => 'from' in file)
+        .map(([name, file]) => [name, fs.readFileSync(file.from)])
+    );
+    const outDir = path.join(dir, 'packages', '1.1.2');
+
+    writeReleaseFolder(outDir, files);
+    fs.rmSync(work, { recursive: true, force: true });
+
+    assert.deepEqual(fs.readdirSync(outDir).sort(), [
+      'RELEASE-1.1.2.txt',
+      'firefox-privacy-policy.txt',
+      'logs',
+      'slowed-reverb-chromium.zip',
+      'slowed-reverb-firefox-source.zip',
+      'slowed-reverb-firefox.zip'
+    ]);
+    assert.deepEqual(fs.readdirSync(path.join(outDir, 'logs')), ['check.log', 'web-ext-lint.json']);
+    for (const [name, bytes] of Object.entries(before)) assert.ok(fs.readFileSync(path.join(outDir, name)).equals(bytes), name);
   });
 
   test('never writes into a folder that appeared during the checks', (t) => {
@@ -333,6 +396,428 @@ describe('Release folder', () => {
     );
     assert.deepEqual(fs.readdirSync(outDir), ['RELEASE-1.1.2.txt']);
     assert.equal(fs.readFileSync(path.join(outDir, 'RELEASE-1.1.2.txt'), 'utf8'), 'verified');
+    assert.deepEqual(fs.readdirSync(dir), ['1.1.2']);
+  });
+
+  test('never replaces a folder that appeared while the files were written', (t) => {
+    const dir = temporary(t);
+    const zip = path.join(dir, 'built.zip');
+    fs.writeFileSync(zip, 'zip');
+    const outDir = path.join(dir, 'packages', '1.1.2');
+    const appearing = {
+      get from() {
+        fs.mkdirSync(outDir);
+        fs.writeFileSync(path.join(outDir, 'RELEASE-1.1.2.txt'), 'verified');
+        return zip;
+      }
+    };
+
+    assert.throws(
+      () => writeReleaseFolder(outDir, { 'RELEASE-1.1.2.txt': { text: 'draft' }, 'slowed-reverb-chromium.zip': appearing }),
+      /appeared while the checks ran/
+    );
+    assert.deepEqual(fs.readdirSync(path.dirname(outDir)), ['1.1.2']);
+    assert.deepEqual(fs.readdirSync(outDir), ['RELEASE-1.1.2.txt']);
+    assert.equal(fs.readFileSync(path.join(outDir, 'RELEASE-1.1.2.txt'), 'utf8'), 'verified');
+  });
+
+  // rename() replaces an empty folder, so this one must be refused too.
+  test('never replaces an empty folder that appeared while the files were written', (t) => {
+    const dir = temporary(t);
+    const { files } = scratch(dir);
+    const packages = path.join(dir, 'packages');
+    const outDir = path.join(packages, '1.1.2');
+    // Another release's hidden folder isn't this one's to clean up.
+    const other = path.join(packages, '.1.1.2.incomplete-other');
+    fs.mkdirSync(other, { recursive: true });
+    let appeared;
+    const source = files['slowed-reverb-firefox-source.zip'].from;
+    files['slowed-reverb-firefox-source.zip'] = {
+      get from() {
+        fs.mkdirSync(outDir);
+        appeared = fs.statSync(outDir);
+        return source;
+      }
+    };
+
+    assert.throws(() => writeReleaseFolder(outDir, files), /appeared while the checks ran/);
+    assert.deepEqual(fs.readdirSync(packages).sort(), ['.1.1.2.incomplete-other', '1.1.2']);
+    assert.deepEqual(fs.readdirSync(outDir), []);
+    const now = fs.statSync(outDir);
+    assert.deepEqual([now.dev, now.ino], [appeared.dev, appeared.ino]);
+  });
+
+  test('leaves no partial folder when a file cannot be written, and the logs stay in scratch', (t) => {
+    const dir = temporary(t);
+    const { logs, files } = scratch(dir);
+    fs.rmSync(files['slowed-reverb-firefox-source.zip'].from);
+    const packages = path.join(dir, 'packages');
+    const outDir = path.join(packages, '1.1.2');
+
+    assert.throws(() => writeReleaseFolder(outDir, files), { code: 'ENOENT' });
+    assert.deepEqual(fs.readdirSync(packages), []);
+    assert.deepEqual(fs.readdirSync(logs).sort(), ['check.log', 'web-ext-lint.json']);
+  });
+});
+
+describe('Node test results', () => {
+  // Without NODE_TEST_CONTEXT, a node --test run inside one reports to its parent.
+  const plainEnv = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
+
+  // Writes throwaway test files (by name, or one sample.test.js), and runs
+  // node --test on them with the release's reporters.
+  const runTests = (t, files) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-release-test-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    if (typeof files === 'string') files = { 'sample.test.js': files };
+    for (const [name, body] of Object.entries(files)) {
+      fs.writeFileSync(path.join(dir, name), `const { before, describe, test } = require('node:test');\n${body}`);
+    }
+    const results = path.join(dir, 'results.json');
+    const run = spawnSync(process.execPath, ['--test', '--test-concurrency=1', ...resultsReporter(results)], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: plainEnv()
+    });
+    return { dir, results, status: run.status, log: run.stdout + run.stderr, ...nodeTestResults(results) };
+  };
+
+  // The printed report is interrupted by output without a newline before a
+  // required suite's result, which hid it from the summary's readers.
+  const interrupted = (suite) => [
+    "process.stdout.write('Loading required fixture... ');",
+    `${suite}('required regression suite', () => {`,
+    "  require('./missing-fixture.json');",
+    "  test('required regression', () => {});",
+    '});',
+    "test('unrelated pass', () => {});"
+  ].join('\n');
+
+  test('accepts a run in which every test passed, whatever the tests print', (t) => {
+    const run = runTests(t, {
+      'a.test.js': [
+        "process.stdout.write('partial stdout ');",
+        "process.stderr.write('partial stderr ');",
+        "describe('outer # TODO', () => { test('a (1ms) # TODO', () => { process.stdout.write('\\u2139 todo 0\\n# skipped 0'); }); });",
+        "test('\\u26A0 b (1ms) # TODO', () => {});",
+        "test('\\uFE63 c # SKIP', () => { console.log('not ok 1 - c # TODO'); });"
+      ].join('\n'),
+      'b.test.js': "test('d', async (t) => { await t.test('e', () => {}); });"
+    });
+    assert.equal(run.status, 0, run.log);
+    assert.deepEqual(run.problems, []);
+    assert.equal(run.counts.tests, 5);
+    assert.equal(run.counts.passed, 5);
+  });
+
+  test('rejects to-do and skipped suites after output without a newline', (t) => {
+    const todo = runTests(t, interrupted('describe.todo'));
+    // node --test itself passes this run, and its summary counts one test.
+    assert.equal(todo.status, 0, todo.log);
+    assert.match(todo.log, /^ℹ todo 0$/m);
+    assert.deepEqual(todo.problems, [
+      '1 failed (suite "required regression suite")',
+      '1 to-do (suite "required regression suite")'
+    ]);
+
+    const skip = runTests(t, interrupted('describe.skip'));
+    assert.equal(skip.status, 0, skip.log);
+    assert.deepEqual(skip.problems, ['1 skipped (suite "required regression suite")']);
+  });
+
+  test('rejects to-do suites, with or without a reason, nested or empty', (t) => {
+    const run = runTests(t, [
+      "describe('later', { todo: 'reason' }, () => { throw new Error('no'); });",
+      "describe('outer', () => { describe.todo('inner', () => { throw new Error('no'); }); test('b', () => {}); });",
+      "describe.todo('empty', () => {});",
+      "describe.todo('passing', () => { test('c', () => {}); });",
+      "test('d', () => {});"
+    ].join('\n'));
+    assert.deepEqual(run.problems, [
+      '2 failed (suite "later" and suite "inner")',
+      '5 to-do (suite "later", suite "inner", suite "empty" and 2 more)'
+    ]);
+  });
+
+  test('rejects skipped suites, with or without a reason, and nested', (t) => {
+    const run = runTests(t, [
+      "describe.skip('required', () => { test('a', () => {}); });",
+      "describe('outer', () => { describe('later', { skip: 'reason' }, () => { test('b', () => {}); }); test('c', () => {}); });",
+      "test('d', () => {});"
+    ].join('\n'));
+    assert.equal(run.status, 0, run.log);
+    assert.deepEqual(run.problems, ['2 skipped (suite "required" and suite "later")']);
+  });
+
+  test('rejects skipped and to-do tests', (t) => {
+    const run = runTests(t, "test('a', () => {});\ntest('b', { skip: true }, () => {});\ntest('c', { todo: 'reason' }, () => {});\n");
+    assert.deepEqual(run.problems, ['1 skipped (test "b")', '1 to-do (test "c")']);
+    assert.deepEqual([run.counts.tests, run.counts.passed, run.counts.skipped, run.counts.todo], [3, 1, 1, 1]);
+  });
+
+  test('rejects failed and cancelled tests and suites', (t) => {
+    // A test that times out is cancelled, and so are a suite's tests when its
+    // hook fails.
+    const run = runTests(t, [
+      "test('a', () => { throw new Error('no'); });",
+      "test('b', { timeout: 50 }, () => new Promise(() => {}));",
+      "describe('broken', () => { before(() => { throw new Error('no'); }); test('c', () => {}); });",
+      "test('d', () => {});"
+    ].join('\n'));
+    assert.notEqual(run.status, 0);
+    assert.deepEqual(run.problems, [
+      '2 failed (test "a" and suite "broken")',
+      '2 cancelled (test "b" and test "c")',
+      'a summary that says the run failed'
+    ]);
+  });
+
+  test('counts a failed to-do test once, though the printed report repeats it', (t) => {
+    const run = runTests(t, "test('a', { todo: true }, () => { throw new Error('no'); });\ntest('b', () => {});\n");
+    assert.equal(run.log.match(/⚠ a \(/g)?.length, 2, run.log);
+    assert.deepEqual(run.problems, ['1 failed (test "a")', '1 to-do (test "a")']);
+  });
+
+  test('rejects a test file that exits before its summary', (t) => {
+    const run = runTests(t, {
+      'early.test.js': "test('a', () => {});\ntest('b', () => new Promise((resolve) => setTimeout(resolve, 50)));\nsetTimeout(() => process.exit(0), 1);",
+      'later.test.js': "test('c', () => {});"
+    });
+    assert.equal(run.status, 0, run.log);
+    assert.deepEqual(run.problems, ["results from a test file that didn't finish (tests: 2 in the run, 1 in the files' summaries)"]);
+    assert.equal(run.counts.tests, 2);
+  });
+
+  // The release's own tests run node --test inside a test, as this does.
+  test("ignores a node --test run inside a test, and its printed report", (t) => {
+    const run = runTests(t, [
+      "const { spawnSync } = require('child_process');",
+      "require('fs').writeFileSync('inner.js', \"require('node:test').test('inner', () => { throw new Error('no'); });\\n\");",
+      "test('runs a failing inner run', () => {",
+      "  const env = { ...process.env };",
+      '  delete env.NODE_TEST_CONTEXT;',
+      "  const inner = spawnSync(process.execPath, ['--test', 'inner.js'], { env, stdio: ['ignore', 'inherit', 'inherit'] });",
+      "  if (inner.status !== 1) throw new Error('the inner run should fail');",
+      "  process.stdout.write('\\u2139 tests 9');",
+      '});'
+    ].join('\n'));
+    assert.match(run.log, /^ℹ fail 1$/m);
+    assert.deepEqual(run.problems, []);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(run.results, 'utf8')).results.map((result) => result.name),
+      ['runs a failing inner run']
+    );
+  });
+
+  test('rejects a missing, partial or foreign results file', (t) => {
+    const { results } = runTests(t, "test('a', () => {});\n");
+    const text = fs.readFileSync(results, 'utf8');
+    const report = JSON.parse(text);
+    assert.deepEqual(nodeTestResults(results).problems, []);
+
+    const check = (contents) => {
+      fs.writeFileSync(results, typeof contents === 'string' ? contents : JSON.stringify(contents));
+      return nodeTestResults(results).problems;
+    };
+    assert.deepEqual(check(''), ['no complete results file']);
+    assert.deepEqual(check(text.slice(0, -20)), ['no complete results file']);
+    assert.deepEqual(check({ ...report, format: 'another' }), ['no complete results file']);
+    assert.deepEqual(check({ ...report, summaries: report.summaries.filter((summary) => summary.file) }), ['0 run summaries']);
+    const runSummary = report.summaries.find((summary) => summary.file === null);
+    assert.deepEqual(check({ ...report, summaries: [...report.summaries, runSummary] }), ['2 run summaries']);
+    assert.deepEqual(check({ ...report, results: [] }), ['no tests passed', "a summary that doesn't match the results"]);
+    assert.deepEqual(check({ ...report, summaries: [runSummary] }), [
+      "results from a test file that didn't finish (tests: 1 in the run, 0 in the files' summaries)"
+    ]);
+    fs.rmSync(results);
+    assert.deepEqual(nodeTestResults(results).problems, ['no complete results file']);
+  });
+
+  test("runs the package's test scripts as the release does", () => {
+    const { scripts } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    for (const [name, script] of Object.entries(TEST_SCRIPTS)) assert.equal(scripts[name], script, name);
+  });
+});
+
+describe('Release test steps', () => {
+  // The steps run as from a plain shell, as the release is, not as a test file.
+  let context;
+  before(() => {
+    context = process.env.NODE_TEST_CONTEXT;
+    delete process.env.NODE_TEST_CONTEXT;
+  });
+  after(() => {
+    if (context !== undefined) process.env.NODE_TEST_CONTEXT = context;
+  });
+
+  // A throwaway package with the given files, whose npm test is the
+  // release's, and the release's step arguments for it: inTree runs commands
+  // there as the release does, but stands in for the lint and build scripts.
+  const fixture = (t, files) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-release-test-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const scripts = { test: TEST_SCRIPTS.test };
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'sample', private: true, scripts }));
+    for (const [name, body] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+      fs.writeFileSync(path.join(dir, name), body);
+    }
+    const logs = path.join(dir, 'logs');
+    fs.mkdirSync(logs);
+    const commands = [];
+    const inTree = (name, command, args) => {
+      commands.push(`${command} ${args[0] === 'run' ? args.join(' ') : args[0]}`);
+      if (args[0] === 'run') return Promise.resolve('');
+      return run(command, args, { cwd: dir, log: path.join(logs, `${name}.log`) });
+    };
+    return { inTree, logs, checks: {}, commands };
+  };
+
+  const stepFails = async (step, message, log) => {
+    await assert.rejects(step, (error) => {
+      assert.equal(error.message, message);
+      assert.equal(error.log, log);
+      return true;
+    });
+  };
+
+  // What the record says of the checks, from a release with only these.
+  const verification = (checks) => {
+    const info = { size: 1, sha256: '0'.repeat(64), entries: '1' };
+    const record = releaseRecord({
+      version: '1.1.2',
+      previous: null,
+      date: '2026-10-22',
+      commit: 'a'.repeat(40),
+      commitNote: 'main',
+      node: '24.19.0',
+      npm: '11.19.0',
+      packages: { chromium: info, firefox: info, source: info },
+      privacyChanges: null,
+      checks: { tests: 0, e2e: 0, firefox: 0, descriptionLength: 0, lint: { errors: 0, warnings: 0, notices: 0 }, ...checks }
+    });
+    return record.split('\n').filter((line) => line.startsWith('- npm run'));
+  };
+
+  // b.test.js imports a.test.js, so both files run its test, which says it
+  // was declared in a.test.js. Exiting early, b.test.js never reports its own.
+  const shared = (exitEarly) => ({
+    'a.test.js': "require('node:test').test('shared', () => {});\n",
+    'b.test.js': [
+      "require('./a.test.js');",
+      "require('node:test').test('required regression', () => new Promise((resolve) => setTimeout(resolve, 500)));",
+      exitEarly ? 'setTimeout(() => process.exit(0), 100);' : ''
+    ].join('\n')
+  });
+
+  test('npm run check counts every test file that ran, with tests from files they import', async (t) => {
+    const step = fixture(t, {
+      ...shared(false),
+      'helper.js': "require('node:test').test('from a helper', () => {});\n",
+      'c.test.js': "require('./helper.js');\nprocess.stdout.write('partial ');\nrequire('node:test').test('own', () => {});\n"
+    });
+    assert.equal(await runCheck(step), 'passed, 5 tests');
+    assert.deepEqual(step.commands, ['npm run lint', 'npm test', 'npm run lint:firefox']);
+    assert.equal(step.checks.tests, 5);
+    assert.equal(verification(step.checks)[0], '- npm run check: passed (5 tests; Chromium lint; Firefox build and lint)');
+  });
+
+  test("npm run check fails a test file that doesn't finish, though another ran the tests it reported", async (t) => {
+    const step = fixture(t, shared(true));
+    await stepFails(
+      runCheck(step),
+      "npm test didn't pass every test: results from a test file that didn't finish (tests: 2 in the run, 1 in the files' summaries)",
+      path.join(step.logs, 'check.log')
+    );
+    assert.deepEqual(step.commands, ['npm run lint', 'npm test']);
+    assert.equal(step.checks.tests, undefined);
+  });
+
+  test('npm run check fails a test file that exits before reporting any test', async (t) => {
+    const step = fixture(t, {
+      'early.test.js': "require('node:test').test('required', () => new Promise((resolve) => setTimeout(resolve, 500)));\nsetTimeout(() => process.exit(0), 10);\n",
+      'later.test.js': "require('node:test').test('later', () => {});\n"
+    });
+    // The runner reports the file as a passing test in place of its tests.
+    await stepFails(
+      runCheck(step),
+      "npm test didn't pass every test: results from a test file that didn't finish (tests: 2 in the run, 1 in the files' summaries)",
+      path.join(step.logs, 'check.log')
+    );
+  });
+
+  test('npm run check fails an interrupted to-do or skipped suite and passes it otherwise', async (t) => {
+    // Output without a newline before the suite's result hid it from the
+    // printed report's readers.
+    const interrupted = (suite) => ({
+      'sample.test.js': [
+        "const { describe, test } = require('node:test');",
+        "process.stdout.write('Loading required fixture... ');",
+        `${suite}('required regression suite', () => {`,
+        "  require('./missing-fixture.json');",
+        "  test('required regression', () => {});",
+        '});',
+        "test('unrelated pass', () => {});"
+      ].join('\n')
+    });
+    const todo = fixture(t, interrupted('describe.todo'));
+    await stepFails(
+      runCheck(todo),
+      'npm test didn\'t pass every test: 1 failed (suite "required regression suite"); 1 to-do (suite "required regression suite")',
+      path.join(todo.logs, 'check.log')
+    );
+    assert.match(fs.readFileSync(path.join(todo.logs, 'check.log'), 'utf8'), /^Loading required fixture\.\.\. \S/m);
+
+    const skip = fixture(t, interrupted('describe.skip'));
+    await stepFails(
+      runCheck(skip),
+      'npm test didn\'t pass every test: 1 skipped (suite "required regression suite")',
+      path.join(skip.logs, 'check.log')
+    );
+
+    // With its fixture there, the same suite passes.
+    const passing = fixture(t, { ...interrupted('describe'), 'missing-fixture.json': '{}' });
+    assert.equal(await runCheck(passing), 'passed, 2 tests');
+  });
+
+  test('npm run test:firefox records how many Firefox tests passed', async (t) => {
+    const tests = Array.from({ length: 6 }, (_, index) => `test('passes ${index + 1}', () => {});`);
+    const step = fixture(t, {
+      'e2e/firefox-shutdown.js': `const { test } = require('node:test');\n${tests.join('\n')}\n`
+    });
+    assert.equal(await runFirefoxTests(step), '6 passed');
+    assert.deepEqual(step.commands, ['npm run build:firefox', 'node --test']);
+    assert.equal(step.checks.firefox, 6);
+    assert.equal(
+      verification(step.checks)[2],
+      '- npm run test:firefox: 6 passed (the Firefox build in the installed Firefox)'
+    );
+  });
+
+  test("npm run test:firefox fails tests that are skipped or don't finish", async (t) => {
+    const skipped = fixture(t, {
+      'e2e/firefox-shutdown.js': "const { test } = require('node:test');\ntest('a', () => {});\ntest('b', { skip: true }, () => {});\n"
+    });
+    await stepFails(
+      runFirefoxTests(skipped),
+      'The Firefox tests didn\'t all pass: 1 skipped (test "b")',
+      path.join(skipped.logs, 'firefox.log')
+    );
+    assert.equal(skipped.checks.firefox, undefined);
+
+    const early = fixture(t, {
+      'e2e/firefox-shutdown.js': [
+        "const { test } = require('node:test');",
+        "test('a', () => {});",
+        'test(\'b\', () => new Promise((resolve) => setTimeout(resolve, 500)));',
+        'setTimeout(() => process.exit(0), 100);'
+      ].join('\n')
+    });
+    await stepFails(
+      runFirefoxTests(early),
+      "The Firefox tests didn't all pass: results from a test file that didn't finish (tests: 1 in the run, 0 in the files' summaries)",
+      path.join(early.logs, 'firefox.log')
+    );
   });
 });
 
