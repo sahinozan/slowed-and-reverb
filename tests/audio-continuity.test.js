@@ -5,13 +5,15 @@
 // clicks, dropouts and gaps are found, that the engines' own fades and
 // steady tones are not, and that a late message is kept apart from missing
 // frames. Also checks that each historical defect the suite puts back
-// (e2e/audio-capture/history.js) still matches today's code exactly once.
-// No browser or sound device is involved.
+// (e2e/audio-capture/history.js) still matches today's code exactly once,
+// and how the recorder counts frame numbers. No browser or sound device is
+// involved.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { describe, test } = require('node:test');
+const vm = require('node:vm');
 
 const { HISTORY } = require('../e2e/audio-capture/history');
 const { CLICK_THRESHOLD, analyzeSpan, findClicks, silentRuns, spanHealth } = require('../e2e/audio-capture/metrics');
@@ -257,5 +259,62 @@ describe('audio regression historical controls', () => {
       assert.ok(keys.some((key) => suite.includes(key)), `${entry.id}: no check "${entry.check}"`);
       assert.ok(entry.expect.length && entry.expect.every(({ code, during }) => code && during), entry.id);
     }
+  });
+});
+
+describe('audio recorder frame numbers', () => {
+  // Runs recorder-worklet.js in a context of its own, as the audio thread
+  // would, with `currentFrame` set before each block.
+  function recorder() {
+    const sandbox = { sampleRate: RATE, currentFrame: 0, Float32Array, registered: null };
+    sandbox.AudioWorkletProcessor = class {
+      constructor() {
+        this.port = { postMessage: (message) => sandbox.messages.push(message), onmessage: null };
+      }
+    };
+    sandbox.registerProcessor = (name, processor) => {
+      sandbox.registered = processor;
+    };
+    sandbox.messages = [];
+    vm.runInNewContext(fs.readFileSync(path.join(root, 'e2e', 'audio-capture', 'recorder-worklet.js'), 'utf8'), sandbox);
+    const node = new sandbox.registered({ processorOptions: { batchFrames: 512, poolSize: 4 } });
+    let value = 0;
+    const play = (frames) => {
+      for (const frame of frames) {
+        sandbox.currentFrame = frame;
+        const block = [new Float32Array(128).fill(value), new Float32Array(128).fill(value)];
+        value += 1;
+        node.process([block], [[new Float32Array(128), new Float32Array(128)]]);
+      }
+      return node.counters();
+    };
+    const batches = () => sandbox.messages.filter((message) => message.type === 'batch');
+    return { play, batches };
+  }
+  const blocks = (from, count) => Array.from({ length: count }, (_, index) => from + index * 128);
+
+  test('blocks in step have no gaps', () => {
+    const counters = recorder().play(blocks(0, 8));
+    assert.equal(counters.contextFrameGaps, 0);
+    assert.equal(counters.staleFrameLabels, 0);
+  });
+
+  test("a block with the previous block's number is a stale label, not a gap", () => {
+    const { play, batches } = recorder();
+    // As Chromium does around a change of connections: 512 is reported for
+    // the block that is really 640, then the numbers catch up.
+    const counters = play([0, 128, 256, 384, 512, 512, 768, 896, 1024, 1152]);
+    assert.equal(counters.contextFrameGaps, 0);
+    assert.equal(counters.skippedContextFrames, 0);
+    assert.equal(counters.staleFrameLabels, 1);
+    // Each batch's context frame stays in step with the recorder's count.
+    for (const batch of batches()) assert.equal(batch.contextFrame, batch.startFrame);
+  });
+
+  test('a jump forward is a gap', () => {
+    const counters = recorder().play([0, 128, 256, 640, 768]);
+    assert.equal(counters.contextFrameGaps, 1);
+    assert.equal(counters.skippedContextFrames, 256);
+    assert.equal(counters.staleFrameLabels, 0);
   });
 });

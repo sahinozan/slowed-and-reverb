@@ -29,10 +29,19 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     this.overflowEvents = 0;
     this.dropping = false;
     this.droppedBlocks = 0;
-    // Blocks the rendering thread didn't give this node (a jump in currentFrame).
+    // Blocks the rendering thread didn't give this node (a jump forward in
+    // currentFrame).
     this.contextFrameGaps = 0;
     this.skippedContextFrames = 0;
     this.gapLog = [];
+    // Blocks whose currentFrame ran behind the frame expected. The rendering
+    // thread never goes back in time: when Chromium connects or disconnects
+    // nodes at the destination it sometimes gives this node a block with
+    // the previous block's frame number and then catches up, and the sound
+    // in those blocks carries on unbroken (a steady tone recorded across them
+    // has no click, which a repeated or missing block would make). Such a
+    // block is counted here and taken as the frame expected.
+    this.staleFrameLabels = 0;
     this.lastEnd = null;
     // Blocks with no input channels (nothing connected or playing) and with a
     // channel count other than two.
@@ -53,15 +62,21 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     if (frames === 0) return true;
     if (!this.blockSizes.includes(frames) && this.blockSizes.length < 8) this.blockSizes.push(frames);
 
-    if (this.lastEnd !== null && currentFrame !== this.lastEnd) {
-      this.contextFrameGaps++;
-      this.skippedContextFrames += currentFrame - this.lastEnd;
+    let frame = currentFrame;
+    if (this.lastEnd !== null && frame !== this.lastEnd) {
+      const stale = frame < this.lastEnd;
+      if (stale) this.staleFrameLabels++;
+      else {
+        this.contextFrameGaps++;
+        this.skippedContextFrames += frame - this.lastEnd;
+      }
       // Where the first few happened, by the recorder's own frame count.
       if (this.gapLog.length < 8) {
-        this.gapLog.push({ recorderFrame: this.recordedFrames, contextFrame: currentFrame, skipped: currentFrame - this.lastEnd });
+        this.gapLog.push({ recorderFrame: this.recordedFrames, contextFrame: frame, expected: this.lastEnd, stale });
       }
+      if (stale) frame = this.lastEnd;
     }
-    this.lastEnd = currentFrame + frames;
+    this.lastEnd = frame + frames;
     if (input.length === 0) this.emptyInputBlocks++;
     else if (input.length !== 2) this.nonStereoBlocks++;
 
@@ -95,7 +110,7 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
       }
       if (this.fill === 0) {
         this.batchStartFrame = this.recordedFrames;
-        this.batchContextFrame = currentFrame + offset;
+        this.batchContextFrame = frame + offset;
       }
       const count = Math.min(frames - offset, this.batchFrames - this.fill);
       for (let channel = 0; channel < 2; channel++) {
@@ -119,6 +134,7 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
       contextFrameGaps: this.contextFrameGaps,
       skippedContextFrames: this.skippedContextFrames,
       gapLog: this.gapLog.slice(),
+      staleFrameLabels: this.staleFrameLabels,
       emptyInputBlocks: this.emptyInputBlocks,
       nonStereoBlocks: this.nonStereoBlocks,
       blockSizes: this.blockSizes

@@ -70,9 +70,10 @@ function installAudioTrialObserver(options) {
       firstArrivalMs: null,
       lastArrivalMs: null,
       maxArrivalGapMs: 0,
-      // Context frame minus recorder frame, from the first batch. It stays
-      // the same while every render block reaches the recorder, and maps a
-      // context time (a mark) to the recorded frame played then.
+      // Context frame minus recorder frame, from the latest batch. It stays
+      // the same from batch to batch while every render block reaches the
+      // recorder (each change is counted), and maps a context time (a mark)
+      // to the recorded frame played then.
       frameOffset: null,
       offsetChanges: 0
     };
@@ -133,6 +134,7 @@ function installAudioTrialObserver(options) {
       contextFrameGaps: message.contextFrameGaps,
       skippedContextFrames: message.skippedContextFrames,
       gapLog: message.gapLog,
+      staleFrameLabels: message.staleFrameLabels,
       emptyInputBlocks: message.emptyInputBlocks,
       nonStereoBlocks: message.nonStereoBlocks,
       blockSizes: message.blockSizes
@@ -151,8 +153,8 @@ function installAudioTrialObserver(options) {
     // were dropped in between (the worklet counts them as overflow).
     if (message.startFrame !== entry.nextFrame) entry.lostFrames += message.startFrame - entry.nextFrame;
     const offset = message.contextFrame - message.startFrame;
-    if (entry.frameOffset === null) entry.frameOffset = offset;
-    else if (offset !== entry.frameOffset) entry.offsetChanges++;
+    if (entry.frameOffset !== null && offset !== entry.frameOffset) entry.offsetChanges++;
+    entry.frameOffset = offset;
     const samples = new Float32Array(message.buffer);
     const [left, right] = entry.ring;
     for (let i = 0; i < message.frames; i++) {
