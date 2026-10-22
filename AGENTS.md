@@ -102,9 +102,10 @@ of the privacy policy, a draft `RELEASE-<version>.txt` and each check's log
 earlier releases; fill in the draft's TODO lines. It never replaces an
 existing version folder, even an empty one, or leaves a partial one. It
 fails if any Node test or suite failed, was cancelled, skipped or left to do
-(the only skips are for Windows, where it doesn't run), judged from the
-results a second reporter (`scripts/node-test-results.js`) writes to its own
-file in `logs/`, not from the printed output. To add that reporter it runs
+(the only skips are for Windows, where it doesn't run), or if a test file
+stopped before its tests finished, judged from the results a second reporter
+(`scripts/node-test-results.js`) writes to its own file in `logs/`, not from
+the printed output. To add that reporter it runs
 the parts of `npm run check` and `npm run test:firefox` itself, so when those
 scripts or `npm test` change, change `TEST_SCRIPTS` in `scripts/release.js`
 too (a test checks they match). A failed run leaves its logs in the scratch

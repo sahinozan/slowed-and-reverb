@@ -9,10 +9,14 @@
 // It writes, as JSON, every test's and suite's result and the summaries of
 // each test file and of the whole run, as the test runner reports them rather
 // than as the tests' printed output, which goes only to the printed report.
-// It writes once, after the run, so a run that stops early leaves an empty or
-// partial file.
+// A file's summary comes from the process that ran the file, once its tests
+// have finished, and counts that process's results. The run's summary counts
+// every result from every file, and a file that reported none as a test of
+// its own. A result's file isn't recorded: it is where test() was called,
+// which may be a file that the test file imports. It writes once, after the
+// run, so a run that stops early leaves an empty or partial file.
 
-const FORMAT = 'slowed-reverb node test results 1';
+const FORMAT = 'slowed-reverb node test results 2';
 
 async function* nodeTestResults(source) {
   const results = [];
@@ -20,7 +24,6 @@ async function* nodeTestResults(source) {
   for await (const { type, data } of source) {
     if (type === 'test:pass' || type === 'test:fail') {
       results.push({
-        file: data.file ?? null,
         name: data.name,
         nesting: data.nesting,
         type: data.details?.type ?? null,

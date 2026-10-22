@@ -471,10 +471,16 @@ function resultsReporter(file) {
 // out, such as a skipped suite's tests or a to-do suite that failed before its
 // tests were registered, so each result is checked, and the counts are only
 // reported. The only skips in the suites are for Windows, which the release
-// doesn't run on, so none are allowed. A file that exits early reports only
-// the tests before that and no summary of its own, so each file with results
-// needs one, and the run's summary must match the results.
+// doesn't run on, so none are allowed.
+//
+// Every test file must also have finished. A file that exits early has no
+// summary of its own, and the tests it hadn't finished report nothing, so the
+// run's summary, which counts every result from every file (and a file that
+// reported none as a test of its own), must be what the files' summaries add
+// up to. A result can't say which file ran it: its file is where test() was
+// called, and a test file may import another's tests.
 const CANCELLED = new Set(['cancelledByParent', 'testTimeoutFailure']);
+const COUNTS = ['tests', 'suites', 'passed', 'failed', 'cancelled', 'skipped', 'todo', 'topLevel'];
 
 function nodeTestResults(file) {
   let report = null;
@@ -505,18 +511,51 @@ function nodeTestResults(file) {
   expect('to-do', results.filter((result) => result.todo !== false));
 
   const tests = results.filter((result) => result.type === 'test');
+  const suites = results.filter((result) => result.type === 'suite');
   const passed = tests.filter((result) => result.passed && result.skip === false && result.todo === false);
   if (!passed.length) problems.push('no tests passed');
-  if (counts?.tests !== tests.length || counts?.passed !== passed.length) {
+  if (counts?.tests !== tests.length || counts?.suites !== suites.length || counts?.passed !== passed.length) {
     problems.push("a summary that doesn't match the results");
   }
   if (success !== true) problems.push('a summary that says the run failed');
-  const summarized = new Set(summaries.map((summary) => summary.file));
-  const unfinished = [...new Set(results.map((result) => result.file))].filter((name) => !summarized.has(name));
-  if (unfinished.length) {
-    problems.push(`${plural(unfinished.length, 'file')} without a summary (${names(unfinished, (name) => path.basename(name))})`);
+
+  const files = summaries.filter((summary) => summary.file !== null);
+  const inFiles = (key) => files.reduce((sum, summary) => sum + summary.counts?.[key], 0);
+  const unfinished = COUNTS.find((key) => inFiles(key) !== counts?.[key]);
+  if (unfinished) {
+    problems.push(`results from a test file that didn't finish (${unfinished}: ${counts?.[unfinished]} in the run, ${inFiles(unfinished)} in the files' summaries)`);
   }
   return { counts, problems };
+}
+
+// The release's npm run check and npm run test:firefox (TEST_SCRIPTS), as
+// steps. inTree(name, command, args) runs a command in the release's worktree
+// with its output in logs/<name>.log, and each results file is new in logs/,
+// so a run that writes none leaves none to read.
+async function runCheck({ inTree, logs, checks }) {
+  const results = path.join(logs, 'check-results.json');
+  await inTree('check', 'npm', ['run', 'lint']);
+  await inTree('check', 'npm', ['test', '--', ...resultsReporter(results)]);
+  const { counts, problems } = nodeTestResults(results);
+  if (problems.length) {
+    throw new ReleaseError(`npm test didn't pass every test: ${problems.join('; ')}`, path.join(logs, 'check.log'));
+  }
+  await inTree('check', 'npm', ['run', 'lint:firefox']);
+  checks.tests = counts.tests;
+  return `passed, ${counts.tests} tests`;
+}
+
+async function runFirefoxTests({ inTree, logs, checks }) {
+  const results = path.join(logs, 'firefox-results.json');
+  await inTree('firefox', 'npm', ['run', 'build:firefox']);
+  // node --test reads options only before the files it's given.
+  await inTree('firefox', 'node', ['--test', ...resultsReporter(results), 'e2e/firefox-shutdown.js']);
+  const { counts, problems } = nodeTestResults(results);
+  if (problems.length) {
+    throw new ReleaseError(`The Firefox tests didn't all pass: ${problems.join('; ')}`, path.join(logs, 'firefox.log'));
+  }
+  checks.firefox = counts.passed;
+  return `${counts.passed} passed`;
 }
 
 function listFiles(dir, base = dir) {
@@ -761,20 +800,7 @@ async function release(options) {
       return 'as expected';
     });
     await step('npm ci', () => inTree('install', 'npm', ['ci', '--no-audit', '--no-fund']).then(() => null));
-    // Each results file is new, in the scratch folder made above, so a run
-    // that writes none leaves none to read.
-    await step('npm run check', async () => {
-      const results = path.join(logs, 'check-results.json');
-      await inTree('check', 'npm', ['run', 'lint']);
-      await inTree('check', 'npm', ['test', '--', ...resultsReporter(results)]);
-      const { counts, problems } = nodeTestResults(results);
-      if (problems.length) {
-        throw new ReleaseError(`npm test didn't pass every test: ${problems.join('; ')}`, path.join(logs, 'check.log'));
-      }
-      await inTree('check', 'npm', ['run', 'lint:firefox']);
-      checks.tests = counts.tests;
-      return `passed, ${counts.tests} tests`;
-    });
+    await step('npm run check', () => runCheck({ inTree, logs, checks }));
     await step('npm run package', () => inTree('package', 'npm', ['run', 'package']).then(() => null));
     await step('npm run test:e2e', async () => {
       const log = await inTree('e2e', 'npm', ['run', 'test:e2e']);
@@ -789,17 +815,7 @@ async function release(options) {
       checks.e2e = passed;
       return `${passed} passed`;
     });
-    await step('npm run test:firefox', async () => {
-      const results = path.join(logs, 'firefox-results.json');
-      await inTree('firefox', 'npm', ['run', 'build:firefox']);
-      await inTree('firefox', 'node', ['--test', ...resultsReporter(results), 'e2e/firefox-shutdown.js']);
-      const { counts, problems } = nodeTestResults(results);
-      if (problems.length) {
-        throw new ReleaseError(`The Firefox tests didn't all pass: ${problems.join('; ')}`, path.join(logs, 'firefox.log'));
-      }
-      checks.firefox = counts.pass;
-      return `${counts.pass} passed`;
-    });
+    await step('npm run test:firefox', () => runFirefoxTests({ inTree, logs, checks }));
 
     const packages = {};
     const changed = {};
@@ -971,6 +987,8 @@ module.exports = {
   releaseRecord,
   resultsReporter,
   run,
+  runCheck,
+  runFirefoxTests,
   stillRunning,
   TEST_SCRIPTS,
   versionBumpProblems,
