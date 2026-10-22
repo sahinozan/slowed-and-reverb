@@ -132,6 +132,7 @@ function installAudioTrialObserver(options) {
       overflowEvents: message.overflowEvents,
       contextFrameGaps: message.contextFrameGaps,
       skippedContextFrames: message.skippedContextFrames,
+      gapLog: message.gapLog,
       emptyInputBlocks: message.emptyInputBlocks,
       nonStereoBlocks: message.nonStereoBlocks,
       blockSizes: message.blockSizes

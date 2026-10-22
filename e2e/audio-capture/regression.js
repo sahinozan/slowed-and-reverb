@@ -412,11 +412,18 @@ function defineRegression(browser) {
       return problems;
     }
 
+    // Problems that make a span invalid as a measurement: the recording,
+    // the setup or something outside the check failed, so the span says
+    // nothing about the sound either way.
+    const NOT_SOUND = [...RECORDER_PROBLEMS, 'observer-error', 'no-context', 'sample-rate-mismatch', 'not-stereo', 'non-finite', 'setup', 'not-covered', 'onset-not-observed', 'not-overlapping', 'interrupted'];
+
     function assertClean(name, problems) {
+      const invalid = problems.some((problem) => NOT_SOUND.includes(problem.code));
       assert.deepEqual(
         problems.map(({ code, message }) => `${code}: ${message}`),
         [],
-        `${name} (evidence in ${path.relative(root, artifacts)}/${name}.json)`
+        `${name}${invalid ? ': the recording is not valid data, so this is a measurement failure, not a sound result' : ''} ` +
+          `(evidence in ${path.relative(root, artifacts)}/${name}.json)`
       );
     }
 
@@ -803,11 +810,7 @@ function defineRegression(browser) {
           const matching = problems.filter((problem) => problem.code === code && problem.message.includes(during));
           assert.ok(matching.length, `${entry.id} should fail with ${code} in "${during}"; got ${JSON.stringify(listed)}`);
         }
-        const broken = problems.filter(
-          (problem) =>
-            RECORDER_PROBLEMS.includes(problem.code) ||
-            ['setup', 'not-covered', 'onset-not-observed', 'not-overlapping', 'non-finite', 'interrupted'].includes(problem.code)
-        );
+        const broken = problems.filter((problem) => NOT_SOUND.includes(problem.code));
         assert.deepEqual(broken.map(({ code, message }) => `${code}: ${message}`), [], `${entry.id} must fail for its sound, not its setup`);
       });
     }

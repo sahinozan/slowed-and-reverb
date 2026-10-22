@@ -32,6 +32,7 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     // Blocks the rendering thread didn't give this node (a jump in currentFrame).
     this.contextFrameGaps = 0;
     this.skippedContextFrames = 0;
+    this.gapLog = [];
     this.lastEnd = null;
     // Blocks with no input channels (nothing connected or playing) and with a
     // channel count other than two.
@@ -55,6 +56,10 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     if (this.lastEnd !== null && currentFrame !== this.lastEnd) {
       this.contextFrameGaps++;
       this.skippedContextFrames += currentFrame - this.lastEnd;
+      // Where the first few happened, by the recorder's own frame count.
+      if (this.gapLog.length < 8) {
+        this.gapLog.push({ recorderFrame: this.recordedFrames, contextFrame: currentFrame, skipped: currentFrame - this.lastEnd });
+      }
     }
     this.lastEnd = currentFrame + frames;
     if (input.length === 0) this.emptyInputBlocks++;
@@ -113,6 +118,7 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
       overflowEvents: this.overflowEvents,
       contextFrameGaps: this.contextFrameGaps,
       skippedContextFrames: this.skippedContextFrames,
+      gapLog: this.gapLog.slice(),
       emptyInputBlocks: this.emptyInputBlocks,
       nonStereoBlocks: this.nonStereoBlocks,
       blockSizes: this.blockSizes
