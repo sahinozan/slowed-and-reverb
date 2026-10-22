@@ -205,6 +205,38 @@ function measureWindow(before, after, read, { tones = [[], []] } = {}) {
   };
 }
 
+// The problems with measured channels (measureWindow's or measureChannels'
+// `channels`) against `expect.channels`: tones ({ hz, min, max }), a
+// highest level ({ maxRms }, near-silence) or a lowest one ({ minRms }) per
+// channel.
+function signalProblems(channels, expect = {}) {
+  const problems = [];
+  const fail = (code, message) => problems.push({ code, message });
+  (expect.channels ?? []).forEach((wanted, index) => {
+    const channel = channels[index];
+    if (!wanted || !channel) return;
+    for (const tone of wanted.tones ?? []) {
+      const found = channel.tones.find((measured) => measured.expectedHz === tone.hz);
+      const amplitude = found?.amplitude ?? 0;
+      if (!(amplitude >= tone.min && amplitude <= (tone.max ?? Infinity))) {
+        fail(
+          'tone-missing',
+          `channel ${index}: ${tone.hz} Hz at ${amplitude} (wanted ${tone.min} to ${tone.max ?? 'any'}), ` +
+            `strongest ${channel.dominant?.hz} Hz at ${channel.dominant?.amplitude}`
+        );
+      }
+    }
+    if (wanted.maxRms !== undefined && !(channel.rms <= wanted.maxRms)) {
+      fail('channel-not-silent', `channel ${index}: RMS ${channel.rms} (wanted at most ${wanted.maxRms})`);
+    }
+    if (wanted.minRms !== undefined && !(channel.rms >= wanted.minRms)) {
+      fail('channel-silent', `channel ${index}: RMS ${channel.rms} (wanted at least ${wanted.minRms})`);
+    }
+  });
+
+  return problems;
+}
+
 // Every reason a measured window isn't a healthy capture. `expect.media`
 // ({ rate }) asks for a playing, unmuted player at that rate; each entry of
 // `expect.channels` can ask for tones ({ hz, min, max }) or near-silence
@@ -245,24 +277,7 @@ function captureProblems(m, expect = {}) {
     fail('no-signal', `channel RMS ${m.channels.map((channel) => channel.rms).join(', ')}`);
   }
 
-  (expect.channels ?? []).forEach((wanted, index) => {
-    const channel = m.channels[index];
-    if (!wanted || !channel) return;
-    for (const tone of wanted.tones ?? []) {
-      const found = channel.tones.find((measured) => measured.expectedHz === tone.hz);
-      const amplitude = found?.amplitude ?? 0;
-      if (!(amplitude >= tone.min && amplitude <= (tone.max ?? Infinity))) {
-        fail(
-          'tone-missing',
-          `channel ${index}: ${tone.hz} Hz at ${amplitude} (wanted ${tone.min} to ${tone.max ?? 'any'}), ` +
-            `strongest ${channel.dominant?.hz} Hz at ${channel.dominant?.amplitude}`
-        );
-      }
-    }
-    if (wanted.maxRms !== undefined && !(channel.rms <= wanted.maxRms)) {
-      fail('channel-not-silent', `channel ${index}: RMS ${channel.rms} (wanted at most ${wanted.maxRms})`);
-    }
-  });
+  problems.push(...signalProblems(m.channels, expect));
 
   if (expect.media) {
     const media = m.media;
@@ -336,6 +351,245 @@ function compareLevels(reference, compared, picks, toleranceDb = 1) {
   };
 }
 
+// Continuity across a recorded span (the audio regression suite, README.md
+// in this folder).
+//
+// A click is a sample whose third difference, in either channel, is above
+// CLICK_THRESHOLD. The third difference of a sine of amplitude A at f Hz is
+// at most A * (2 * sin(pi * f / sampleRate)) ** 3, under 0.002 for every
+// tone the suite plays (up to 990 Hz at 0.6, at 44.1 kHz). A step of size d
+// in the waveform gives 2 * d, so 0.05 is a step of 0.025 (-32 dBFS). Where
+// nothing was wrong, the largest measured was 0.017 (Chromium's own small
+// glitch as a player changes speed); the defects the suite's controls put
+// back clicked at 0.09 and more (README.md in this folder).
+const CLICK_THRESHOLD = 0.05;
+// Clicks closer together than this are one click.
+const CLICK_MERGE_MS = 5;
+// A silent stretch is a run of 5 ms blocks below SILENT_RMS in both channels.
+const SILENCE_BLOCK_MS = 5;
+
+function thirdDifference(samples, i) {
+  return samples[i] - 3 * samples[i - 1] + 3 * samples[i - 2] - samples[i - 3];
+}
+
+// The clicks in a stereo recording, as { frame, peak, channel }, `frame`
+// counted from the first sample.
+function findClicks(left, right, sampleRate, threshold = CLICK_THRESHOLD) {
+  const merge = Math.round((CLICK_MERGE_MS / 1000) * sampleRate);
+  const clicks = [];
+  for (let i = 3; i < left.length; i++) {
+    let peak = 0;
+    let channel = 0;
+    for (const [index, samples] of [left, right].entries()) {
+      const value = Math.abs(thirdDifference(samples, i));
+      if (value > peak) {
+        peak = value;
+        channel = index;
+      }
+    }
+    if (!(peak > threshold)) continue;
+    const last = clicks[clicks.length - 1];
+    if (last && i - last.lastFrame <= merge) {
+      last.lastFrame = i;
+      if (peak > last.peak) Object.assign(last, { peak, channel });
+    } else {
+      clicks.push({ frame: i, lastFrame: i, peak, channel });
+    }
+  }
+  return clicks.map(({ frame, lastFrame, peak, channel }) => ({ frame, frames: lastFrame - frame + 1, peak: round(peak, 4), channel }));
+}
+
+// Runs of silent 5 ms blocks, as { frame, frames }.
+function silentRuns(left, right, sampleRate) {
+  const step = Math.max(1, Math.round((sampleRate * SILENCE_BLOCK_MS) / 1000));
+  const runs = [];
+  let current = null;
+  for (let start = 0; start + step <= left.length; start += step) {
+    let sumSquares = 0;
+    for (let i = start; i < start + step; i++) sumSquares += Math.max(left[i] ** 2, right[i] ** 2) || 0;
+    if (Math.sqrt(sumSquares / step) < SILENT_RMS) {
+      if (current) current.frames += step;
+      else runs.push((current = { frame: start, frames: step }));
+    } else {
+      current = null;
+    }
+  }
+  return runs;
+}
+
+// RMS of each channel per `stepMs`, rounded, for the evidence.
+function envelope(left, right, sampleRate, stepMs = 10) {
+  const step = Math.max(1, Math.round((sampleRate * stepMs) / 1000));
+  const out = [];
+  for (let start = 0; start + step <= left.length; start += step) {
+    out.push([left, right].map((samples) => round(channelStats(samples.subarray(start, start + step)).rms, 4)));
+  }
+  return out;
+}
+
+// measureWindow's per-channel numbers for a stretch of samples.
+function measureChannels(left, right, sampleRate, tones = [[], []]) {
+  return [left, right].map((samples, index) => ({
+    ...channelStats(samples),
+    dominant: samples.length ? dominantTone(samples, sampleRate) : null,
+    tones: (tones[index] ?? []).map((hz) => ({ expectedHz: hz, ...toneNear(samples, sampleRate, hz) }))
+  }));
+}
+
+function toneLists(expect) {
+  return [0, 1].map((index) => (expect?.channels?.[index]?.tones ?? []).map((tone) => tone.hz));
+}
+
+// Whether a span of recorded samples is valid data: what captureProblems
+// checks of a window's clock and recorder, between the page snapshots
+// `before` and `after`, plus that the frames recorded before `before` from
+// `fromFrame` on (a span that starts with the recording) lost nothing
+// either, and that the context frame each batch began at stayed in step
+// with the recorder's own count (offsetChanges). `channels` are the
+// decoded samples from `fromFrame` to the after snapshot's next frame.
+function spanHealth(before, after, channels, fromFrame) {
+  const problems = [];
+  const fail = (code, message) => problems.push({ code, message });
+  const recorder = after.recorder ?? {};
+  const start = before.recorder ?? {};
+  if (after.errors?.length) fail('observer-error', after.errors.join('; '));
+  if (!after.context) fail('no-context', 'no audio context was observed');
+  if (recorder.error) fail('recorder-error', recorder.error);
+  if (!recorder.ready) fail('recorder-not-ready', 'the recorder never started');
+  const states = [before.context?.state, after.context?.state];
+  if (states.some((state) => state !== 'running')) fail('not-running', `context states ${states.join(' -> ')}`);
+  const sampleRate = after.context?.sampleRate ?? 0;
+  if (recorder.workletSampleRate !== sampleRate) {
+    fail('sample-rate-mismatch', `recorder at ${recorder.workletSampleRate} Hz, context at ${sampleRate} Hz`);
+  }
+  const wallSeconds = (after.wallMs - before.wallMs) / 1000;
+  const [low, high] = CLOCK_RATE_RANGE;
+  const contextRate = wallSeconds > 0 ? ((after.context?.currentTime ?? 0) - (before.context?.currentTime ?? 0)) / wallSeconds : 0;
+  if (!(contextRate >= low && contextRate <= high)) fail('clock-stalled', `context clock ran at ${round(contextRate, 3)} times the wall clock`);
+  const frames = (recorder.nextFrame ?? 0) - (start.nextFrame ?? 0);
+  const recordedRate = wallSeconds > 0 && sampleRate ? frames / sampleRate / wallSeconds : 0;
+  if (!(recordedRate >= low && recordedRate <= high)) fail('frames-stalled', `${frames} frames in ${round(wallSeconds, 3)} s`);
+  const counted = ['lostFrames', 'overflowFrames', 'contextFrameGaps', 'offsetChanges', 'nonStereoBlocks'];
+  for (const key of counted) {
+    const during = difference(recorder, start, key);
+    const earlier = fromFrame < (start.nextFrame ?? 0) ? start[key] ?? 0 : 0;
+    if (during !== 0 || earlier !== 0) {
+      const code = { lostFrames: 'frames-lost', overflowFrames: 'frames-lost', contextFrameGaps: 'context-gap', offsetChanges: 'context-gap', nonStereoBlocks: 'not-stereo' }[key];
+      fail(code, `${key}: ${during} during the span${earlier ? `, ${earlier} before it` : ''}`);
+    }
+  }
+  const batchEnd = (r) => (r.lastBatch ? r.lastBatch.contextFrame + r.lastBatch.frames : null);
+  if (batchEnd(recorder) !== null && batchEnd(start) !== null && batchEnd(recorder) - batchEnd(start) !== frames) {
+    fail('frame-mismatch', `${frames} frames recorded over ${batchEnd(recorder) - batchEnd(start)} context frames`);
+  }
+  const expected = (recorder.nextFrame ?? 0) - fromFrame;
+  if (channels[0].length !== expected || channels[1].length !== expected) {
+    fail('frame-mismatch', `read ${channels[0].length} frames, wanted ${expected}`);
+  }
+  const nonFinite = channels.reduce((sum, samples) => sum + channelStats(samples).nonFinite, 0);
+  if (nonFinite) fail('non-finite', `${nonFinite} samples are not finite`);
+  return problems;
+}
+
+// Checks a recorded span against what its actions may do. Frames are the
+// recorder's own; `fromFrame` is the first sample's.
+//
+// `actions` are what the test did, in order: { label, startFrame, endFrame,
+// allow }. startFrame is a mark taken just before the action: nothing the
+// action causes can be heard earlier. endFrame is a mark taken once it was
+// done. A click or silent stretch counts as the action's if it starts
+// between startFrame and `allow.windowMs` after endFrame. The action may
+// then cause silence of up to `allow.silenceMs` (a fade the engine makes on
+// purpose, or the player stopping) and, only with `allow.clicks`, clicks
+// (the page stopping a tone mid-wave, as a seek does). Anything else is a
+// problem, `click` or `gap`. `allow.fromRecordingStart` marks an action
+// that began before the recorder could (an audio context the action
+// itself creates): its sound must start after the recording does
+// (`onset-not-observed` otherwise), so nothing of it went unheard.
+//
+// Every other action needs `preRollMs` recorded before it, so the recorder
+// was running and every frame was there before the transition began.
+//
+// `segments` are steady stretches between actions: { label, fromFrame,
+// toFrame, expect }, checked like a window (signalProblems).
+function analyzeSpan({ sampleRate, fromFrame, left, right, actions = [], segments = [], preRollMs = 100, clickThreshold = CLICK_THRESHOLD }) {
+  const problems = [];
+  const fail = (code, message) => problems.push({ code, message });
+  const toMs = (frames) => round((frames / sampleRate) * 1000, 1);
+  const toFrame = (index) => fromFrame + index;
+  const length = left.length;
+  const endFrame = fromFrame + length;
+
+  for (const action of actions) {
+    const inside = (frame) => frame >= fromFrame && frame <= endFrame;
+    if (!inside(action.startFrame) || !inside(action.endFrame)) {
+      fail('not-covered', `${action.label}: frames ${action.startFrame} to ${action.endFrame} aren't all in the recording (${fromFrame} to ${endFrame})`);
+    } else if (!action.allow?.fromRecordingStart && action.startFrame - fromFrame < (preRollMs / 1000) * sampleRate) {
+      fail('not-covered', `${action.label}: only ${toMs(action.startFrame - fromFrame)} ms recorded before it (wanted ${preRollMs})`);
+    }
+    if (action.allow?.fromRecordingStart) {
+      const block = Math.round((sampleRate * SILENCE_BLOCK_MS) / 1000);
+      const first = channelStats(left.subarray(0, block)).rms + channelStats(right.subarray(0, block)).rms;
+      if (!(first < SILENT_RMS)) {
+        fail('onset-not-observed', `${action.label}: the recording begins with sound (RMS ${round(first, 5)}), so its start wasn't recorded`);
+      }
+    }
+  }
+
+  const owner = (frame) =>
+    actions.find((action) => {
+      const windowFrames = ((action.allow?.windowMs ?? 300) / 1000) * sampleRate;
+      const start = action.allow?.fromRecordingStart ? fromFrame : action.startFrame;
+      return frame >= start && frame <= action.endFrame + windowFrames;
+    }) ?? null;
+
+  const clicks = findClicks(left, right, sampleRate, clickThreshold).map((click) => {
+    const frame = toFrame(click.frame);
+    const action = owner(frame);
+    const allowed = Boolean(action?.allow?.clicks);
+    if (!allowed) {
+      fail('click', `click of ${click.peak} at ${toMs(frame - fromFrame)} ms (channel ${click.channel})${action ? `, during ${action.label}` : ''}`);
+    }
+    return { ...click, frame, atMs: toMs(frame - fromFrame), action: action?.label ?? null, allowed };
+  });
+
+  // The largest third difference where no action may click, to show how far
+  // below CLICK_THRESHOLD the sound stayed.
+  const clickFree = (index) => !owner(toFrame(index))?.allow?.clicks;
+  let quietPeak = 0;
+  for (let i = 3; i < length; i++) {
+    const value = Math.max(Math.abs(thirdDifference(left, i)), Math.abs(thirdDifference(right, i)));
+    if (value > quietPeak && clickFree(i)) quietPeak = value;
+  }
+
+  const silences = silentRuns(left, right, sampleRate).map((run) => {
+    const frame = toFrame(run.frame);
+    const durationMs = toMs(run.frames);
+    const action = owner(frame);
+    const allowedMs = action?.allow?.silenceMs ?? 0;
+    const allowed = durationMs <= allowedMs;
+    if (!allowed) {
+      fail('gap', `${durationMs} ms of silence at ${toMs(frame - fromFrame)} ms` + (action ? `, during ${action.label} (allowed ${allowedMs} ms)` : ', outside any action'));
+    }
+    return { frame, atMs: toMs(frame - fromFrame), durationMs, action: action?.label ?? null, allowedMs, allowed };
+  });
+
+  const measured = segments.map((segment) => {
+    const from = Math.max(0, segment.fromFrame - fromFrame);
+    const to = Math.min(length, segment.toFrame - fromFrame);
+    if (!(to - from >= 0.2 * sampleRate)) {
+      fail('not-covered', `${segment.label}: only ${toMs(Math.max(0, to - from))} ms of steady sound recorded`);
+      return { label: segment.label, fromMs: toMs(from), toMs: toMs(to), channels: null, problems: [] };
+    }
+    const channels = measureChannels(left.subarray(from, to), right.subarray(from, to), sampleRate, toneLists(segment.expect));
+    const found = signalProblems(channels, segment.expect);
+    for (const problem of found) fail(problem.code, `${segment.label}: ${problem.message}`);
+    return { label: segment.label, fromMs: toMs(from), toMs: toMs(to), channels, problems: found };
+  });
+
+  return { sampleRate, fromFrame, frames: length, clickThreshold, quietPeak: round(quietPeak, 5), clicks, silences, segments: measured, problems };
+}
+
 function assertHealthyCapture(m, expect) {
   const problems = captureProblems(m, expect);
   if (problems.length) {
@@ -346,16 +600,24 @@ function assertHealthyCapture(m, expect) {
 }
 
 module.exports = {
+  CLICK_THRESHOLD,
   LEVEL_PROBLEMS,
   SIGNAL_FLOOR_RMS,
+  analyzeSpan,
   assertHealthyCapture,
   captureProblems,
   channelStats,
   compareLevels,
   decodeChannels,
   dominantTone,
+  envelope,
+  findClicks,
   maxSilentRunMs,
+  measureChannels,
   measureWindow,
+  signalProblems,
+  silentRuns,
+  spanHealth,
   toneAmplitude,
   toneNear
 };

@@ -1,9 +1,11 @@
 name: Audio capture trial
 
-# An experiment, kept apart from the required "Lint, test, and package"
-# check: can a hosted Ubuntu runner with a PulseAudio null sink record the
-# extension's audio in Chromium and Firefox? See e2e/audio-capture/README.md.
-# Its failures stay visible; nothing here is allowed to fail quietly.
+# Kept apart from the required "Lint, test, and package" check. The trial
+# asks whether a hosted Ubuntu runner with a PulseAudio null sink can record
+# the extension's audio in Chromium and Firefox; the regression suite
+# records the engines through the changes that have gone wrong before. See
+# e2e/audio-capture/README.md. Neither is required yet. Their failures stay
+# visible; nothing here is allowed to fail quietly.
 
 on:
   pull_request:
@@ -107,5 +109,92 @@ jobs:
         with:
           name: audio-capture-trial-linux
           path: test-results/audio-trial/
+          if-no-files-found: warn
+          retention-days: 14
+
+  linux-regression:
+    name: Audio regression suite (Ubuntu, PulseAudio null sink)
+    runs-on: ubuntu-latest
+    # Both browsers' suites take about 10 minutes together; installing the
+    # sound server has taken up to 13 on its own.
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Install the pinned npm version
+        run: npm install --global npm@11.19.0
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Read the Playwright version
+        id: playwright
+        shell: bash
+        run: |
+          version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright Chromium
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps --no-shell chromium
+
+      - name: Install Chromium's system libraries
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      # A virtual output device: both browsers play into it as into speakers.
+      - name: Start a PulseAudio null sink
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends pulseaudio pulseaudio-utils
+          pulseaudio --version
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=audio_trial sink_properties=device.description=Audio_trial
+          pactl set-default-sink audio_trial
+          pactl info
+          pactl list short sinks
+
+      - name: Run the Chromium audio regression suite
+        run: npm run test:audio:chromium
+
+      # Runs after a Chromium failure too, for its own evidence; either
+      # failure fails the job.
+      - name: Run the Firefox audio regression suite
+        if: ${{ !cancelled() }}
+        run: npm run test:audio:firefox
+
+      - name: Show the sound server's state
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          pactl info || true
+          pactl list short sinks || true
+          pactl list short sink-inputs || true
+
+      - name: Upload the suite's evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: audio-regression-linux
+          path: test-results/audio-regression/
           if-no-files-found: warn
           retention-days: 14

@@ -18,6 +18,13 @@ const TONE = Object.freeze({
   rightHz: 660
 });
 
+// A second song for a change of track, with other tones.
+const TONE_B = Object.freeze({ ...TONE, leftHz: 500, rightHz: 750 });
+// The regression suite's songs last 30 seconds, so a recording never
+// reaches the loop: Chromium leaves about 5 ms of silence where a looping
+// player starts again.
+const LONG_SECONDS = 30;
+
 function createStereoToneWav({ sampleRate, seconds, amplitude, leftHz, rightHz } = TONE) {
   const frames = sampleRate * seconds;
   const channels = 2;
@@ -86,7 +93,7 @@ const PAGE_HTML = `<!doctype html>
     <h1>Audio capture trial</h1>
     <button id="start" type="button">Start</button>
     <button id="activate" type="button">Activate</button>
-    <audio id="player" preload="auto" loop src="/tone.wav"></audio>
+    <audio id="player" preload="auto" loop src="/SONG"></audio>
     <script>
       window.startClicks = [];
       function recordClick(event, play) {
@@ -107,21 +114,31 @@ const PAGE_HTML = `<!doctype html>
         );
       });
       document.getElementById('activate').addEventListener('click', (event) => recordClick(event, false));
+      // Every change of the player's speed, as the page sees it.
+      window.rateChanges = [];
+      document.getElementById('player').addEventListener('ratechange', (event) => {
+        window.rateChanges.push({ atMs: performance.now(), rate: event.target.playbackRate });
+      });
     </script>
   </body>
 </html>`;
 
 const WORKLET_PATH = '/audio-trial-recorder.js';
 
-// Serves the trial page, the tone and the recorder worklet. The same server
+// Serves the trial page, the tones and the recorder worklet. The same server
 // answers as 127.0.0.1 (the YouTube stand-in) and as localhost (the Spotify
 // stand-in), so each engine is reached by its own host in the extension copy.
 async function startTrialServer() {
   const tone = createStereoToneWav();
   const worklet = fs.readFileSync(path.join(__dirname, 'recorder-worklet.js'));
+  const page = (song) => ['text/html; charset=utf-8', Buffer.from(PAGE_HTML.replace('/SONG', song))];
   const routes = new Map([
-    ['/', ['text/html; charset=utf-8', Buffer.from(PAGE_HTML)]],
+    ['/', page('/tone.wav')],
+    // The regression suite's page and songs.
+    ['/long', page('/tone-long.wav')],
     ['/tone.wav', ['audio/wav', tone]],
+    ['/tone-long.wav', ['audio/wav', createStereoToneWav({ ...TONE, seconds: LONG_SECONDS })]],
+    ['/tone-b-long.wav', ['audio/wav', createStereoToneWav({ ...TONE_B, seconds: LONG_SECONDS })]],
     [WORKLET_PATH, ['text/javascript; charset=utf-8', worklet]]
   ]);
 
@@ -159,4 +176,4 @@ async function startTrialServer() {
   };
 }
 
-module.exports = { TONE, createStereoToneWav, encodeWav, startTrialServer };
+module.exports = { TONE, TONE_B, createStereoToneWav, encodeWav, startTrialServer };
