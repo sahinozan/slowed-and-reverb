@@ -514,7 +514,40 @@ describe('Node test summaries', () => {
       "test('c', () => {});"
     ].join('\n');
     for (const { reporter, log } of summaries(t, body)) {
-      assert.deepEqual(nodeTestSummary(log).problems, ['1 cancelled', '1 todo', '1 of 3 passed'], reporter);
+      assert.deepEqual(nodeTestSummary(log).problems, ['1 cancelled', '1 todo', '1 of 3 passed', '1 to-do suite'], reporter);
+    }
+  });
+
+  test('rejects to-do suites that fail before their tests are counted', (t) => {
+    const body = [
+      "describe.todo('required', () => { require('./missing-fixture.json'); test('a', () => {}); });",
+      "describe('later', { todo: 'reason' }, () => { throw new Error('no'); });",
+      "describe('outer', () => { describe.todo('inner', () => { throw new Error('no'); }); test('b', () => {}); });",
+      "describe.todo('empty', () => {});",
+      "test('c', () => {});"
+    ].join('\n');
+    for (const { reporter, log } of summaries(t, body)) {
+      assert.deepEqual(nodeTestSummary(log).counts, { tests: 2, pass: 2, fail: 0, cancelled: 0, skipped: 0, todo: 0 }, reporter);
+      assert.deepEqual(nodeTestSummary(log).problems, ['4 to-do suites'], reporter);
+    }
+  });
+
+  test('counts a failed to-do test once, though the spec reporter repeats it', (t) => {
+    const body = "test('a', { todo: true }, () => { throw new Error('no'); });\ntest('b', () => {});\n";
+    for (const { reporter, log } of summaries(t, body)) {
+      assert.deepEqual(nodeTestSummary(log).problems, ['1 todo', '1 of 2 passed'], reporter);
+    }
+  });
+
+  test('accepts names that only look to-do', (t) => {
+    const body = [
+      "describe('outer # TODO', () => { test('a (1ms) # TODO', () => {}); });",
+      "test('\\u26A0 b (1ms) # TODO', () => {});",
+      "test('ok 1 - c # TODO', () => {});"
+    ].join('\n');
+    for (const { reporter, log } of summaries(t, body)) {
+      assert.deepEqual(nodeTestSummary(log).problems, [], reporter);
+      assert.equal(nodeTestSummary(log).counts.tests, 3, reporter);
     }
   });
 

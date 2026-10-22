@@ -449,17 +449,34 @@ function count(log, pattern) {
 // show every test passing. A skipped suite's result line is marked as a
 // skipped test's is: "﹣ name (1ms) # SKIP" from the spec reporter, which uses
 // that symbol only for skips, or "ok 1 - name # SKIP" from TAP, which escapes
-// a # in a name as \#. Marks beyond the counted skips are skipped suites. A
-// to-do suite needs no mark: its tests run and are counted as to-do.
+// a # in a name as \#. Marks beyond the counted skips are skipped suites.
+//
+// A to-do suite isn't counted either, and neither is its failure: when its
+// callback throws before registering its tests, the run exits 0 and the
+// summary counts no failed or to-do test. Its result line is marked as a
+// to-do test's is. TAP writes "not ok 1 - name # TODO" or "ok 1 - name #
+// TODO reason". The spec reporter writes a failed to-do as "⚠ name (1ms) #
+// reason", a symbol it otherwise uses only to list tests interrupted by
+// Ctrl+C, and a passed one as "✔ name (1ms) # TODO", with the mark after the
+// duration, which follows the whole name. A passed to-do with a reason ("✔
+// name (1ms) # reason") looks like a test named so and isn't recognized.
+// Marks beyond the counted to-dos are to-do suites. The spec reporter repeats
+// failed results after the summary, so only marks before it count. A release
+// needs a count of no to-dos, so then every mark is a suite; the only one
+// missed is a passed, empty suite with a reason, which hides no test. With
+// to-dos counted, which fails anyway, unrecognized ones can hide suites.
 const SKIPPED_RESULT = /^[ \t]*(?:﹣ |(?:not )?ok \d+(?: - (?:[^#\\\n]|\\.)*)? # SKIP\b)/gm;
+const TODO_RESULT = /^[ \t]*(?:⚠ |✔ .* \(\d+(?:\.\d+)?ms\) # TODO$|(?:not )?ok \d+(?: - (?:[^#\\\n]|\\.)*)? # TODO\b)/gm;
 
 function nodeTestSummary(log) {
   const counts = {};
   const problems = [];
+  let summaryAt = 0;
   for (const name of ['tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo']) {
-    const found = [...log.matchAll(new RegExp(`^(?:ℹ|#) ${name} (\\d+)$`, 'gm'))].map((match) => Number(match[1]));
+    const found = [...log.matchAll(new RegExp(`^(?:ℹ|#) ${name} (\\d+)$`, 'gm'))];
     if (found.length !== 1) problems.push(found.length ? `${found.length} "${name}" counts` : `no "${name}" count`);
-    counts[name] = found[0] ?? 0;
+    counts[name] = found.length ? Number(found[0][1]) : 0;
+    if (name === 'tests') summaryAt = found[0]?.index ?? 0;
   }
   if (!problems.length) {
     for (const name of ['fail', 'cancelled', 'skipped', 'todo']) {
@@ -469,6 +486,8 @@ function nodeTestSummary(log) {
     else if (counts.pass !== counts.tests) problems.push(`${counts.pass} of ${counts.tests} passed`);
     const skippedSuites = (log.match(SKIPPED_RESULT) ?? []).length - counts.skipped;
     if (skippedSuites > 0) problems.push(plural(skippedSuites, 'skipped suite'));
+    const todoSuites = (log.slice(0, summaryAt).match(TODO_RESULT) ?? []).length - counts.todo;
+    if (todoSuites > 0) problems.push(plural(todoSuites, 'to-do suite'));
   }
   return { counts, problems };
 }
