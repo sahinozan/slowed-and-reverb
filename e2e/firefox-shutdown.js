@@ -351,9 +351,14 @@ function patchFile(dir, file, pattern, replacement) {
   fs.writeFileSync(filePath, source.replace(pattern, replacement));
 }
 
-// An earlier version and this build. For Spotify, both register Spotify's
-// scripts for the local fixture, as for Spotify.
-function prepareUpdate(site) {
+// The scripts that each say which version their code is.
+const VERSIONED_SCRIPTS = ['content.js', 'spotify-bridge.js', 'spotify-main.js', 'youtube-main.js'];
+
+// An earlier version and this build. For a store's rollback, this build's
+// manifest says a later version than its code, as when a store puts earlier
+// code out again. For Spotify, both register Spotify's scripts for the local
+// fixture, as for Spotify.
+function prepareUpdate(site, rollback) {
   const updateRoot = fs.mkdtempSync(path.join(tempRoot, `${site}-update-`));
   return ['older', 'newer'].map((name) => {
     const versionRoot = path.join(updateRoot, name);
@@ -364,91 +369,104 @@ function prepareUpdate(site) {
       patchFile(dir, 'background.js', /'https:\/\/open\.spotify\.com\/\*'/, "'http://127.0.0.1/*'");
     }
     if (name === 'older') {
-      for (const engine of ['spotify-main.js', 'youtube-main.js']) {
-        patchFile(dir, engine, /const VERSION = '[^']*';/, "const VERSION = '0.0.1';");
+      for (const file of VERSIONED_SCRIPTS) {
+        patchFile(dir, file, /const VERSION = '[^']*';/, "const VERSION = '0.0.1';");
       }
       patchFile(dir, 'manifest.json', /"version": "[^"]*"/, '"version": "0.0.1"');
+    } else if (rollback) {
+      patchFile(dir, 'manifest.json', /"version": "[^"]*"/, '"version": "99.0.0"');
     }
     return dir;
   });
 }
 
+const UPDATES = [
+  ['an update', false],
+  ['a store rollback', true]
+];
+
 // An update leaves the previous version's engine in an open Spotify tab.
 // Firefox doesn't put the new version's scripts next to it then, so it turns
 // itself off, but it does when the extension is turned off and on again
 // without reloading the page. That engine plays the way the old version did
-// (1.1.0's skipped), so it has to stay off until the page is reloaded.
-test('asks for a Spotify reload when an update leaves the old engine in the page', async () => {
-  const [older, newer] = prepareUpdate('spotify');
-  assert.equal(await browser.installExtension(older), EXTENSION_ID);
-  const page = await openPlayingFixture('update');
-  await turnOn(page, 'spotify-registered');
-  await expectPlayback(page, 'spotify', true, 5_000);
+// (1.1.0's skipped), so it has to stay off until the page is reloaded. A
+// store's rollback is an update too, and after the reload, the earlier code
+// it puts out has to work under its later manifest.
+for (const [update, rollback] of UPDATES) {
+  test(`asks for a Spotify reload when ${update} leaves the old engine in the page`, async () => {
+    const [older, newer] = prepareUpdate('spotify', rollback);
+    assert.equal(await browser.installExtension(older), EXTENSION_ID);
+    const page = await openPlayingFixture('update');
+    await turnOn(page, 'spotify-registered');
+    await expectPlayback(page, 'spotify', true, 5_000);
 
-  assert.equal(await browser.installExtension(newer), EXTENSION_ID);
-  await expectPlayback(page, 'spotify', false, 2_000);
-  await setExtensionEnabled(false);
-  await setExtensionEnabled(true);
+    assert.equal(await browser.installExtension(newer), EXTENSION_ID);
+    await expectPlayback(page, 'spotify', false, 2_000);
+    await setExtensionEnabled(false);
+    await setExtensionEnabled(true);
 
-  let state;
-  await waitFor(
-    async () => {
-      state = (await drive(page, 'spotify-registered', true)).result;
-      return state !== undefined;
-    },
-    5_000,
-    'the new bridge never reached the page'
-  );
-  assert.deepEqual(state, { enabled: false, blocked: true, blockReason: 'outdated' });
-  assert.deepEqual((await drive(page, 'spotify-registered')).result, {
-    success: false,
-    blocked: true,
-    blockReason: 'outdated'
+    let state;
+    await waitFor(
+      async () => {
+        state = (await drive(page, 'spotify-registered', true)).result;
+        return state !== undefined;
+      },
+      5_000,
+      'the new bridge never reached the page'
+    );
+    assert.deepEqual(state, { enabled: false, blocked: true, blockReason: 'outdated' });
+    assert.deepEqual((await drive(page, 'spotify-registered')).result, {
+      success: false,
+      blocked: true,
+      blockReason: 'outdated'
+    });
+    await expectPlayback(page, 'spotify', false, 2_000);
+
+    // A reload brings in this version's engine.
+    await page.reload();
+    await startPlaying(page);
+    await turnOn(page, 'spotify-registered');
+    await expectPlayback(page, 'spotify', true, 5_000);
+
+    await browser.uninstallExtension(EXTENSION_ID);
+    await page.close();
   });
-  await expectPlayback(page, 'spotify', false, 2_000);
-
-  // A reload brings in this version's engine.
-  await page.reload();
-  await startPlaying(page);
-  await turnOn(page, 'spotify-registered');
-  await expectPlayback(page, 'spotify', true, 5_000);
-
-  await browser.uninstallExtension(EXTENSION_ID);
-  await page.close();
-});
+}
 
 // On YouTube this needs no turning off and on: when the popup opens, the
 // extension puts the new version's scripts into the page, and the new
 // engine stops at its guard, leaving the new content.js with the old engine.
-test('asks for a YouTube reload when an update leaves the old engine in the page', async () => {
-  const [older, newer] = prepareUpdate('youtube');
-  assert.equal(await browser.installExtension(older), EXTENSION_ID);
-  const page = await openPlayingFixture('youtube-update');
-  await turnOn(page, 'youtube');
-  await expectPlayback(page, 'youtube', true, 5_000);
+for (const [update, rollback] of UPDATES) {
+  test(`asks for a YouTube reload when ${update} leaves the old engine in the page`, async () => {
+    const [older, newer] = prepareUpdate('youtube', rollback);
+    assert.equal(await browser.installExtension(older), EXTENSION_ID);
+    const page = await openPlayingFixture('youtube-update');
+    await turnOn(page, 'youtube');
+    await expectPlayback(page, 'youtube', true, 5_000);
 
-  assert.equal(await browser.installExtension(newer), EXTENSION_ID);
-  await expectPlayback(page, 'youtube', false, 2_000);
+    assert.equal(await browser.installExtension(newer), EXTENSION_ID);
+    await expectPlayback(page, 'youtube', false, 2_000);
 
-  // The same injection as when the popup opens, then turning the effect on.
-  let reply;
-  await waitFor(
-    async () => {
-      reply = (await drive(page, 'youtube')).result;
-      return reply !== undefined;
-    },
-    5_000,
-    'the new version never reached the page'
-  );
-  assert.deepEqual(reply, { success: false, blocked: true, blockReason: 'outdated' });
-  await expectPlayback(page, 'youtube', false, 2_000);
+    // The same injection as when the popup opens, then turning the effect on.
+    let reply;
+    await waitFor(
+      async () => {
+        reply = (await drive(page, 'youtube')).result;
+        return reply !== undefined;
+      },
+      5_000,
+      'the new version never reached the page'
+    );
+    assert.deepEqual(reply, { success: false, blocked: true, blockReason: 'outdated' });
+    await expectPlayback(page, 'youtube', false, 2_000);
 
-  // A reload brings in this version's engine.
-  await page.reload();
-  await startPlaying(page);
-  await turnOn(page, 'youtube');
-  await expectPlayback(page, 'youtube', true, 5_000);
+    // A reload brings in this version's engine.
+    await page.reload();
+    await startPlaying(page);
+    await turnOn(page, 'youtube');
+    await expectPlayback(page, 'youtube', true, 5_000);
 
-  await browser.uninstallExtension(EXTENSION_ID);
-  await page.close();
-});
+    await browser.uninstallExtension(EXTENSION_ID);
+    await page.close();
+  });
+}

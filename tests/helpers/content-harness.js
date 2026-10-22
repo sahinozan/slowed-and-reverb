@@ -18,6 +18,14 @@ const { root } = require('./load-script');
 
 const { version: VERSION } = JSON.parse(fs.readFileSync(`${root}/extension/manifest.json`, 'utf8'));
 
+// Stands for a file from another release: its VERSION becomes `version`, or
+// undefined for an engine from 1.1.1 or earlier, which reports none.
+function releasedAs(source, version) {
+  const pattern = /const VERSION = '[^']*';/;
+  if (!pattern.test(source)) throw new Error('VERSION is no longer defined the expected way');
+  return source.replace(pattern, `const VERSION = ${JSON.stringify(version) ?? 'undefined'};`);
+}
+
 // Follows Web Audio's automation rules closely enough to hear a jump: each
 // setting keeps its scheduled events and reports its value at its context's
 // current time. Tests move that clock themselves. `ramps` records each ramp's
@@ -270,25 +278,29 @@ async function createContentHarness(options = {}) {
   }
 
   // The background script injects the page-world engine, then settings.js and
-  // content.js. `engineVersion` stands for an engine from another version,
+  // content.js. `engineVersion` stands for an engine from another release,
   // and undefined for one from 1.1.1 or earlier, which reports none.
   let engineSource = fs.readFileSync(`${root}/extension/youtube-main.js`, 'utf8');
   if (Object.hasOwn(options, 'engineVersion')) {
-    engineSource = engineSource.replace(
-      /const VERSION = '[^']*';/,
-      `const VERSION = ${JSON.stringify(options.engineVersion) ?? 'undefined'};`
-    );
+    engineSource = releasedAs(engineSource, options.engineVersion);
   }
   const settingsSource = fs.readFileSync(`${root}/extension/settings.js`, 'utf8');
   const source = fs.readFileSync(`${root}/extension/content.js`, 'utf8');
   let runtimeMessage;
-  let extensionVersion = options.extensionVersion ?? VERSION;
+  // The installed extension: `version` stands for content.js from another
+  // release, and `manifestVersion` for a manifest that says another version
+  // than its code, as when a store rolls back to earlier code.
+  let installed;
+  function install({ version, manifestVersion }) {
+    installed = { version, manifestVersion: manifestVersion ?? version ?? VERSION };
+  }
+  install(options);
 
   async function inject() {
-    runtimeMessage = connectExtension(extensionVersion);
+    runtimeMessage = connectExtension(installed.manifestVersion);
     window.eval(engineSource);
     window.eval(settingsSource);
-    window.eval(source);
+    window.eval(installed.version === undefined ? source : releasedAs(source, installed.version));
     // Lets content.js and the engine finish their first exchange.
     if (options.settle !== false) await waitFor(() => messagesOnTheWay === 0);
   }
@@ -340,14 +352,15 @@ async function createContentHarness(options = {}) {
     dispatch,
     dom,
     // Turns the extension off and on again without reloading the page, or
-    // updates it to `version`: the old content script stays without the
-    // extension, as in Chromium, and a new one is injected, as both browsers
-    // do when the popup opens. The engine already in the page stays, and
-    // the new copy stops at its guard.
-    async reinject(version = extensionVersion) {
+    // installs another copy of it (with the same options as the harness):
+    // the old content script stays without the extension, as in Chromium,
+    // and a new one is injected, as both browsers do when the popup opens.
+    // The engine already in the page stays, and the new copy stops at its
+    // guard.
+    async reinject(copy = installed) {
       await turnOff();
       window.__slowedReverbInjected = false;
-      extensionVersion = version;
+      install(copy);
       await inject();
     },
     media,
@@ -364,4 +377,4 @@ async function createContentHarness(options = {}) {
   };
 }
 
-module.exports = { FakeAudioContext, FakeAudioNode, createContentHarness };
+module.exports = { FakeAudioContext, FakeAudioNode, createContentHarness, releasedAs };

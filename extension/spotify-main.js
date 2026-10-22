@@ -5,11 +5,11 @@
   const CHANNEL = 'SLOWED_REVERB_SPOTIFY';
   const BRIDGE_CHECK_EVENT = `${CHANNEL}_CHECK`;
   const BRIDGE_CHECK_MS = 250;
-  // The extension's version, which the bridge compares with its own. This
-  // engine stays in an open tab when the extension is updated, and Firefox
-  // can later put the new bridge next to it (when the extension is turned
-  // off and on again). tests/settings.test.js keeps this equal to the
-  // manifest's version.
+  // The version this code was released as, which the bridge compares with
+  // its own. This engine stays in an open tab when the extension is updated,
+  // and Firefox can later put the new bridge next to it (when the extension
+  // is turned off and on again). tests/settings.test.js keeps this equal to
+  // the bridge's and the manifest's version.
   const VERSION = '1.1.1';
   // Copies of SlowedReverbSettings.DEFAULTS and BOUNDS (settings.js). This script
   // stays self-contained because its registration outlives extension updates;

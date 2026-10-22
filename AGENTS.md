@@ -82,11 +82,14 @@ The tests fail when the site's popup copy or stamps are out of date.
 ## Releases
 
 A version bump touches `extension/manifest.json`, `package.json`, the root
-entries of `package-lock.json`, `VERSION` in `extension/spotify-main.js` and
+entries of `package-lock.json`, `VERSION` in `extension/content.js`,
+`extension/spotify-bridge.js`, `extension/spotify-main.js` and
 `extension/youtube-main.js`, the footer of every `site/*.html` page, a new
 entry in `site/changelog.html`, and the version line in `PRIVACY.md` and
-`site/privacy.html`. The Chrome store summary is the manifest's `description`
-(132 characters at most), so it only changes with a release.
+`site/privacy.html`. The scripts compare their own `VERSION`s rather than the
+manifest's, because a store's rollback puts earlier code out again with only
+the manifest's version raised. The Chrome store summary is the manifest's
+`description` (132 characters at most), so it only changes with a release.
 
 Build the upload packages with `npm run release -- <commit>`, given the
 commit on `main` to release (`git fetch` first). It checks that everything the
