@@ -659,7 +659,7 @@ describe('audio regression page steps', () => {
   // Runs actions.js's pageStep as the browser would: from its source, in a
   // context of its own with a stand-in page.
   function inPage({ play = () => Promise.resolve(), fires = [] } = {}) {
-    const player = new EventTarget();
+    const player = new globalThis.EventTarget();
     const listening = new Map();
     const add = player.addEventListener.bind(player);
     const remove = player.removeEventListener.bind(player);
@@ -673,7 +673,7 @@ describe('audio regression page steps', () => {
     };
     player.play = () => {
       const played = play();
-      for (const type of fires) setTimeout(() => player.dispatchEvent(new Event(type)), 5);
+      for (const type of fires) setTimeout(() => player.dispatchEvent(new globalThis.Event(type)), 5);
       return played;
     };
     player.parentNode = { append() {} };

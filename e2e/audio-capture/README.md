@@ -91,7 +91,12 @@ The suite's goes to `test-results/audio-regression/<browser>/`, about 6 MB
   channel every 10 ms; the requests that reached the engine and the
   player's changes of speed; both page snapshots.
 - `<check>-<n>.wav`: 0.45 seconds from each action (from 50 ms before it)
-  and around each problem, 16-bit stereo.
+  and around each problem, 16-bit stereo. For turning the effect on while a
+  song plays, also `<check>-whole.wav`, the whole span (with compact
+  evidence, only if the check failed).
+- `<check>-failed.json`, for a check that couldn't finish (a page step or
+  action that timed out, a setup that failed): the error, and each span's
+  actions, marks and a last snapshot, if the page still answered.
 - `control-<id>-copy.json`: what each historical control changed, and the
   copy's file hashes.
 
@@ -125,12 +130,19 @@ skipped block (`offsetChanges`). It also maps a moment on the context's
 clock (a mark) to the recorded frame played then.
 
 Around a change of connections at the destination, Chromium sometimes gives
-the recorder a block with the previous block's frame number and then
-catches up. A steady tone recorded across such blocks, with no extension
-involved, has no click, which a repeated or missing 128-frame block would
-make, so the recorder counts these separately (`staleFrameLabels`) and
-takes each as the frame expected. Only a jump forward is a skipped block.
-`gapLog` keeps where the first few of either happened.
+the recorder a block with the previous block's frame number, once or twice
+in a row, and the next block then has exactly the number expected. A steady
+tone recorded across such blocks, with no extension involved, has no click,
+which a repeated or missing 128-frame block would make
+(`chromium-stale-frame.js`). The recorder takes only that as a stale label
+(`staleFrameLabels`), and takes the block as the frame expected: a block
+with the same number as the block before, after a block in step, at most
+two in a row, followed by the number expected. It logs each such run, with
+the raw and expected numbers and where it caught up (`staleLog`). Any other
+number behind the one expected (a counter that went back, stopped, or stayed
+behind longer) is a fault (`frameLabelFaults`, the first few in `faultLog`).
+A jump forward is a skipped block, as before. `gapLog` keeps where the first
+few skipped blocks and stale runs happened.
 
 `metrics.js` measures each window. `tests/audio-metrics.test.js` checks it
 against computed signals, without a browser. A window is healthy only if
@@ -141,6 +153,9 @@ all of these hold:
   wall clock;
 - the worklet runs at the context's sample rate;
 - no frame was lost, dropped or skipped;
+- no frame number was out of step other than as a stale label, and across
+  each stale run the sound has no step (no third difference above 0.05, the
+  suite's click threshold) and doesn't repeat the block before it;
 - every block has two channels;
 - every sample is finite;
 - some channel is above -40 dBFS;
@@ -321,7 +336,7 @@ both engines unless the table says otherwise:
 | Check | What happens while it records | What has to be heard |
 | --- | --- | --- |
 | Speed, pitch and reverb as heard | 0.8x with the pitch following, then kept; the song stopped with no reverb, then with reverb 60 | 352 and 528 Hz on the left (440 and 660 Hz with the pitch kept), nothing on the right, the player at 0.8x; silence after a song without reverb, a tail after one with it |
-| Turning the effect on while the song plays | The song plays without the effect, then the effect turns on, which creates the audio context | The recording starts in silence (so the change was heard from its start), only the engines' own silence before the sound comes in, no click, then the effect |
+| Turning the effect on while the song plays | The song plays without the effect, then the effect turns on, which creates the audio context; the span goes on for about 6 seconds | The recording starts in silence (so the change was heard from its start), only the engines' own silence before the sound comes in, then the effect, with no click anywhere in the 6 seconds |
 | Changes while the song plays | Reverb 40, pan to the middle, speed 0.9, eight pan changes sent 30 ms apart as when a slider is dragged, keeping the pitch and letting it follow again, the effect off and on | No click; silence only where the engine fades out to hide a change of the player; the right tones, channels and speed after each change; the song itself, at its exact level, with the effect off |
 | Spotify's own speed changes (Spotify only) | Spotify sets the player back to normal speed three times, holds it at 0 for a seek, asks for normal speed 5 ms into a change that is waiting to fade out, and plays the next song on the same player, then asks for normal speed again | No click or silence during the resets, and the player's speed never changes; the effect's speed after the seek and on the next song; the song itself, playing, once the effect is off |
 | Turning the extension off and on in the browser | From the extensions page in Chromium, Firefox's add-on manager in Firefox; on YouTube, with the extension off, the page takes its player out, puts it back and plays it at 1.25x; then the extension and the effect come back on | The song itself, at its exact level, within a second, with no click; the page's own 1.25x afterwards; the effect again once it's turned back on, except Spotify in Chromium, which needs a reload (Chromium doesn't put Spotify's scripts back into an open tab), so it stays unchanged and the reloaded page has the effect |
@@ -346,9 +361,21 @@ that span starts with the recording itself, which has to begin in silence
 context ran throughout, no frame was lost, dropped or skipped since it
 started (or since the recording started, for a span that starts with it),
 recorded frames equal the context frames they span, every sample is a
-number and nothing outside the check paused the player. Any of those fails
-the check as a measurement failure, and says so, never as a sound
+number, the recorder's frame numbers can be trusted (see "How it
+records"), every mark falls in order and no more than one batch (2048
+frames) before the frames the page already had (`mark-out-of-step`
+otherwise; in over 10,000 marks so far, none fell more than 128 frames
+before) and nothing outside the check paused the player. Any of those
+fails the check as a measurement failure, and says so, never as a sound
 problem; a control that fails that way doesn't count as caught.
+
+A check that can't finish fails the same way. The page's own steps that
+wait for the player (playing it, the next song, putting it back) give up
+after 10 seconds in the page, removing their listeners and timers; the
+Node side gives up on any request to the page after 12 seconds, and on any
+action after 30. The check then writes `<check>-failed.json`, closes its
+pages and fails as a measurement failure; a control is never counted as
+caught that way. The extension's own requests keep the trial's deadlines.
 
 Within a span:
 
@@ -382,24 +409,40 @@ Within a span:
   other phases), and the tones it shouldn't have under 0.02; the song
   itself has to be 0.24 to 0.26, with under 0.005 of the other tone.
 - After turning the extension off, removing or updating it, the unchanged
-  sound has to be back within 1 second: every 10 ms of the right channel
-  from then on carries the song's own tone, which the effect, panned left,
-  doesn't.
+  sound has to be back within 1 second of the action's first mark, and stay
+  until the end of the steady stretch after it: in every 10 ms from then
+  on, each channel carries the song's own tone (440 Hz left, 660 Hz right)
+  within 0.01 of its level of 0.25, fitted with its phase free, and less
+  than 0.005 RMS (-46 dBFS) of anything else. A partial level, the wrong
+  tone or channel, or the effect still mixed in, never counts. When the
+  right channel first carried sound for good is kept as `energyOnsetMs`,
+  only for comparison; it isn't restoration.
 
 `tests/audio-continuity.test.js` checks these measurements with computed
 signals, without a browser: planted steps, a gain set straight away and a
 two-sample dropout are clicks; the engines' fades, a crossfade and the
 loudest steady tones aren't; silence fails unless an action allows that
 much; and a message that reaches the page late isn't missing audio, while
-a lost or skipped frame is.
+a lost or skipped frame is. It runs `recorder-worklet.js` itself over
+computed tones: one or two stale labels that catch up are valid data and
+marks still map to the frames played; a counter that goes back by 512 ms
+(with the page's clock or without), stops, or stays behind three blocks,
+and a stale label over a block of sound played twice or left out, fail as
+measurements. A sound that only reaches its exact level 1.1 s after the
+extension is turned off, the wrong tone, the wrong channel and the effect
+still mixed in are not restored, while the song faded in on time is. A
+page step whose `play()` never settles or whose `playing` never comes, and
+a page that doesn't answer, fail within their deadlines and leave no
+listener or timer behind.
 
 ### Historical defects as controls
 
 Each audible defect the project has fixed is put back into a disposable
 copy (`history.js`), and the check that should hear it runs against that
-copy. The control passes only if the check fails with the problem listed,
-at the action or steady stretch listed, and with no recording or setup
-problem. The engines have changed since, and their old files report no
+copy. The control passes only if, in every engine the defect was put back
+into, each on its own, the check fails with each problem listed, at the
+action or steady stretch listed, and with no recording or setup problem.
+A defect caught in one engine and missed in the other isn't caught. The engines have changed since, and their old files report no
 version, so today's extension keeps them off; most defects are therefore
 put back narrowly in today's code. "Exact" means the old lines themselves
 in place of the fix; "narrow", today's code changed to behave as the old
@@ -439,6 +482,8 @@ browser tests. The Mac was in use for some of them.
 | `d69226b` | Chromium | 2 | 1 | 1 | The `02ef174` control didn't click at the change of pitch mode, though it clicked at other changes (its expectation changed after this) |
 | `b4ca3c6` | Chromium | 23 | 23 | 0 | |
 | `b4ca3c6` | Firefox | 23 | 20 | 3 | Once Firefox didn't start (its WebDriver BiDi session wasn't created within 180 s; no audio was measured); twice a single click in a Spotify check (see "Limits") |
+| `10665ea` | Chromium | 1 | 1 | 0 | |
+| `10665ea` | Firefox | 1 | 0 | 1 | Turning the effect on while a song plays clicked on YouTube (0.50 at 2.13 s) and on Spotify (0.22 at 2.91 s) (see "Limits") |
 
 Until the last Firefox batch, every failure was a measurement failure or a
 control that wasn't caught as it should be. In that batch, two Spotify
@@ -455,6 +500,30 @@ block (`chromium-stale-frame.js` reproduces it with no extension, and shows
 a planted repeated or missing block clicking at 0.19 to 0.52 where the
 stale ones measure 0.000048, a clean tone), and the `02ef174` control asks
 for the clicks it always makes.
+
+`10665ea` checks restoration as the exact unchanged sound, frame numbers
+and marks more strictly, each control engine by engine, and records turning
+the effect on while a song plays for about 6 seconds instead of about 1.
+Before `10665ea`, those checks were weaker in the ways "How it measures"
+and "Historical defects as controls" now rule out, and that check ended
+before Firefox's late click (see "Limits"). The `b4ca3c6` runs below were
+measured that way.
+
+With `10665ea`'s code (5 runs of just that check in each browser before it
+was committed, and the whole suite once after), turning the effect on while
+a song plays failed in Firefox on YouTube in 1 of 6 runs (0.50 at 2.13 s)
+and on Spotify in 4 of 6 (0.22 to 0.56, at 2.62 to 3.06 s), every time with
+valid recorder data. The Spotify runs that passed still measured 0.026
+(under the 0.05 threshold) at about 2.8 s. It passed in all 4 Chromium runs,
+with nothing above 0.0003. In the whole-suite runs, the exact unchanged sound
+came back 180 to 360 ms after the extension was turned off, removed or
+updated (10 to 20 ms after the right channel first carried sound), at
+exactly 0.25 with 0.00001 of anything else. The one block where it came
+close to the limits was the end of the engines' 25 ms fade-in, in Firefox
+(0.247, and 0.0044 of anything else), which at most delays restoration by
+one block. No stale label or frame-number fault occurred in these runs;
+Chromium's reproducer, with no extension, gave 9 stale labels in 8 runs
+(one run of two), each caught up as expected, and no fault.
 
 In the `b4ca3c6` runs:
 
@@ -484,14 +553,18 @@ the run that made it; `chromium-stale-frame.js` and
 
 ### What it can replace, and what stays manual
 
-The suite now hears, in both browsers, what the final listen after an
-engine change was for: the speed and pitch, the effect being there, clicks
+It doesn't replace the routine listen after an engine change. The suite
+hears, in both browsers, the speed and pitch, the effect being there, clicks
 and gaps when settings change, Spotify's own speed changes, and the sound
 coming back unchanged when the effect or the extension is turned off,
-removed or updated. Each of the defects the project has shipped and fixed
-is caught when put back.
+removed or updated, and each defect the project has shipped and fixed is
+caught when put back. But turning the effect on while a song plays fails in
+Firefox on a click that hasn't been explained or decided on, two other
+Firefox clicks are unexplained (see "Limits"), and the suite hasn't run
+often enough on any machine to give it a flake rate. Run it after an engine
+change, as well as listening.
 
-It doesn't replace:
+It doesn't cover either:
 
 - a listen on the real sites with real songs, since YouTube's and Spotify's
   players (MSE, protected media, their own speed and track handling) are
@@ -529,10 +602,13 @@ It doesn't replace:
   silence hides.)
   `firefox-capture-click.js` reproduces it with no extension. Turning the
   effect on while a song plays does exactly this, so a person may hear it;
-  the engines don't hide it. The suite's check of that action ends about
-  1.4 seconds after it, and its other checks turn the effect on before the
-  song starts, so the suite doesn't hear this click. It needs a decision,
-  not a looser threshold.
+  the engines don't hide it. The suite's check of that action records about
+  6 seconds and fails on it: in Firefox, 1 of 6 runs on YouTube and 4 of 6
+  on Spotify so far (see "Suite results"), with clicks of 0.22 to 0.56. That
+  the reproducer clicks without the extension doesn't show the engines play
+  no part, and the check stays a failure until the click is fixed or a
+  decision accepts it, not a looser threshold. The suite's other checks
+  turn the effect on before the song starts.
 - **Two clicks are unexplained.** In 2 of the last 23 Firefox runs, one
   Spotify check heard a single click (0.32 and 0.35): one sample at
   exactly 0 in both channels, and two samples at about a third of their
@@ -567,13 +643,20 @@ It doesn't replace:
   have to reach the engine mid-fade, or the check fails as
   `not-overlapping`, a setup problem.
 - Thresholds come from this Mac at 48 kHz (and the trial's hosted runs at
-  44.1 kHz). The suite hasn't yet run on a hosted runner at the time of
-  writing.
+  44.1 kHz). The suite has run once on a hosted Ubuntu runner, at
+  `e0d3f11`, before the stricter checks of `10665ea` (all 17 Chromium and
+  22 Firefox checks passed, in
+  [workflow run 39910674712](https://github.com/sahinozan/slowed-and-reverb/actions/runs/39910674712));
+  `10665ea` hasn't run there yet.
 - Chromium sometimes gives the recorder a stale frame number around a
   change of connections at the destination (see "How it records"). The
-  recorder takes such a block as the frame expected; that rests on the
-  native reproducer, where a steady tone across those blocks is unbroken,
-  not on knowing why Chromium does it.
+  recorder takes such a block as the frame expected only in the pattern the
+  native reproducer has shown (up to two blocks, then exactly the number
+  expected), and only where the sound across it is unbroken; that rests on
+  the reproducer, not on knowing why Chromium does it. A longer or other
+  stale pattern fails as a measurement, even if Chromium could produce it
+  harmlessly. A repeated block in a sound that repeats every 128 frames
+  fails the same way, since it can't be told apart.
 - Before a span, a recorder can already have skipped a block as it
   started (one in each of the reproducer's runs). A span counts only what
   happens from its start, or from the recording's start for a span that
@@ -585,12 +668,16 @@ It doesn't replace:
 **Measured:** recording real engine output works in both browsers, on a
 Mac and on a hosted Ubuntu runner with a null sink, without new
 dependencies or production changes. The regression suite catches each
-audible defect the project has fixed when it is put back. Its final
-version passed 23 of 23 runs in Chromium and 20 of 23 in Firefox on this
-Mac, with one Firefox start failure and two unexplained clicks on Spotify
-(see "Suite results").
+audible defect the project has fixed when it is put back, in every engine
+it was put back into. `b4ca3c6` passed 23 of 23 runs in Chromium and 20 of
+23 in Firefox on this Mac, with one Firefox start failure and two
+unexplained clicks on Spotify; it didn't record long enough after turning
+the effect on during a song to hear Firefox's late click. `10665ea` does,
+and fails in Firefox on it in most runs (see "Suite results").
 
-**Next:** run the suite on the hosted runner enough times to show it is
-steady there. Until then it stays out of the required check and the
-release; it can replace the routine listen after an engine change on the
-Mac now, with the real-site listen kept before a store release.
+**Next:** decide what to do about Firefox's click after the effect turns
+on while a song plays (fix it, or accept it explicitly), find what the two
+other Firefox clicks were, and run the suite on the hosted runner enough
+times to show it is steady there. Until then it stays out of the required
+check and the release, and the routine listen after an engine change stays,
+with the real-site listen before a store release.

@@ -33,7 +33,8 @@ covers the features and development commands in full.
   changes of settings, Spotify's speed changes, turning the extension off,
   removing and updating it, and put back each audible defect fixed so far
   to show it is caught. Run them after changing an engine, the content
-  scripts or the background script. `npm run test:audio-trial:chromium` and
+  scripts or the background script, as well as listening: they don't
+  replace that yet (see "What it can replace" in the README below). `npm run test:audio-trial:chromium` and
   `npm run test:audio-trial:firefox` are the experiment the suite is built
   on. All four are described in `e2e/audio-capture/README.md`. They aren't
   part of `npm run check`, CI's required check or releases, and they need a
