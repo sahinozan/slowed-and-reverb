@@ -19,6 +19,7 @@
 const http = require('node:http');
 const { expect, test: base } = require('@playwright/test');
 
+const { requestPathname } = require('../../scripts/request-target');
 const { createSiteServer } = require('../../scripts/serve-site');
 
 const PAGES = ['/', '/guide', '/faq', '/changelog', '/privacy'];
@@ -107,7 +108,8 @@ const test = base.extend({
       const holds = new Map();
       server.removeListener('request', serve);
       server.on('request', (request, response) => {
-        const { pathname } = new URL(request.url, 'http://localhost');
+        const pathname = requestPathname(request, response, 'http://localhost');
+        if (pathname === null) return;
         const hold = holds.get(pathname);
         if (!hold) return serve(request, response);
         hold.arrived();
@@ -630,6 +632,72 @@ test('serves clean addresses and a 404 page, as Cloudflare does', async ({ page,
   const problems = guard.take();
   expect(problems).toContain(`HTTP 404: ${siteUrl}/no-such-page`);
   for (const problem of problems) expect(problem).toMatch(/404/);
+});
+
+// Asks the local server for `target` as written, over its own connection:
+// a browser or fetch() would parse the address first. tests/request-target.test.js
+// checks the site's own server the same way.
+function ask(siteUrl, target) {
+  const request = http.request({ host: '127.0.0.1', port: new URL(siteUrl).port, path: target, agent: false });
+  const answer = new Promise((resolve, reject) => {
+    request.on('error', reject);
+    request.on('response', (response) => {
+      let body = '';
+      response.setEncoding('latin1');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body }));
+    });
+  });
+  request.end();
+  return { request, answer };
+}
+
+// The tests' own listener (siteServer), which looks up held addresses before
+// the site's server answers.
+test.describe('the test server', () => {
+  test("answers targets it can't parse with an empty 400, without holding them", async ({ siteServer, hold }) => {
+    // Addresses a broken target could be mistaken for, all held.
+    const held = ['/', '//[', '/[', '/%5B', '/guide'].map((pathname) => hold(pathname));
+    for (const target of ['//[', '//%5B', '//%5b', '//[::1]:99999', 'http://%5B/guide', '/\\[']) {
+      expect(await ask(siteServer.url, target).answer, target).toEqual({ status: 400, body: '' });
+    }
+    const arrived = await Promise.race([
+      ...held.map((entry) => entry.arrived.then(() => true)),
+      new Promise((resolve) => setTimeout(() => resolve(false), 100))
+    ]);
+    expect(arrived, 'no held address was asked for').toBe(false);
+    expect(siteServer.holds.size).toBe(held.length);
+    for (const entry of held) entry.release();
+    expect(siteServer.holds.size).toBe(0);
+    expect((await ask(siteServer.url, '/guide').answer).status).toBe(200);
+  });
+
+  test('still holds answers by pathname, drops them, and lets them go after the client has left', async ({ siteServer, hold }) => {
+    const guide = hold('/guide');
+    const { answer } = ask(siteServer.url, '/guide?v=1');
+    await guide.arrived;
+    const early = await Promise.race([answer, new Promise((resolve) => setTimeout(() => resolve('held'), 100))]);
+    expect(early).toBe('held');
+    guide.release();
+    const released = await answer;
+    expect(released.status).toBe(200);
+    expect(released.body).toContain('<h1');
+
+    const faq = hold('/faq', { drop: true });
+    const dropped = ask(siteServer.url, '/faq').answer.then(() => 'answered', (error) => error.code);
+    await faq.arrived;
+    expect(await dropped).toBe('ECONNRESET');
+    faq.release();
+
+    const privacy = hold('/privacy');
+    const left = ask(siteServer.url, '/privacy');
+    left.answer.catch(() => {});
+    await privacy.arrived;
+    left.request.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    privacy.release();
+    expect((await ask(siteServer.url, '/privacy').answer).status).toBe(200);
+  });
 });
 
 // The checks above have to fail when the site goes wrong in these ways.

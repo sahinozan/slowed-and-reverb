@@ -16,6 +16,8 @@ on:
       - 'extension/**'
       - 'package.json'
       - 'package-lock.json'
+      # The suites' server reads its request targets with this.
+      - 'scripts/request-target.js'
   workflow_dispatch:
 
 permissions:
