@@ -8,11 +8,13 @@
 // Every request the pages make, WebSockets included, is checked: one to
 // anywhere but the local server fails the test, and is stopped before it
 // leaves the browser. So do the page's errors, console errors and failed
-// local requests. No store, YouTube or Spotify page is opened. The browsers
-// are muted: playing is checked by the song's clock and the page, not by its
-// sound, and it needs a sound device (on Linux, a PulseAudio sink; CI starts a
-// null sink). Each playing test attaches what the demo's audio did, step by
-// step (demo-playback.json), so a song that doesn't start shows where it stopped.
+// local requests, except the page's icon when Firefox stops loading it
+// because the theme's icon has replaced it (see ICON). No store, YouTube or
+// Spotify page is opened. The browsers are muted: playing is checked by the
+// song's clock and the page, not by its sound, and it needs a sound device
+// (on Linux, a PulseAudio sink; CI starts a null sink). Each playing test
+// attaches what the demo's audio did, step by step (demo-playback.json), so a
+// song that doesn't start shows where it stopped.
 
 const http = require('node:http');
 const { expect, test: base } = require('@playwright/test');
@@ -34,24 +36,133 @@ const VIEWPORTS = {
 // playwright.ui.config.js); everywhere else they run in both engines.
 const PLAYBACK = '@playback';
 
+// The page's own icon. site/site.js swaps it for one drawn in the theme's
+// colors, and Firefox stops loading the old one if it hasn't arrived yet.
+const ICON = '/assets/icon.svg';
+
+// Runs in every page the tests open: tells the guard each time the page
+// changes its icon's address, with the theme's logo colors (styles.css) at
+// that moment, so the change can be checked after the page has gone.
+function watchIcon() {
+  new MutationObserver((records) => {
+    for (const { target } of records) {
+      if (!target.matches?.('link[rel~="icon"]')) continue;
+      const style = window.getComputedStyle(document.documentElement);
+      window.__iconChanged({
+        page: location.href,
+        href: target.href,
+        colors: ['--logo-light', '--logo-middle', '--logo-dark'].map((name) => style.getPropertyValue(name).trim())
+      });
+    }
+  }).observe(document, { subtree: true, attributes: true, attributeFilter: ['href'] });
+}
+
+// The colors an icon's image is drawn in, if it's an image site.js could
+// have drawn, and whether it loads.
+const readIcon = (href) => {
+  const prefix = 'data:image/svg+xml,';
+  let svg = '';
+  try {
+    if (href.startsWith(prefix)) svg = decodeURIComponent(href.slice(prefix.length));
+  } catch { /* not an image of ours */ }
+  const image = new DOMParser().parseFromString(svg || '<none/>', 'image/svg+xml');
+  return new Promise((resolve) => {
+    const result = (loaded) => resolve({
+      href: href.length > 60 ? `${href.slice(0, 60)}…` : href,
+      drawn: href.startsWith(prefix),
+      stops: [...image.querySelectorAll('stop')].map((stop) => stop.getAttribute('stop-color')),
+      loaded
+    });
+    const probe = new Image();
+    probe.onload = () => result(probe.naturalWidth > 0);
+    probe.onerror = () => result(false);
+    probe.src = href;
+  });
+};
+
+// Why a stopped request for the page's icon isn't explained by the theme's
+// icon replacing it, or null if it is: the page that asked for it changed
+// its icon to one drawn in the theme's colors at that moment, which loads.
+async function iconNotReplaced(page, changes, { url, from, frame }) {
+  if (!frame) return 'and no page asked for it';
+  const change = changes.find((entry) => entry.frame === frame && entry.page === from && entry.href !== url);
+  if (!change) return `and the page that asked for it (${from}) didn't change its icon`;
+  let icon;
+  try {
+    icon = await page.evaluate(readIcon, change.href);
+  } catch (error) {
+    return `and its new icon couldn't be checked: ${error.message}`;
+  }
+  const themed = icon.drawn && icon.loaded && change.colors.every(Boolean) &&
+    JSON.stringify(icon.stops) === JSON.stringify(change.colors);
+  return themed ? null : `and the page's new icon isn't the theme's: ${JSON.stringify({ ...icon, colors: change.colors })}`;
+}
+
 const test = base.extend({
-  siteUrl: [
+  // The local server, and the answers it's been told to hold back (see `hold`).
+  siteServer: [
     async ({}, use) => {
       const server = createSiteServer();
+      const [serve] = server.listeners('request');
+      const holds = new Map();
+      server.removeListener('request', serve);
+      server.on('request', (request, response) => {
+        const { pathname } = new URL(request.url, 'http://localhost');
+        const hold = holds.get(pathname);
+        if (!hold) return serve(request, response);
+        hold.arrived();
+        if (hold.drop) return request.socket.destroy();
+        hold.released.then(() => {
+          if (!response.destroyed) serve(request, response);
+        });
+      });
       await new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(0, '127.0.0.1', resolve);
       });
-      await use(`http://127.0.0.1:${server.address().port}`);
+      await use({ url: `http://127.0.0.1:${server.address().port}`, holds });
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     },
     { scope: 'worker' }
   ],
 
+  // `hold(pathname)` makes the server hold back its answers to that address,
+  // the real file, until `release()`, 10 seconds or the test's end; with
+  // `{ drop: true }`, it drops their connections instead. `arrived` resolves
+  // when the first request reaches the server.
+  hold: async ({ siteServer }, use) => {
+    const releases = [];
+    await use((pathname, { drop = false } = {}) => {
+      let arrived;
+      let release;
+      const entry = {
+        drop,
+        arrived: () => arrived(),
+        released: new Promise((resolve) => { release = resolve; })
+      };
+      const timer = setTimeout(() => hold.release(), 10_000);
+      const hold = {
+        arrived: new Promise((resolve) => { arrived = resolve; }),
+        release() {
+          clearTimeout(timer);
+          if (siteServer.holds.get(pathname) === entry) siteServer.holds.delete(pathname);
+          release();
+        }
+      };
+      siteServer.holds.set(pathname, entry);
+      releases.push(hold.release);
+      return hold;
+    });
+    for (const release of releases) release();
+  },
+
+  siteUrl: [async ({ siteServer }, use) => use(siteServer.url), { scope: 'worker' }],
+
   // Blocks and records every request that isn't to the local server, and
   // records the pages' errors, console errors and failed local requests. Any
-  // of them fails the test, unless the test takes them with `guard.take()`.
+  // of them fails the test, unless the test takes them with `guard.take()`
+  // (after `await guard.settle()` when the page's icon may have been stopped).
   // WebSockets need a route of their own: Chromium's don't pass through
   // context.route. Playwright routes those opened from pages and their frames,
   // not from workers; the site has neither.
@@ -61,6 +172,15 @@ const test = base.extend({
       const requests = [];
       const outside = [];
       let problems = [];
+      const iconChanges = [];
+      const stoppedIcons = [];
+      const settle = async () => {
+        while (stoppedIcons.length) {
+          const stopped = stoppedIcons.shift();
+          const reason = await iconNotReplaced(page, iconChanges, stopped);
+          if (reason) problems.push(`${stopped.failed}, ${reason}`);
+        }
+      };
       const where = (frame) => (frame ? frame.url() : 'a worker');
 
       await context.route('**/*', (route) => {
@@ -79,6 +199,8 @@ const test = base.extend({
         problems.push(`request to another site, stopped: WebSocket ${socket.url()}`);
         socket.close({ code: 1008, reason: 'Blocked by the test' });
       });
+      await context.exposeBinding('__iconChanged', ({ frame }, change) => iconChanges.push({ frame, ...change }));
+      await context.addInitScript(watchIcon);
       page.on('request', (request) => requests.push(`${request.method()} ${request.url()}`));
       page.on('pageerror', (error) => problems.push(`page error: ${error.message}`));
       page.on('console', (message) => {
@@ -86,13 +208,29 @@ const test = base.extend({
       });
       page.on('requestfailed', (request) => {
         if (outside.includes(request.url())) return;
-        problems.push(`request failed: ${request.url()} (${request.failure()?.errorText})`);
+        const error = request.failure()?.errorText;
+        const failed = `request failed: ${request.url()} (${error})`;
+        // Firefox stops loading the page's icon when the theme's replaces it.
+        // That alone is expected, once settle() finds the page that asked for
+        // it changed to the theme's icon. Chromium finishes loading the old
+        // one, so all its failures count.
+        if (request.url() === `${origin}${ICON}` && error === 'NS_BINDING_ABORTED') {
+          let frame = null;
+          try {
+            frame = request.frame();
+          } catch { /* not from a page */ }
+          stoppedIcons.push({ failed, url: request.url(), from: request.headers().referer, frame });
+          return;
+        }
+        problems.push(failed);
       });
       page.on('response', (response) => {
         if (response.status() >= 400) problems.push(`HTTP ${response.status()}: ${response.url()}`);
       });
 
       await use({
+        // Checks the icon requests stopped so far (see ICON).
+        settle,
         take() {
           const taken = problems;
           problems = [];
@@ -100,6 +238,7 @@ const test = base.extend({
         }
       });
 
+      await settle();
       await testInfo.attach('requests.txt', { body: requests.join('\n'), contentType: 'text/plain' });
       expect(problems, 'requests to other sites and browser errors').toEqual([]);
     },
@@ -575,6 +714,102 @@ test.describe('site controls', () => {
     expect(failure.playback.contexts).toEqual([]);
     expect(failure.playback.demo).toMatchObject({ loading: true, playing: false, error: null });
     await expect(page.locator('#play')).toBeDisabled();
+  });
+
+  // The server holds back the page's icon, the real file, while the page
+  // changes it, as a slow connection can. Firefox then stops loading it,
+  // a moment later: that's expected only when the theme's icon has replaced
+  // it. Chromium finishes loading it once it arrives.
+  const iconEnd = (page) => new Promise((resolve) => {
+    const end = (outcome) => (request) => {
+      if (request.url().endsWith(ICON)) resolve(outcome ?? request.failure().errorText);
+    };
+    page.on('requestfinished', end('finished'));
+    page.on('requestfailed', end());
+  });
+
+  // Lets the held icon go, and returns how its request ended: in Firefox,
+  // stopped before it's let go.
+  async function iconEnded(icon, ended, browserName) {
+    if (browserName === 'firefox') expect(await ended, 'Firefox stops loading the old icon').toBe('NS_BINDING_ABORTED');
+    icon.release();
+    return ended;
+  }
+
+  test("takes the page's icon stopped for the theme's", async ({ page, siteUrl, guard, hold, browserName }) => {
+    const icon = hold(ICON);
+    const ended = iconEnd(page);
+    await openHome(page, siteUrl);
+    await icon.arrived;
+    await popupFrame(page).locator('#theme-picker-btn').click();
+    await popupFrame(page).locator('.theme-option[data-theme="midnight"]').click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight');
+    await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /^data:image\/svg\+xml,/);
+    const shown = await page.evaluate(readIcon, await page.locator('link[rel="icon"]').evaluate((link) => link.href));
+    const colors = await page.evaluate(() => ['--logo-light', '--logo-middle', '--logo-dark']
+      .map((name) => window.getComputedStyle(document.documentElement).getPropertyValue(name).trim()));
+    expect(shown, "the theme's icon loads").toMatchObject({ drawn: true, loaded: true });
+    expect(shown.stops, "the icon is in the theme's colors").toEqual(colors);
+    expect(await iconEnded(icon, ended, browserName)).toBe(browserName === 'firefox' ? 'NS_BINDING_ABORTED' : 'finished');
+    await guard.settle();
+    expect(guard.take()).toEqual([]);
+  });
+
+  const black = '<stop stop-color="#000"/>'.repeat(3);
+  for (const [name, href] of [
+    ['an image in other colors', `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><defs><linearGradient id="g">${black}</linearGradient></defs><rect width="8" height="8" fill="url(#g)"/></svg>`)}`],
+    ['another address', `${ICON}?again`]
+  ]) {
+    test(`reports the page's icon stopped for ${name}`, async ({ page, siteUrl, guard, hold, browserName }) => {
+      const icon = hold(ICON);
+      const ended = iconEnd(page);
+      await page.goto(`${siteUrl}/`);
+      await icon.arrived;
+      await page.evaluate((value) => { document.querySelector('link[rel="icon"]').href = value; }, href);
+      const end = await iconEnded(icon, ended, browserName);
+      await guard.settle();
+      const problems = guard.take();
+      if (browserName !== 'firefox') {
+        expect(end).toBe('finished');
+        expect(problems).toEqual([]);
+        return;
+      }
+      expect(problems).toHaveLength(1);
+      const reported = `request failed: ${siteUrl}${ICON} (NS_BINDING_ABORTED), and the page's new icon isn't the theme's: `;
+      expect(problems[0].startsWith(reported), problems[0]).toBe(true);
+    });
+  }
+
+  // Firefox stops the icon of a page left before it arrives; with no new
+  // icon from that page, that counts.
+  test("reports the page's icon stopped by leaving the page", async ({ page, siteUrl, guard, hold, browserName }) => {
+    const icon = hold(ICON);
+    const ended = iconEnd(page);
+    await page.goto(`${siteUrl}/`);
+    await icon.arrived;
+    await page.goto(`${siteUrl}/faq`);
+    const end = await iconEnded(icon, ended, browserName);
+    await guard.settle();
+    const problems = guard.take();
+    if (browserName !== 'firefox') {
+      expect(end).toBe('finished');
+      expect(problems).toEqual([]);
+      return;
+    }
+    expect(problems).toEqual([
+      `request failed: ${siteUrl}${ICON} (NS_BINDING_ABORTED), and the page that asked for it (${siteUrl}/) didn't change its icon`
+    ]);
+  });
+
+  test("reports the page's icon when it doesn't arrive", async ({ page, siteUrl, guard, hold }) => {
+    const icon = hold(ICON, { drop: true });
+    const ended = iconEnd(page);
+    await page.goto(`${siteUrl}/`);
+    await icon.arrived;
+    const error = await ended;
+    expect(['finished', 'NS_BINDING_ABORTED']).not.toContain(error);
+    await guard.settle();
+    expect(guard.take()).toEqual([`request failed: ${siteUrl}${ICON} (${error})`]);
   });
 
   test('stops and reports a WebSocket to another site', async ({ page, siteUrl, guard }) => {
