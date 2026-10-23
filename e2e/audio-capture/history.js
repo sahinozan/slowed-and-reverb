@@ -67,9 +67,15 @@ const HISTORY = [
       ...straightChanges('youtube-main.js', 'param, value', 'audioContext.currentTime'),
       ...straightChanges('spotify-main.js', 'context, param, value', 'context.currentTime')
     ],
+    // A value set straight away clicks as loudly as the wave is far from 0
+    // at that instant, so one change can come out small: in 23 Chromium
+    // runs, keeping the pitch clicked at as little as 0.061 and once not at
+    // all. Turning the effect off and on, and the overlapping changes, have
+    // clicked at 0.38 or more in every run.
     expect: [
-      { code: 'click', during: 'during pan to the middle' },
-      { code: 'click', during: 'during keep the pitch' }
+      { code: 'click', during: 'during overlapping changes' },
+      { code: 'click', during: 'during turn off' },
+      { code: 'click', during: 'during turn on' }
     ]
   },
   {
