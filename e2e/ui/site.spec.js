@@ -610,9 +610,8 @@ test.describe('site controls', () => {
       }), url);
       expect(events, 'the page sees its socket closed').toContain('close');
       expect(reached, 'the other site gets nothing').toEqual([]);
-      expect(guard.take()).toContainEqual(expect.stringMatching(
-        new RegExp(`^request to another site, stopped: .*${url.replace(/[.:/]/g, '\\$&')}`)
-      ));
+      // The WebSocket route stops it in both engines, so that's the one report.
+      expect(guard.take()).toEqual([`request to another site, stopped: WebSocket ${url}`]);
     } finally {
       endpoint.closeAllConnections();
       await new Promise((resolve) => endpoint.close(resolve));
