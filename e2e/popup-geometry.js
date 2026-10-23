@@ -76,6 +76,21 @@ function inspectPopup({ controls, width, maxHeight }) {
     return area;
   };
 
+  // How opaque an element ends up: opacity applies to everything inside, so
+  // a transparent ancestor (up to the page itself) hides a control whose own
+  // opacity is 1. Disabled controls are dimmed to 0.4, which still shows.
+  const MIN_OPACITY = 0.1;
+  const shownOpacity = (element) => {
+    let opacity = 1;
+    let clearest = { name: name(element), value: 1 };
+    for (let node = element; node; node = node.parentElement) {
+      const value = Number(window.getComputedStyle(node).opacity);
+      opacity *= value;
+      if (value < clearest.value) clearest = { name: node === document.documentElement ? 'html' : name(node), value };
+    }
+    return { opacity, clearest: `${clearest.name} at opacity ${clearest.value}` };
+  };
+
   const scrolledBefore = scrollArea.scrollTop;
   for (const { selector, scroll } of controls) {
     const element = document.querySelector(selector);
@@ -86,8 +101,13 @@ function inspectPopup({ controls, width, maxHeight }) {
     if (scroll) element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     const style = window.getComputedStyle(element);
     const box = element.getBoundingClientRect();
-    if (box.width < 1 || box.height < 1 || style.visibility !== 'visible' || Number(style.opacity) === 0) {
-      add('hidden', `${selector} isn't drawn (${px(box.width)} × ${px(box.height)}px, ${style.visibility}, opacity ${style.opacity})`);
+    if (box.width < 1 || box.height < 1 || style.visibility !== 'visible') {
+      add('hidden', `${selector} isn't drawn (${px(box.width)} × ${px(box.height)}px, ${style.visibility})`);
+      continue;
+    }
+    const { opacity, clearest } = shownOpacity(element);
+    if (opacity < MIN_OPACITY) {
+      add('hidden', `${selector} is drawn at opacity ${px(opacity)}, from ${clearest}`);
       continue;
     }
     const area = visibleArea(element);
@@ -141,12 +161,12 @@ const FRAME_CONTROLS = Object.freeze([
   '#rate-link'
 ]);
 
-// The upper tabs with the built-in presets, and the Basic tab's controls.
-const BASIC_CONTROLS = Object.freeze([
-  '#tab-presets',
-  '#tab-custom',
-  '[data-preset="slowed"]',
-  '[data-preset="nightcore"]',
+// The upper tabs, which every state shows.
+const UPPER_TABS = Object.freeze(['#tab-presets', '#tab-custom']);
+
+// The effect controls under the presets, on the Basic tab. They stay below
+// My Presets too.
+const EFFECT_CONTROLS = Object.freeze([
   '#effect-tab-basic',
   '#effect-tab-advanced',
   '#speed-slider',
@@ -156,4 +176,20 @@ const BASIC_CONTROLS = Object.freeze([
   '#eq-handle-high'
 ]);
 
-module.exports = { BASIC_CONTROLS, FRAME_CONTROLS, POPUP_MAX_HEIGHT, POPUP_WIDTH, measurePopup };
+// The upper tabs with the built-in presets, and the Basic tab's controls.
+const BASIC_CONTROLS = Object.freeze([
+  ...UPPER_TABS,
+  '[data-preset="slowed"]',
+  '[data-preset="nightcore"]',
+  ...EFFECT_CONTROLS
+]);
+
+module.exports = {
+  BASIC_CONTROLS,
+  EFFECT_CONTROLS,
+  FRAME_CONTROLS,
+  POPUP_MAX_HEIGHT,
+  POPUP_WIDTH,
+  UPPER_TABS,
+  measurePopup
+};

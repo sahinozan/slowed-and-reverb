@@ -17,7 +17,7 @@ const { execFileSync } = require('child_process');
 const { expect, test } = require('@playwright/test');
 
 const { DEFAULT_SETTINGS, installPopupBrowserMock, startServer } = require('../../scripts/popup-preview');
-const { BASIC_CONTROLS, FRAME_CONTROLS, measurePopup } = require('../popup-geometry');
+const { BASIC_CONTROLS, EFFECT_CONTROLS, FRAME_CONTROLS, UPPER_TABS, measurePopup } = require('../popup-geometry');
 
 const root = path.join(__dirname, '..', '..');
 const SLOWED = Object.freeze({ ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 });
@@ -40,11 +40,12 @@ function savedPresets(count) {
 const row = (n, part) => `.custom-preset-item:nth-child(${n}) .${part}`;
 const rowControls = (n) => [row(n, 'custom-preset-btn'), row(n, 'edit-preset-btn'), row(n, 'delete-preset-btn')];
 const ADVANCED_CONTROLS = [
-  '#tab-presets', '#tab-custom', '[data-preset="slowed"]', '[data-preset="nightcore"]',
+  ...UPPER_TABS, '[data-preset="slowed"]', '[data-preset="nightcore"]',
   '#effect-tab-basic', '#effect-tab-advanced', '#keep-pitch-toggle + .switch-slider',
   '#echo-slider', '#pan-slider', '#width-slider', '#saturation-slider'
 ];
-const CUSTOM_CONTROLS = ['#tab-presets', '#tab-custom', '#preset-name-input', '#save-preset-btn'];
+// My Presets replaces the built-in presets; the effect controls stay below it.
+const CUSTOM_CONTROLS = [...UPPER_TABS, '#preset-name-input', '#save-preset-btn', ...EFFECT_CONTROLS];
 const RATE_PROMPT_CONTROLS = ['#rate-prompt-link', '#rate-prompt-dismiss'];
 // The reminder shows on the fifth day the popup is opened with the effect on.
 const FIFTH_DAY = { ratingPrompt: { days: 4, lastDay: '2000-01-01', done: false } };
@@ -444,8 +445,10 @@ test.describe('popup layout', () => {
 // copy of today's popup and expects the check to find the problem. Three put
 // back what c3ab8b5 and 46512dc took out, adapted to today's files (the
 // original commits' files are checked by the opt-in history test below);
-// the other two are made up, since nothing has yet gone wrong that way. A
-// control whose patch no longer applies fails as setup, not as layout.
+// the others are made up, since nothing has yet gone wrong that way. A
+// control whose patch no longer applies fails as setup, not as layout. A
+// control with `about` names the controls the problem has to be found in, so
+// it fails if the check finds something else instead.
 function patched(file, replacements) {
   let source = fs.readFileSync(path.join(root, 'extension', file), 'utf8');
   for (const [pattern, replacement] of replacements) {
@@ -475,6 +478,8 @@ async function serveWith(files) {
   };
 }
 
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const stateNamed = (title) => {
   const state = STATES.find((candidate) => candidate.title === title);
   if (!state) throw new Error(`Control setup: no state "${title}"`);
@@ -489,7 +494,7 @@ async function problemsWith(browser, browserName, baseUrl, state, shows, testInf
     await showState(page, { ...state, shows: shows ?? state.shows });
     const { problems, size } = await layoutOf(page, state.controls, testInfo);
     testInfo.annotations.push({ type: 'layout', description: JSON.stringify({ size, problems }) });
-    return problems.map((problem) => problem.kind);
+    return problems;
   } finally {
     await context.close();
   }
@@ -589,6 +594,69 @@ const CONTROLS = [
     }),
     state: 'a long list of saved presets, scrolled to its end',
     finds: 'cut-off'
+  },
+  {
+    // Made up: My Presets hiding the effect controls it should keep below it.
+    title: 'the effect controls hidden under My Presets (made up)',
+    files: () => ({
+      'popup.css': patched('popup.css', [[
+        /\s*$/,
+        '\n\n.scroll-area:has(#panel-custom:not([hidden])) .controls { visibility: hidden; }\n'
+      ]])
+    }),
+    state: 'a long list of saved presets, scrolled to its end',
+    shows: async (page) => {
+      await expectPresetsList(page, 8);
+      await expect(page.locator('#speed-slider')).toBeHidden();
+    },
+    finds: 'hidden',
+    about: EFFECT_CONTROLS
+  },
+  {
+    // Made up: the same controls cut off by a box too short for them.
+    title: 'the effect controls cut off under My Presets (made up)',
+    files: () => ({
+      'popup.css': patched('popup.css', [[
+        /\s*$/,
+        '\n\n.scroll-area:has(#panel-custom:not([hidden])) .controls { max-height: 24px; overflow: hidden; }\n'
+      ]])
+    }),
+    state: 'editing a saved preset',
+    shows: async (page) => {
+      await expect(page.locator('.custom-preset-name-input')).toBeVisible();
+      await expect(page.locator('.controls')).toHaveCSS('max-height', '24px');
+    },
+    finds: 'cut-off',
+    about: EFFECT_CONTROLS.filter((selector) => !selector.startsWith('#effect-tab-'))
+  },
+  {
+    // Made up: a transparent panel. Every control's own opacity is still 1,
+    // so only the panel's opacity shows that nothing is drawn.
+    title: 'a transparent panel (made up)',
+    files: () => ({
+      'popup.css': patched('popup.css', [[/\s*$/, '\n\n.container { opacity: 0; }\n']])
+    }),
+    state: 'the effect on, Basic tab',
+    shows: async (page) => {
+      await expect(page.locator('#current-preset-label')).toHaveText('Current Preset: Slowed + Reverb');
+      await expect(page.locator('.container')).toHaveCSS('opacity', '0');
+    },
+    finds: 'hidden',
+    about: [...FRAME_CONTROLS, ...BASIC_CONTROLS]
+  },
+  {
+    // Made up: the same, for the whole page.
+    title: 'a transparent page (made up)',
+    files: () => ({
+      'popup.css': patched('popup.css', [[/\s*$/, '\n\n:root { opacity: 0.05; }\n']])
+    }),
+    state: 'a page it can’t reach',
+    shows: async (page) => {
+      await expect(page.locator('#reload-panel')).toBeVisible();
+      await expect(page.locator('html')).toHaveCSS('opacity', '0.05');
+    },
+    finds: 'hidden',
+    about: ['#reload-btn', '#theme-picker-btn']
   }
 ];
 
@@ -598,8 +666,12 @@ test.describe('popup layout controls', () => {
       const state = stateNamed(control.state);
       const controlServer = await serveWith(control.files());
       try {
-        const found = await problemsWith(browser, browserName, controlServer.baseUrl, state, control.shows, testInfo);
-        expect(found).toContain(control.finds);
+        const problems = await problemsWith(browser, browserName, controlServer.baseUrl, state, control.shows, testInfo);
+        expect(problems.map((problem) => problem.kind)).toContain(control.finds);
+        // `about`: the controls the problem has to be found in, each of them.
+        for (const selector of control.about ?? []) {
+          expect(problems, selector).toContainEqual({ kind: control.finds, detail: expect.stringMatching(new RegExp(`^${escapeRegExp(selector)} `)) });
+        }
       } finally {
         await controlServer.close();
       }
