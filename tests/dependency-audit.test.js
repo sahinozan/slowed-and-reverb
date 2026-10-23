@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { describe, test } = require('node:test');
-const { EXIT, summarize } = require('../scripts/dependency-audit');
+const { EXIT, STATUS_LINES, summarize } = require('../scripts/dependency-audit');
 
 const { root } = require('./helpers/load-script');
 
@@ -65,12 +65,29 @@ function entry(name, overrides = {}) {
   };
 }
 
-function report(vulnerabilities) {
+// A report as npm writes it, counting each entry under its severity; counts
+// replaces some of those numbers.
+function report(vulnerabilities, counts = {}) {
+  const counted = { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 };
+  for (const { severity } of Object.values(vulnerabilities)) {
+    counted[severity] += 1;
+    counted.total += 1;
+  }
   return JSON.stringify({
     auditReportVersion: 2,
     vulnerabilities,
-    metadata: { vulnerabilities: { total: Object.keys(vulnerabilities).length } }
+    metadata: {
+      vulnerabilities: { ...counted, ...counts },
+      dependencies: { prod: 1, dev: 10, optional: 0, peer: 0, peerOptional: 0, total: 10 }
+    }
   });
+}
+
+// A recorded report, changed by edit.
+function changed(name, edit) {
+  const parsed = JSON.parse(fixture(name));
+  edit(parsed);
+  return JSON.stringify(parsed);
 }
 
 function headings(markdown) {
@@ -185,7 +202,7 @@ describe('dependency audit summary', () => {
       a: entry('a', { isDirect: true, via: ['left-pad'] })
     });
     const broken = {
-      'a count that disagrees': (v) => JSON.stringify({ auditReportVersion: 2, vulnerabilities: v, metadata: { vulnerabilities: { total: 1 } } }),
+      'a count that disagrees': (v) => report(v, { total: 1 }),
       'no installed copies': (v) => report({ ...v, a: { ...v.a, nodes: [] } }),
       'a cause it does not list': (v) => report({ ...v, a: { ...v.a, via: ['right-pad'] } }),
       'an effect it does not list': (v) => report({ ...v, a: { ...v.a, effects: ['right-pad'] } }),
@@ -199,6 +216,62 @@ describe('dependency audit summary', () => {
       const result = summarize({ stdout: make(good()), exitCode: 1 });
       assert.equal(result.exitCode, EXIT.error, name);
     }
+  });
+
+  test('passes or fails on the report\'s counts only when they agree with its entries', () => {
+    const clean = {
+      'a severity the entries lack': changed('clean.json', (r) => { r.metadata.vulnerabilities.high = 3; }),
+      'counts that add up to the total but not the entries': changed('clean.json', (r) => {
+        Object.assign(r.metadata.vulnerabilities, { high: 3, total: 3 });
+      }),
+      'an error next to the report': changed('clean.json', (r) => {
+        r.error = { code: 'EAUDIT', summary: 'Audit endpoint failed' };
+      }),
+      'an empty error next to the report': changed('clean.json', (r) => { r.error = null; }),
+      'only a total': '{"auditReportVersion":2,"vulnerabilities":{},"metadata":{"vulnerabilities":{"total":0}}}',
+      'no severity counts': changed('clean.json', (r) => { delete r.metadata.vulnerabilities.low; }),
+      'a count as text': changed('clean.json', (r) => { r.metadata.vulnerabilities.info = '0'; }),
+      'a negative count': changed('clean.json', (r) => { Object.assign(r.metadata.vulnerabilities, { low: -1, info: 1 }); }),
+      'a severity npm doesn\'t have': changed('clean.json', (r) => { r.metadata.vulnerabilities.urgent = 1; }),
+      'a severity counted as nothing': changed('clean.json', (r) => { r.metadata.vulnerabilities.urgent = null; }),
+      'no count of dependencies': changed('clean.json', (r) => { delete r.metadata.dependencies; })
+    };
+    const advisories = {
+      'counts under the wrong severity': changed('web-ext-10.8.0.json', (r) => {
+        Object.assign(r.metadata.vulnerabilities, { high: 2, moderate: 1 });
+      }),
+      'an error next to the advisories': changed('web-ext-10.8.0.json', (r) => {
+        r.error = { code: 'EAUDIT', summary: 'Audit endpoint failed' };
+      })
+    };
+    for (const [name, stdout] of Object.entries({ ...clean, ...advisories })) {
+      for (const exitCode of [0, 1]) {
+        const result = summarize({ stdout, exitCode, lock: LOCK_10_8 });
+        assert.equal(result.status, 'error', `${name}, npm exited with ${exitCode}`);
+        assert.equal(result.exitCode, EXIT.error, name);
+        assert.match(result.markdown, /The audit didn't finish/, name);
+        assert.doesNotMatch(result.markdown, /No known advisories|known advisor(?:y|ies)\*\*/, name);
+      }
+    }
+    assert.match(summarize({ stdout: clean['an error next to the report'], exitCode: 0 }).markdown, /npm reported an error: EAUDIT: Audit endpoint failed/);
+    assert.match(summarize({ stdout: advisories['counts under the wrong severity'], exitCode: 1 }).markdown, /counts 1 moderate vulnerable packages but lists 0/);
+
+    // The reports npm really printed still pass or fail as before.
+    assert.equal(summarize({ stdout: fixture('clean.json'), exitCode: 0 }).status, 'clean');
+    assert.equal(summarize({ stdout: fixture('web-ext-10.8.0.json'), exitCode: 1, lock: LOCK_10_8 }).status, 'advisories');
+    assert.equal(summarize({ stdout: fixture('web-ext-10.7.0.json'), exitCode: 1, lock: LOCK_10_7 }).status, 'advisories');
+  });
+
+  test('says the report couldn\'t be read instead of crashing', () => {
+    const lock = {
+      get packages() {
+        throw new Error('::add-mask::GHSA-86w9-cpqp-85rv');
+      }
+    };
+    const result = summarize({ stdout: fixture('web-ext-10.8.0.json'), exitCode: 1, lock });
+    assert.equal(result.status, 'error');
+    assert.equal(result.exitCode, EXIT.error);
+    assert.match(result.markdown, /The report couldn't be summarized: ::add-mask::GHSA-86w9-cpqp-85rv/);
   });
 
   test('puts npm\'s text into Markdown without its markup', () => {
@@ -236,11 +309,11 @@ describe('dependency audit summary', () => {
 describe('dependency audit command', () => {
   // Runs the script the way npm runs a package script, with a stand-in for
   // npm that records its arguments and prints the given output.
-  function run(t, { stdout = '', stderr = '', status = 0, args = ['out'] } = {}) {
+  function run(t, { stdout = '', stderr = '', status = 0, args = ['out'], lock = LOCK_10_8 } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-audit-test-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
     fs.writeFileSync(path.join(dir, 'npm-output.json'), JSON.stringify({ stdout, stderr, status }));
-    fs.writeFileSync(path.join(dir, 'package-lock.json'), JSON.stringify(LOCK_10_8));
+    fs.writeFileSync(path.join(dir, 'package-lock.json'), JSON.stringify(lock));
     fs.writeFileSync(path.join(dir, 'step-summary.md'), 'Earlier step\n');
     const fakeNpm = path.join(dir, 'fake-npm.js');
     fs.writeFileSync(
@@ -265,7 +338,9 @@ describe('dependency audit command', () => {
     });
     const read = (name) => fs.readFileSync(path.join(dir, name), 'utf8');
     const exists = (name) => fs.existsSync(path.join(dir, name));
-    return { ...result, dir, read, exists };
+    // All the script prints for a run that ended this way.
+    const printed = (status) => `${STATUS_LINES[status]} The summary is in ${path.join(fs.realpathSync(dir), 'out', 'summary.md')}.\n`;
+    return { ...result, dir, read, exists, printed };
   }
 
   test('audits the lockfile with development tools included, and changes nothing', (t) => {
@@ -278,6 +353,8 @@ describe('dependency audit command', () => {
     assert.equal(result.read('out/npm-audit.json'), fixture('clean.json'));
     assert.equal(result.read('out/npm-audit-exit.txt'), 'npm exited with 0\n');
     assert.equal(result.read('step-summary.md'), `Earlier step\n${result.read('out/summary.md')}`);
+    assert.match(result.read('out/summary.md'), /No known advisories/);
+    assert.equal(result.stdout, result.printed('clean'));
   });
 
   test('keeps npm\'s output and fails when there are advisories', (t) => {
@@ -289,7 +366,8 @@ describe('dependency audit command', () => {
     assert.equal(result.read('out/npm-audit-exit.txt'), 'npm exited with 1\n');
     assert.match(result.read('out/summary.md'), /GHSA-86w9-cpqp-85rv/);
     assert.match(result.read('out/summary.md'), /web-ext 10\.8\.0 &gt; @devicefarmer\/adbkit 3\.3\.9 &gt; node-forge 1\.4\.0/);
-    assert.equal(result.stdout, result.read('out/summary.md'));
+    assert.equal(result.stdout, result.printed('advisories'));
+    assert.equal(result.stderr, '');
   });
 
   test('keeps the evidence and fails when npm returns no report', (t) => {
@@ -300,6 +378,62 @@ describe('dependency audit command', () => {
     assert.equal(result.read('out/npm-audit.json'), stdout);
     assert.equal(result.read('out/npm-audit.stderr.txt'), stderr);
     assert.match(result.read('out/summary.md'), /The audit didn't finish/);
+    assert.equal(result.stdout, result.printed('error'));
+  });
+
+  test('prints nothing from npm\'s output, which GitHub Actions could read as commands', (t) => {
+    // Lines a runner reads as commands, current and older forms.
+    const forged = [
+      '::add-mask::GHSA-86w9-cpqp-85rv',
+      '::error::Forged annotation',
+      '  ::warning title=x::Indented',
+      '::stop-commands::token',
+      '##[error]Older form',
+      '##[add-mask]GHSA-86w9-cpqp-85rv'
+    ].join('\n');
+    const npmStderr = `${forged}\n`;
+    const advisories = changed('web-ext-10.8.0.json', (r) => {
+      const forge = r.vulnerabilities['node-forge'];
+      forge.via[0].title = '::add-mask::GHSA-86w9-cpqp-85rv';
+      forge.via[0].range = forged;
+      forge.via.push({ ...forge.via[0], url: '::error::not a link', title: forged });
+      forge.nodes.push('::notice::node_modules/a/node_modules/node-forge');
+      forge.fixAvailable = { name: '::error::web-ext', version: '##[error]5.1.0', isSemVerMajor: true };
+    });
+    const lock = { packages: { ...LOCK_10_8.packages, 'node_modules/node-forge': { version: forged } } };
+    const name = '::add-mask::left-pad';
+    const runs = {
+      advisories: {
+        stdout: advisories,
+        status: 1,
+        lock,
+        kept: [/^::add-mask::GHSA-86w9-cpqp-85rv$/m, /::error::Forged annotation/, /Installed at ::notice::node_modules/, /::error::web-ext/]
+      },
+      clean: { stdout: changed('clean.json', (r) => { r.metadata.dependencies.note = forged; }), status: 0, kept: [/No known advisories/] },
+      error: {
+        stdout: report({ [name]: entry(name, { name: forged, via: [advisory({ title: forged })] }) }),
+        status: 1,
+        kept: [/entry for ::add-mask::left-pad isn't/]
+      },
+      'npm error': {
+        stdout: JSON.stringify({ error: { code: '::error::EAUDIT', summary: '::add-mask::GHSA-86w9-cpqp-85rv' } }),
+        status: 1,
+        kept: [/npm reported an error: ::error::EAUDIT: ::add-mask::GHSA-86w9-cpqp-85rv/]
+      }
+    };
+    for (const [outcome, { stdout, status, lock: runLock, kept }] of Object.entries(runs)) {
+      const ending = outcome === 'npm error' ? 'error' : outcome;
+      const result = run(t, { stdout, stderr: npmStderr, status, lock: runLock });
+      assert.equal(result.status, EXIT[ending], outcome);
+      assert.equal(result.stdout, result.printed(ending), outcome);
+      assert.equal(result.stderr, '', outcome);
+      // npm's output is kept byte for byte, and the summary keeps its words.
+      assert.equal(result.read('out/npm-audit.json'), stdout, outcome);
+      assert.equal(result.read('out/npm-audit.stderr.txt'), npmStderr, outcome);
+      const summary = result.read('out/summary.md');
+      for (const pattern of kept) assert.match(summary, pattern, outcome);
+      assert.equal(result.read('step-summary.md'), `Earlier step\n${summary}`, outcome);
+    }
   });
 
   test('runs nothing it finds in npm\'s output', (t) => {

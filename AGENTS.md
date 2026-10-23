@@ -42,9 +42,10 @@ covers the features and development commands in full.
   time, with no other browser tests. A new audible defect gets a control in
   `e2e/audio-capture/history.js`.
 - After changing dependencies, run `npm run audit:dependencies -- <folder>`
-  (`npm audit` on the lockfile, development tools included) and read its
-  summary. It fails for any advisory, including the node-forge one described
-  under "Development dependencies" in SECURITY.md. It isn't part of
+  (`npm audit` on the lockfile, development tools included) and read the
+  `summary.md` it writes there; it prints only how the audit ended. It fails
+  for any advisory, including the node-forge one described under
+  "Development dependencies" in SECURITY.md. It isn't part of
   `npm run check`, CI's required check or releases; the Dependency audit
   workflow runs it weekly and for dependency changes. Don't use
   `npm audit fix`, overrides or downgrades just to make it pass.
