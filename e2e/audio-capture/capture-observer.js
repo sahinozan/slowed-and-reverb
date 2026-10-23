@@ -69,7 +69,13 @@ function installAudioTrialObserver(options) {
       worklet: {},
       firstArrivalMs: null,
       lastArrivalMs: null,
-      maxArrivalGapMs: 0
+      maxArrivalGapMs: 0,
+      // Context frame minus recorder frame, from the latest batch. It stays
+      // the same from batch to batch while every render block reaches the
+      // recorder (each change is counted), and maps a context time (a mark)
+      // to the recorded frame played then.
+      frameOffset: null,
+      offsetChanges: 0
     };
     entry.bus = new GainNode(context, {
       channelCount: destination.channelCount,
@@ -127,6 +133,13 @@ function installAudioTrialObserver(options) {
       overflowEvents: message.overflowEvents,
       contextFrameGaps: message.contextFrameGaps,
       skippedContextFrames: message.skippedContextFrames,
+      gapLog: message.gapLog,
+      staleFrameLabels: message.staleFrameLabels,
+      staleRuns: message.staleRuns,
+      staleRunOpen: message.staleRunOpen,
+      staleLog: message.staleLog,
+      frameLabelFaults: message.frameLabelFaults,
+      faultLog: message.faultLog,
       emptyInputBlocks: message.emptyInputBlocks,
       nonStereoBlocks: message.nonStereoBlocks,
       blockSizes: message.blockSizes
@@ -144,6 +157,9 @@ function installAudioTrialObserver(options) {
     // A batch that starts after the frame the page expected means frames
     // were dropped in between (the worklet counts them as overflow).
     if (message.startFrame !== entry.nextFrame) entry.lostFrames += message.startFrame - entry.nextFrame;
+    const offset = message.contextFrame - message.startFrame;
+    if (entry.frameOffset !== null && offset !== entry.frameOffset) entry.offsetChanges++;
+    entry.frameOffset = offset;
     const samples = new Float32Array(message.buffer);
     const [left, right] = entry.ring;
     for (let i = 0; i < message.frames; i++) {
@@ -268,6 +284,8 @@ function installAudioTrialObserver(options) {
               lastBatch: entry.lastBatch,
               firstArrivalMs: entry.firstArrivalMs,
               maxArrivalGapMs: entry.maxArrivalGapMs,
+              frameOffset: entry.frameOffset,
+              offsetChanges: entry.offsetChanges,
               ...entry.worklet
             }
           : null,
@@ -285,6 +303,27 @@ function installAudioTrialObserver(options) {
             }
           : null,
         startClicks: window.startClicks ? window.startClicks.slice() : []
+      };
+    },
+    // Where context `id`'s clock is now, as the page reads it, labelled for
+    // the evidence: the context frame, and the recorded frame it maps to.
+    // Firefox's clock, as a page reads it, can run a little behind the sound
+    // being made, so a mark bounds an action rather than timing it exactly.
+    mark(id, label) {
+      const entry = contexts[id];
+      if (!entry) throw new Error(`no context ${id}`);
+      const contextFrame = Math.round(entry.context.currentTime * entry.sampleRate);
+      const player = document.querySelector(mediaSelector);
+      return {
+        label,
+        wallMs: performance.now(),
+        contextFrame,
+        recorderFrame: entry.frameOffset === null ? null : contextFrame - entry.frameOffset,
+        nextFrame: entry.nextFrame,
+        state: entry.context.state,
+        media: player
+          ? { clock: media.clock, playbackRate: player.playbackRate, paused: player.paused, src: player.currentSrc.split('/').pop() }
+          : null
       };
     },
     // The recorded samples from frame `from` up to `to`, if still retained.

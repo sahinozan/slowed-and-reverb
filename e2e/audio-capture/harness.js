@@ -21,6 +21,8 @@ const root = path.join(__dirname, '..', '..');
 const ARTIFACT_ROOT = path.join(root, 'test-results', 'audio-trial');
 const CHANNEL = 'SLOWED_REVERB_AUDIO_TRIAL';
 const ENGINE_FILES = ['youtube-main.js', 'spotify-main.js', 'content.js', 'spotify-bridge.js', 'background.js'];
+// The scripts that each say which version their code is.
+const VERSIONED_SCRIPTS = ['content.js', 'spotify-bridge.js', 'spotify-main.js', 'youtube-main.js'];
 
 // Kept small and bounded: a few one-second windows per capture.
 const WINDOWS = Math.min(10, Math.max(1, Number(process.env.AUDIO_TRIAL_WINDOWS) || 3));
@@ -122,8 +124,11 @@ function patchFile(dir, file, needle, replacement) {
 // message makes. This skips the popup's own page and permission prompts;
 // the background script, content scripts, registration and engines are the
 // build's own. `breakYouTube` cuts the effect's output from the destination,
-// as a deliberately broken engine for a control.
-function prepareTrialExtension(tempRoot, target, { breakYouTube = false } = {}) {
+// as a deliberately broken engine for a control. `mutations` ({ file,
+// find, replace, label }) change the copy further, for the regression
+// suite's historical controls, and `version` makes it an earlier version
+// (every script's VERSION and the manifest's), for its update checks.
+function prepareTrialExtension(tempRoot, target, { breakYouTube = false, mutations = [], version } = {}) {
   const extensionDir = prepareTestExtension(tempRoot, path.join(root, 'dist', target), target);
   const patches = ['extension-copy.js: 127.0.0.1 is a supported YouTube host'];
 
@@ -155,6 +160,9 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const api = typeof browser !== 'undefined' ? browser : chrome;
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.channel !== '${CHANNEL}' || event.data.type !== 'APPLY') return;
+    // A copy left in the page by a version that was turned off or updated
+    // can't reach the extension; the current copy answers.
+    if (!api.runtime?.id) return;
     const { id, enabled, settings } = event.data;
     api.runtime
       .sendMessage({ type: 'AUDIO_TRIAL_APPLY', enabled, settings })
@@ -170,9 +178,28 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     patchFile(extensionDir, 'youtube-main.js', '.connect(processed)\n        .connect(context.destination);', '.connect(processed);');
     patches.push("youtube-main.js: control, the effect's output is not connected");
   }
+  for (const { file, find, replace, label } of mutations) {
+    // Each mutation has to match exactly once, so it changes what it says.
+    const filePath = path.join(extensionDir, file);
+    const source = fs.readFileSync(filePath, 'utf8');
+    const matches = source.split(find).length - 1;
+    if (matches !== 1) throw new Error(`mutation "${label}" matches ${file} ${matches} times, not once`);
+    fs.writeFileSync(filePath, source.split(find).join(replace));
+    patches.push(`${file}: ${label}`);
+  }
+  if (version) {
+    for (const file of VERSIONED_SCRIPTS) {
+      const filePath = path.join(extensionDir, file);
+      const source = fs.readFileSync(filePath, 'utf8');
+      if (!/const VERSION = '[^']*';/.test(source)) throw new Error(`audio trial patch no longer matches ${file}`);
+      fs.writeFileSync(filePath, source.replace(/const VERSION = '[^']*';/, `const VERSION = '${version}';`));
+    }
+    patches.push(`${VERSIONED_SCRIPTS.join(', ')} and manifest.json: version ${version}`);
+  }
 
   const manifestPath = path.join(extensionDir, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  if (version) manifest.version = version;
   manifest.host_permissions = ['http://127.0.0.1/*', 'http://localhost/*'];
   manifest.content_scripts = [
     {
@@ -362,7 +389,21 @@ function assertWindowsFail(dir, name, windows, expect, codes, forbidden = []) {
 }
 
 // Problems that mean the clock or the recorder failed, not the signal.
-const RECORDER_PROBLEMS = ['not-running', 'clock-stalled', 'no-frames', 'frames-stalled', 'frames-lost', 'recorder-error', 'recorder-not-ready', 'context-gap', 'frame-mismatch'];
+const RECORDER_PROBLEMS = [
+  'not-running',
+  'clock-stalled',
+  'no-frames',
+  'frames-stalled',
+  'frames-lost',
+  'recorder-error',
+  'recorder-not-ready',
+  'context-gap',
+  'frame-mismatch',
+  'frame-label-fault',
+  'stale-label-unverified',
+  'stale-label-discontinuity',
+  'stale-label-repeat'
+];
 
 function observerScript(server, overrides = {}) {
   return { workletUrl: server.workletPath, ...overrides };
@@ -648,4 +689,25 @@ function defineTrial(browser, { full = true, compareWith } = {}) {
   return results;
 }
 
-module.exports = { ARTIFACT_ROOT, applyThroughExtension, defineTrial, installAudioTrialObserver, root };
+module.exports = {
+  ARTIFACT_ROOT,
+  CHANNEL,
+  ENGINE_FILES,
+  ENGINE_SETTINGS,
+  READY_TIMEOUT_MS,
+  RECORDER_PROBLEMS,
+  applyThroughExtension,
+  clickActivate,
+  clickStart,
+  defineTrial,
+  installAudioTrialObserver,
+  patchFile,
+  prepareTrialExtension,
+  provenance,
+  root,
+  sha256,
+  sleep,
+  snapshot,
+  soundServer,
+  waitFor
+};

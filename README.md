@@ -125,7 +125,9 @@ npm run test:watch        # rerun tests while developing
 npx playwright install --no-shell chromium # one-time local browser install
 npm run test:e2e          # real Chromium extension smoke test
 npm run test:firefox      # real Firefox tests: effects stop when the extension is turned off; Spotify speed resets cause no gaps; an update asks for a reload
-npm run test:audio-trial:chromium # experiment: record the engines' audio in Chromium (e2e/audio-capture/README.md)
+npm run test:audio:chromium   # record the engines' audio through past failures in Chromium (e2e/audio-capture/README.md)
+npm run test:audio:firefox    # the same in the installed Firefox
+npm run test:audio-trial:chromium # experiment the suite is built on: record the engines' audio in Chromium
 npm run test:audio-trial:firefox  # the same in the installed Firefox
 npm run build:chromium    # emit dist/chromium/
 npm run build:firefox     # emit dist/firefox/
@@ -173,7 +175,17 @@ through the unchanged path; it does the same again after turning the extension
 back on and removing it. It also updates an earlier version with a YouTube page
 open, and with a Spotify page open before turning the extension off and on, and
 checks that each old engine stays off until the page is reloaded. It can't hear
-the audio, so a final listen is still a manual check. Before its tests it prints
+the audio. The audio regression suite (`npm run test:audio:chromium` and
+`npm run test:audio:firefox`, needing a sound device) records it: the speed and
+pitch, clicks and gaps as settings change, Spotify's own speed changes, and the
+sound coming back unchanged when the effect or the extension is turned off,
+removed or updated, and it catches each audible defect fixed so far when that is
+put back. It doesn't replace listening after an engine change: in Firefox, its
+check of turning the effect on while a song plays fails on a click that hasn't
+been explained, and it hasn't run often enough to know how steady it is. It
+plays steady tones on a local page, so a listen on the real sites is still a
+manual check before a store release (`e2e/audio-capture/README.md`).
+Before its tests the Firefox test prints
 which Firefox it started, how long Firefox took to open its WebDriver BiDi port
 and what Firefox printed meanwhile; when Firefox doesn't start, it adds the
 browser's processes and how they ended.
