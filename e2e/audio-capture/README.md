@@ -670,7 +670,11 @@ It doesn't cover either:
   22 Firefox checks: the overlapping changes failed as `not-overlapping`,
   above, in
   [workflow run 39919586145](https://github.com/sahinozan/slowed-and-reverb/actions/runs/39919586145)).
-  The paced changes haven't run there yet.
+  At `39fdb16`, with the paced changes, every sweep in both browsers had
+  7 of 7 gaps within 20 to 45 ms. Firefox passed 22 of 22 and Chromium 15
+  of 17: turning the effect on while a song plays failed as a measurement
+  on both engines, because of the recorder's start (below), in
+  [workflow run 39925123684](https://github.com/sahinozan/slowed-and-reverb/actions/runs/39925123684).
 - Chromium sometimes gives the recorder a stale frame number around a
   change of connections at the destination (see "How it records"). The
   recorder takes such a block as the frame expected only in the pattern the
@@ -680,10 +684,26 @@ It doesn't cover either:
   stale pattern fails as a measurement, even if Chromium could produce it
   harmlessly. A repeated block in a sound that repeats every 128 frames
   fails the same way, since it can't be told apart.
-- Before a span, a recorder can already have skipped a block as it
-  started (one in each of the reproducer's runs). A span counts only what
+- When an AudioWorklet starts rendering in a Chromium context, Chromium
+  renders one block for it and then moves the context's frame number on by
+  256 frames on this Mac (512 on the hosted runner). A tone played through
+  the graph carries on across the jump with no sample missing, as if those
+  frames were never rendered. With no extension and no recorder, a worklet
+  added 400 ms into a running context did this in 4 of 4 tries. The
+  recorder, added as a context is created, did it in 7 of 8, and in each of
+  `chromium-stale-frame.js`'s runs. The engines use no worklet; the
+  recorder brings one. When the jump comes before the recorder's first
+  block, recording just begins later (`firstContextFrame`). When it comes
+  after, the recorder counts a skipped block. A span counts only what
   happens from its start, or from the recording's start for a span that
-  starts with it.
+  starts with it. So turning the effect on while a song plays, whose
+  context and recording start with the action, fails in Chromium as a
+  measurement when the jump comes after the first block. That happened on
+  YouTube in 1 of 2 whole-suite runs on this Mac with the paced changes,
+  and on both engines in the hosted run at `39fdb16`. The recording was
+  silent on both sides of the jump each time. The check doesn't assume the
+  frames it didn't see were silent too, so this stays a measurement failure
+  unless a way to tell them apart is reviewed.
 - Windows runners weren't tried.
 
 ## Recommendation
