@@ -1,0 +1,76 @@
+name: Dependency audit
+
+# Asks the npm registry for advisories against package-lock.json, development
+# tools included, through scripts/dependency-audit.js. Kept apart from the
+# required "Lint, test, and package" check: an advisory can be published
+# without any change here, and one with no fixed version yet (see
+# "Development dependencies" in SECURITY.md) keeps this failing. It fails for
+# any advisory and whenever npm gives no report to read, and keeps npm's own
+# output as an artifact. Nothing here is allowed to fail quietly.
+
+on:
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/dependency-audit.yml'
+      - '.npmrc'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/dependency-audit.js'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dependency-audit.yml'
+      - '.npmrc'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/dependency-audit.js'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Nothing is installed: npm audits the lockfile as it is.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.19.0
+
+      - name: Install the pinned npm version
+        run: npm install --global npm@11.19.0
+
+      - name: Verify tool versions
+        run: |
+          node --version
+          npm --version
+
+      # Exits with 1 for any advisory and 2 when there's no report; either
+      # fails the job. The summary goes to the job's page.
+      - name: Audit package-lock.json
+        run: npm run audit:dependencies -- "$RUNNER_TEMP/dependency-audit"
+
+      - name: Upload npm's output and the summary
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dependency-audit
+          path: ${{ runner.temp }}/dependency-audit/
+          if-no-files-found: error
+          retention-days: 30

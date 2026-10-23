@@ -41,6 +41,13 @@ covers the features and development commands in full.
   sound device (on Linux, a PulseAudio or PipeWire sink). Run them one at a
   time, with no other browser tests. A new audible defect gets a control in
   `e2e/audio-capture/history.js`.
+- After changing dependencies, run `npm run audit:dependencies -- <folder>`
+  (`npm audit` on the lockfile, development tools included) and read its
+  summary. It fails for any advisory, including the node-forge one described
+  under "Development dependencies" in SECURITY.md. It isn't part of
+  `npm run check`, CI's required check or releases; the Dependency audit
+  workflow runs it weekly and for dependency changes. Don't use
+  `npm audit fix`, overrides or downgrades just to make it pass.
 - After changing the popup, the website, `scripts/popup-preview.js` or
   `scripts/serve-site.js`, run `npm run test:ui`. It renders the popup page
   in Chromium and in the installed Firefox's engine, Gecko, in each state that
