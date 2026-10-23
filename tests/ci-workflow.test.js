@@ -149,6 +149,40 @@ describe('CI workflow structure', () => {
     assert.match(gate, /REPOSITORY_RESULT: \$\{\{ needs\.repository-checks\.result \}\}/);
   });
 
+  test('the browser job runs the extension, Firefox, popup layout and website tests', () => {
+    const job = jobText('browser-smoke');
+    for (const command of ['npm run test:e2e', 'npm run test:firefox', 'npm run test:ui']) {
+      assert.match(job, new RegExp(`^ {8}run: ${command}$`, 'm'), command);
+    }
+  });
+
+  // Firefox plays the website's demo only through a sound device: the Ubuntu
+  // job must start one before the website tests and run the playing tests in
+  // both engines; only Windows, which has none, may leave them out of Gecko.
+  test("the browser job plays the website's demo in Firefox on Ubuntu, through a null sink", () => {
+    const job = jobText('browser-smoke');
+    assert.match(job, / {8}include:\n {10}- os: ubuntu-latest\n {12}firefox-playback: run\n {10}- os: windows-latest\n {12}firefox-playback: omit\n/);
+    assert.equal(job.match(/firefox-playback: /g).length, 2);
+
+    const steps = job.split(/\n(?= {6}- name: )/);
+    const index = (pattern) => {
+      const found = steps.findIndex((step) => pattern.test(step));
+      assert.notEqual(found, -1, String(pattern));
+      return found;
+    };
+    const sink = steps[index(/- name: Start a PulseAudio null sink/)];
+    assert.match(sink, /^ {8}if: runner\.os == 'Linux'$/m);
+    assert.match(sink, /^ {8}timeout-minutes: \d+$/m);
+    assert.match(sink, /pactl load-module module-null-sink sink_name=site_demo/);
+    assert.match(sink, /pactl set-default-sink site_demo/);
+    const ui = steps[index(/run: npm run test:ui$/m)];
+    assert.match(ui, /^ {10}SLOWED_REVERB_UI_FIREFOX_PLAYBACK: \$\{\{ matrix\.firefox-playback \}\}$/m);
+    assert.doesNotMatch(ui, /^ {8}if:/m);
+    assert.ok(index(/run: npm run test:firefox$/m) < index(/Start a PulseAudio null sink/));
+    assert.ok(index(/Start a PulseAudio null sink/) < index(/run: npm run test:ui$/m));
+    assert.equal(workflow.match(/SLOWED_REVERB_UI_FIREFOX_PLAYBACK/g).length, 1);
+  });
+
   test('keeps read-only permissions and the scripts free of GitHub expressions', () => {
     assert.match(workflow, /^permissions:\n {2}contents: read\n\n/m);
     assert.doesNotMatch(workflow, /secrets\./);
@@ -196,9 +230,10 @@ describe('CI classification step', () => {
   test('mixed changes take the highest tier', (t) => {
     const repo = repository(t);
     repo.write('README.md', '# Readme\n\nUpdated.\n');
-    repo.write('site/index.html', '<p>New site</p>\n');
-    const docsAndSite = repo.commit('Docs and site');
-    assert.deepEqual(repo.pullRequest(repo.base, docsAndSite).outputs, { policy: 'base', browser: 'false' });
+    repo.write('store-assets/LISTING.md', '# Listing\n');
+    repo.write('tests/notes.test.js', '// A test.\n');
+    const docsAndTests = repo.commit('Docs and tests');
+    assert.deepEqual(repo.pullRequest(repo.base, docsAndTests).outputs, { policy: 'base', browser: 'false' });
 
     repo.write('extension/runtime.js', 'console.log("changed");\n');
     assert.deepEqual(repo.pullRequest(repo.base, repo.commit('Runtime')).outputs, { policy: 'base', browser: 'true' });
@@ -210,13 +245,20 @@ describe('CI classification step', () => {
     (t) => {
       const repo = repository(t);
       // Split at the newline, this would look like a change to extension/.
-      repo.write('site/odd name\nextension/b.js', 'site file\n');
+      repo.write('tests/odd name\nextension/b.js', 'test file\n');
       const result = repo.pullRequest(repo.base, repo.commit('Odd name'));
 
       assert.equal(result.status, 0, result.log);
       assert.deepEqual(result.outputs, { policy: 'base', browser: 'false' });
     }
   );
+
+  test('a website change runs the browser tests', (t) => {
+    const repo = repository(t);
+    repo.write('site/index.html', '<p>New site</p>\n');
+
+    assert.deepEqual(repo.pullRequest(repo.base, repo.commit('Site')).outputs, { policy: 'base', browser: 'true' });
+  });
 
   test('runs everything when the comparison is empty', (t) => {
     const repo = repository(t);

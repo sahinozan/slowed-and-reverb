@@ -15,17 +15,36 @@ describe('CI change classification', () => {
     }
   });
 
-  test('skips the browser tests for tests, tooling and the website', () => {
+  test('skips the browser tests for tests and tooling', () => {
     assert.deepEqual(
       classifyFiles([
         'tests/package.test.js',
         '.github/dependabot.yml',
         'scripts/render-store-assets.js',
         'scripts/release.js',
-        'site/index.html'
+        'site/README.md'
       ]),
       { browser: false }
     );
+  });
+
+  test('runs the browser tests for the website and what serves the popup and the site to them', () => {
+    for (const file of [
+      'site/index.html',
+      'site/changelog.html',
+      'site/styles.css',
+      'site/demo-audio.js',
+      'site/popup/popup.css',
+      'site/popup/popup-host.js',
+      'site/assets/audio/start-again-loop.mp3',
+      'scripts/popup-preview.js',
+      'scripts/serve-site.js',
+      'playwright.ui.config.js',
+      'e2e/popup-geometry.js',
+      'e2e/ui/site.spec.js'
+    ]) {
+      assert.deepEqual(classifyFiles([file]), { browser: true }, file);
+    }
   });
 
   test('runs the browser tests when what decides or enforces the checks changes', () => {

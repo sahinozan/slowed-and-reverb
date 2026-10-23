@@ -50,7 +50,7 @@ module.exports = [
     }
   },
   {
-    files: ['scripts/**/*.js', 'e2e/**/*.js', 'eslint.config.js', 'playwright.config.js'],
+    files: ['scripts/**/*.js', 'e2e/**/*.js', 'eslint.config.js', 'playwright.config.js', 'playwright.ui.config.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',

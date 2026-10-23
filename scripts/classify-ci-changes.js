@@ -2,6 +2,8 @@
 
 // Decides whether a change needs the browser smoke tests. CI always runs the
 // repository checks; this only says whether the browser tests may be skipped.
+// The browser tests cover the extension, the popup's layout and the website,
+// so the website and the scripts those tests serve them with count too.
 //
 // Reads the changed paths, NUL-separated, on standard input (git diff
 // --no-renames --name-only -z, so a rename lists the old path as well as the
@@ -24,17 +26,15 @@ const NON_BROWSER_PATHS = new Set([
   '.npmrc',
   '.nvmrc',
   'eslint.config.js',
-  'scripts/popup-preview.js',
   'scripts/release.js',
   'scripts/render-icons.js',
-  'scripts/serve-site.js',
   'scripts/stamp-site-assets.js',
   'scripts/sync-site-popup.js',
   'scripts/render-store-assets.js',
   'wrangler.jsonc'
 ]);
 
-const NON_BROWSER_DIRECTORIES = ['.github/', 'site/', 'store-assets/', 'tests/'];
+const NON_BROWSER_DIRECTORIES = ['.github/', 'store-assets/', 'tests/'];
 
 // What decides and enforces which checks run: the workflows (including
 // Dependabot's action updates) and this file. Changing them runs everything.

@@ -261,7 +261,9 @@ footer p + p { margin-top: 10px; }
 .top nav .source { font-size: inherit; }
 
 .page { padding: clamp(24px, 4vw, 56px) var(--gut) 96px; }
-.article { max-width: 40rem; }
+/* A word too long for the line, such as the support address on a phone, breaks
+   rather than widening the page. */
+.article { max-width: 40rem; overflow-wrap: break-word; }
 .article h1 {
   font-family: var(--display); font-weight: var(--display-weight);
   font-size: clamp(2.4rem, 5vw, 3.6rem); line-height: 1.02; letter-spacing: -0.01em; margin: 0 0 20px;

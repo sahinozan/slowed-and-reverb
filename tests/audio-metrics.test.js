@@ -324,7 +324,11 @@ describe('audio capture trial files', () => {
       assert.doesNotMatch(file, playwrightDefault, file);
       assert.doesNotMatch(file, nodeTestDefault, file);
     }
-    const config = fs.readFileSync(path.join(root, 'playwright.config.js'), 'utf8');
-    assert.doesNotMatch(config, /testMatch|audio-capture/);
+    // Each Playwright config names its own files (tests/e2e-config.test.js
+    // checks what they list), and neither reaches into the audio suites.
+    for (const file of ['playwright.config.js', 'playwright.ui.config.js']) {
+      const config = fs.readFileSync(path.join(root, file), 'utf8');
+      assert.doesNotMatch(config, /audio-capture/, file);
+    }
   });
 });

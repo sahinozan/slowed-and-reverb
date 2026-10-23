@@ -6,6 +6,7 @@ const path = require('path');
 
 const { prepareTestExtension } = require('./extension-copy');
 const { builtExtensionDir, expect, launchWithExtension, test } = require('./fixtures');
+const { BASIC_CONTROLS, FRAME_CONTROLS, measurePopup } = require('./popup-geometry');
 
 async function fixtureTab(serviceWorker, fixtureUrl) {
   return serviceWorker.evaluate(async (url) => {
@@ -43,14 +44,10 @@ test('loads the real popup page and applies audio settings to the active tab', a
   await expect(popup.locator('#reverb-slider')).toHaveValue('40');
   await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
 
-  const dimensions = await popup.evaluate(() => ({
-    documentWidth: document.documentElement.scrollWidth,
-    innerHeight: window.innerHeight,
-    innerWidth: window.innerWidth
-  }));
-  expect(dimensions.innerWidth).toBe(340);
-  expect(dimensions.documentWidth).toBe(340);
-  expect(dimensions.innerHeight).toBeLessThanOrEqual(600);
+  // The page's own size, not the window's, which the fixture fixes at 340 × 600:
+  // the installed popup fits without scrolling and shows every control.
+  const layout = await measurePopup(popup, [...FRAME_CONTROLS, ...BASIC_CONTROLS]);
+  expect(layout.problems, JSON.stringify(layout.size)).toEqual([]);
 
   await popup.getByRole('button', { name: 'Themes' }).click();
   await popup.getByRole('button', { name: 'Midnight' }).click();
@@ -287,6 +284,8 @@ for (const [update, rollback] of [
       await expect(popup.locator('#reload-btn')).toHaveText('Reload page');
       await expect(popup.getByLabel('Toggle audio effects')).toBeDisabled();
       await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 1);
+      const layout = await measurePopup(popup, [...FRAME_CONTROLS, ...BASIC_CONTROLS, '#reload-btn']);
+      expect(layout.problems, JSON.stringify(layout.size)).toEqual([]);
 
       // The reloaded page has this version's engine.
       await popup.locator('#reload-btn').click();

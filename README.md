@@ -125,6 +125,7 @@ npm run test:watch        # rerun tests while developing
 npx playwright install --no-shell chromium # one-time local browser install
 npm run test:e2e          # real Chromium extension smoke test
 npm run test:firefox      # real Firefox tests: effects stop when the extension is turned off; Spotify speed resets cause no gaps; an update asks for a reload
+npm run test:ui           # the popup's layout in every state and the website, in Chromium and the installed Firefox
 npm run test:audio:chromium   # record the engines' audio through past failures in Chromium (e2e/audio-capture/README.md)
 npm run test:audio:firefox    # the same in the installed Firefox
 npm run test:audio-trial:chromium # experiment the suite is built on: record the engines' audio in Chromium
@@ -164,8 +165,8 @@ DOM, and Web Audio mocks. It covers tab state and shortcuts, audio graph values,
 blocked and live-media behavior, popup controls and presets, manifest contracts,
 and the Firefox build. The Playwright smoke test loads the built Chromium extension
 into a real browser, renders its popup at production size, applies settings to a
-local audio fixture, checks popup dimensions, and saves a screenshot in the test
-report. It also updates an earlier version with a YouTube page open and checks
+local audio fixture, checks that the popup's content fits without scrolling with
+every control on screen, and saves a screenshot in the test report. It also updates an earlier version with a YouTube page open and checks
 that the popup asks for a reload and the effect starts after it. The Firefox test
 runs the Firefox build in the installed Firefox through puppeteer-core (set
 `FIREFOX_BIN` for a Firefox somewhere else), turns the effects on for the same
@@ -185,6 +186,43 @@ check of turning the effect on while a song plays fails on a click that hasn't
 been explained, and it hasn't run often enough to know how steady it is. It
 plays steady tones on a local page, so a listen on the real sites is still a
 manual check before a store release (`e2e/audio-capture/README.md`).
+`npm run test:ui` renders the popup page from `extension/` with a stub
+extension API in Playwright's Chromium and in the installed Firefox (Gecko,
+through WebDriver BiDi; `FIREFOX_BIN` chooses another), in each state that
+changes its layout: the built-in and saved presets with long names, the
+Advanced tab, themes, the effect on and off, notices for loading, live and
+blocked pages, and the reload and permission panels, including after a failed
+attempt. For each it checks that the popup shows that state, then that it is
+340px wide, needs no scrolling, and shows every control it should, uncovered
+and not made transparent by anything around it; the effect controls stay
+checked under My Presets, and the saved presets list scrolls on its own and
+its last preset is still usable. It fails on the layout defects fixed in
+`c3ab8b5` and `46512dc` when they are put back, and on made-up ones: a popup
+too wide, a clipped presets list, effect controls hidden or cut off under My
+Presets, and a transparent panel or page (`SLOWED_REVERB_POPUP_HISTORY=1 npm run test:ui -- --grep history`
+checks those commits' own files). It is the popup's page, not the browser's
+popup window: Firefox's rounded panel corners and the browsers' permission
+dialogs aren't drawn, so a change to the popup's frame in CSS still needs a
+look in Firefox. It also serves `site/` as Cloudflare does and checks, on a
+desktop and two phone widths, that the demo plays and pauses, that the popup
+and the page's speed fader drive it both ways, that the popup's theme colors
+the page and the next one, that the embedded popup is sized to fit and keeps
+the room the page reserved for it, that no page is wider than the window, and
+that no page requests anything from another site, WebSockets included, or
+reports an error. The browsers are muted, so this checks that the song's clock
+moves, not how it sounds. Firefox's audio clock starts only with a sound
+device, so on Linux the demo needs a PulseAudio or PipeWire sink; CI's Ubuntu
+job starts a null sink. GitHub's Windows runners have no sound device, so CI's
+Windows job sets `SLOWED_REVERB_UI_FIREFOX_PLAYBACK=omit` and the two tests
+tagged `@playback` (the demo playing, and its control for the popup's choices
+not reaching the demo) run there in Chromium only; every other test runs in
+both engines on both systems. Each playing test attaches
+`demo-playback.json`: each step the demo took to play (fetching and decoding
+the song, resuming the audio context, starting the `<audio>` element), which
+ones are still waiting, and the audio context's and element's state and
+clocks. Playwright drives the installed Firefox through its experimental
+WebDriver BiDi support (the `moz-firefox` channel, with a new profile for each
+run), which a future Firefox or Playwright may change.
 Before its tests the Firefox test prints
 which Firefox it started, how long Firefox took to open its WebDriver BiDi port
 and what Firefox printed meanwhile; when Firefox doesn't start, it adds the

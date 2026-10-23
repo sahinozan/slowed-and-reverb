@@ -53,6 +53,15 @@ npm run site:popup
 every local link and anchor exists, that no page loads anything from another
 website, and that the demo song is credited.
 
+`npm run test:ui` opens the pages in Chromium and Firefox, served the same
+way: it plays the demo, drives it from the popup and the speed slider, checks
+that the theme carries from page to page, that the popup's frame fits on a
+desktop and a phone and that no page is wider than a 320px phone, and fails on
+any request to another website or any error in the page. It runs in CI for
+every change to `site/`. Firefox plays the demo only with a sound device, so
+on CI's Windows runners, which have none, the demo's playing is checked in
+Chromium only (see the main README).
+
 ## Demo audio
 
 `assets/audio/start-again-loop.mp3` is 24 seconds of "Start Again" by Alex

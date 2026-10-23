@@ -135,11 +135,23 @@ jobs:
     needs: classify
     if: needs.classify.outputs.browser == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # Installing the sound server for the website's demo has taken up to 13
+    # minutes in the audio workflow; its step stops after 15.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # Firefox plays the website's demo only through a sound device. The
+        # Ubuntu job starts a PulseAudio null sink for it; GitHub's Windows
+        # runners have no device, and adding one takes a third-party driver,
+        # so there the tests tagged @playback run in Chromium alone
+        # (playwright.ui.config.js).
+        include:
+          - os: ubuntu-latest
+            firefox-playback: run
+          - os: windows-latest
+            firefox-playback: omit
 
     steps:
       - name: Check out repository
@@ -190,6 +202,40 @@ jobs:
       # Uses the Firefox already installed on GitHub's runners.
       - name: Run the Firefox turn-off test
         run: npm run test:firefox
+
+      # A virtual output device for the website's demo, as in the audio
+      # workflow; started only now, so the tests above run as before.
+      - name: Start a PulseAudio null sink
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends pulseaudio pulseaudio-utils
+          pulseaudio --version
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=site_demo sink_properties=device.description=Site_demo
+          pactl set-default-sink site_demo
+          pactl info
+          pactl list short sinks
+
+      # The popup in each state that changes its layout, and the website with
+      # its demo, as pages in Playwright's Chromium and the same installed
+      # Firefox.
+      - name: Run the popup layout and website tests
+        env:
+          SLOWED_REVERB_UI_FIREFOX_PLAYBACK: ${{ matrix.firefox-playback }}
+        run: npm run test:ui
+
+      - name: Show and stop the sound server
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          pactl info || true
+          pactl list short sinks || true
+          pactl list short sink-inputs || true
+          pulseaudio --kill || true
 
       - name: Upload Playwright report and screenshots
         if: ${{ !cancelled() }}
