@@ -49,7 +49,9 @@ covers the features and development commands in full.
   control on screen. It also checks the website from `site/`: the demo plays,
   pauses and follows the popup, the theme carries over, the embedded popup is
   sized right on a desktop and a phone, and no page requests anything from
-  another site. A new popup state that changes the layout gets an entry in
+  another site. Playing the demo in Firefox needs a sound device (on Linux, a
+  PulseAudio or PipeWire sink); CI's Windows runners have none, so there the
+  tests tagged `@playback` run in Chromium only. A new popup state that changes the layout gets an entry in
   `STATES` in `e2e/ui/popup-layout.spec.js`; a layout defect fixed gets a
   control there. In Chromium, `npm run test:e2e` also checks the installed
   extension's popup this way and saves a screenshot.

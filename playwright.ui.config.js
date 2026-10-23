@@ -17,6 +17,24 @@ function firefoxPath() {
   return '/usr/bin/firefox';
 }
 
+// The website's demo plays only through a sound device, and in Firefox its
+// audio clock doesn't start without one. GitHub's Windows runners have none,
+// so CI's Windows job sets SLOWED_REVERB_UI_FIREFOX_PLAYBACK=omit and the
+// tests tagged @playback run there in Chromium alone; everywhere else,
+// including CI's Ubuntu job (which starts a PulseAudio null sink), they run
+// in both engines. Any other value is a mistake, so it stops the run.
+function firefoxPlayback() {
+  const value = process.env.SLOWED_REVERB_UI_FIREFOX_PLAYBACK;
+  if (value === undefined || value === 'run') return 'run';
+  if (value === 'omit') return 'omit';
+  throw new Error(`SLOWED_REVERB_UI_FIREFOX_PLAYBACK must be "run" or "omit", not "${value}"`);
+}
+
+const omitFirefoxPlayback = firefoxPlayback() === 'omit';
+if (omitFirefoxPlayback && process.env.TEST_WORKER_INDEX === undefined) {
+  console.warn('SLOWED_REVERB_UI_FIREFOX_PLAYBACK=omit: the tests tagged @playback run in Chromium only.');
+}
+
 module.exports = defineConfig({
   testDir: './e2e/ui',
   testMatch: '*.spec.js',
@@ -51,6 +69,7 @@ module.exports = defineConfig({
     },
     {
       name: 'firefox',
+      ...(omitFirefoxPlayback ? { grepInvert: /@playback/ } : {}),
       use: {
         ...devices['Desktop Firefox'],
         channel: 'moz-firefox',

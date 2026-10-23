@@ -16,13 +16,22 @@ const { root } = require('./helpers/load-script');
 
 const cli = require.resolve('@playwright/test/cli');
 
-// Each listed test as "project › file › title".
-function listed(config) {
-  const result = spawnSync(process.execPath, [cli, 'test', '--list', '--reporter=json', `--config=${config}`], {
+// Runs playwright test --list, with SLOWED_REVERB_UI_FIREFOX_PLAYBACK set to
+// `playback` or, when that's undefined, unset.
+function list(config, playback) {
+  const env = { ...process.env, CI: '', SLOWED_REVERB_POPUP_HISTORY: '' };
+  delete env.SLOWED_REVERB_UI_FIREFOX_PLAYBACK;
+  if (playback !== undefined) env.SLOWED_REVERB_UI_FIREFOX_PLAYBACK = playback;
+  return spawnSync(process.execPath, [cli, 'test', '--list', '--reporter=json', `--config=${config}`], {
     cwd: root,
     encoding: 'utf8',
-    env: { ...process.env, CI: '', SLOWED_REVERB_POPUP_HISTORY: '' }
+    env
   });
+}
+
+// Each listed test as "project › file › title".
+function listed(config, playback) {
+  const result = list(config, playback);
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.deepEqual(report.errors, []);
@@ -73,5 +82,45 @@ describe('Playwright configurations', () => {
       .map(({ file, title }) => `${file} › ${title}`)
       .sort();
     assert.deepEqual(shared('chromium'), shared('firefox'));
+  });
+
+  // The website tests that need Firefox to play sound. They run in both
+  // engines unless CI's Windows job leaves them out of Gecko, and then only
+  // they are left out, by name.
+  const PLAYBACK_TESTS = [
+    "site.spec.js › notices when the popup's choices stop reaching the demo @playback",
+    'site.spec.js › the demo plays and pauses, and follows the popup both ways @playback'
+  ];
+  const named = (tests, project) => tests
+    .filter((run) => run.project === project)
+    .map(({ file, title }) => `${path.basename(file)} › ${title}`);
+  const playbackTests = (tests, project) => named(tests, project).filter((title) => title.includes('@playback')).sort();
+
+  test('npm run test:ui plays the demo in both engines unless told to leave Firefox out', () => {
+    for (const playback of [undefined, 'run']) {
+      const { tests } = listed('playwright.ui.config.js', playback);
+      for (const project of ['chromium', 'firefox']) {
+        assert.deepEqual(playbackTests(tests, project), PLAYBACK_TESTS, `${project}, SLOWED_REVERB_UI_FIREFOX_PLAYBACK=${playback}`);
+      }
+    }
+  });
+
+  test('SLOWED_REVERB_UI_FIREFOX_PLAYBACK=omit leaves out only the playing tests, only in Gecko', () => {
+    const all = listed('playwright.ui.config.js').tests;
+    const omitted = listed('playwright.ui.config.js', 'omit').tests;
+    assert.deepEqual(named(omitted, 'chromium').sort(), named(all, 'chromium').sort());
+    const left = new Set(named(omitted, 'firefox'));
+    const missing = named(all, 'firefox').filter((title) => !left.has(title));
+    assert.equal(missing.length, PLAYBACK_TESTS.length, missing.join('\n'));
+    assert.deepEqual(playbackTests(omitted, 'firefox'), []);
+    assert.equal(left.size, named(all, 'firefox').length - PLAYBACK_TESTS.length);
+  });
+
+  test('SLOWED_REVERB_UI_FIREFOX_PLAYBACK takes only "run" or "omit"', () => {
+    for (const value of ['', 'skip', 'OMIT']) {
+      const result = list('playwright.ui.config.js', value);
+      assert.notEqual(result.status, 0, `"${value}" was accepted`);
+      assert.match(result.stdout + result.stderr, /SLOWED_REVERB_UI_FIREFOX_PLAYBACK must be "run" or "omit"/);
+    }
   });
 });
