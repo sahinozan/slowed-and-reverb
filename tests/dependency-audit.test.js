@@ -202,19 +202,23 @@ describe('dependency audit summary', () => {
   });
 
   test('puts npm\'s text into Markdown without its markup', () => {
-    const hostile = 'x <img src=x onerror=alert(1)> [click](https://example.com) `code` *bold*\n### Not a heading\u2028## Nor this';
+    const hostile = 'x <img src=x onerror=alert(1)> <SCRIPT>alert(2)</SCRIPT> <ImG SrC=x OnErRoR=alert(3)> [click](https://example.com) `code` *bold*\n### Not a heading\u2028## Nor this';
+    const lower = 'node_modules/left-pad</li><script>';
+    const upper = 'node_modules/b/node_modules/left-pad</LI><SCRIPT>';
     const stdout = report({
       'left-pad': entry('left-pad', {
         via: [
           advisory({ title: hostile, range: '<1 [x](https://example.com)' }),
           advisory({ url: 'javascript:alert(1)', title: 'Not a GitHub advisory' })
         ],
-        nodes: ['node_modules/left-pad</li><script>']
+        nodes: [lower, upper]
       })
     });
-    const result = summarize({ stdout, exitCode: 1, lock: { packages: { 'node_modules/left-pad</li><script>': { version: '<b>1</b>' } } } });
+    const lock = { packages: { [lower]: { version: '<b>1</b>' }, [upper]: { version: '<B>2</B>' } } };
+    const result = summarize({ stdout, exitCode: 1, lock });
     assert.equal(result.exitCode, EXIT.advisories);
-    assert.doesNotMatch(result.markdown, /<img|<script|<\/li>|<b>/);
+    // The summary's own text has no angle brackets, so any here are npm's.
+    assert.doesNotMatch(result.markdown, /[<>]/);
     assert.doesNotMatch(result.markdown, /(?<!\\)\]\((?:https:\/\/example\.com|javascript:)/);
     assert.doesNotMatch(result.markdown, /(?<!\\)`code/);
     assert.deepEqual(headings(result.markdown), [
@@ -222,7 +226,10 @@ describe('dependency audit summary', () => {
       '### [GHSA-2222-3333-4444](https://github.com/advisories/GHSA-2222-3333-4444) (low)',
       '### javascript:alert(1) (low)'
     ]);
-    assert.match(result.markdown, /x &lt;img src=x onerror=alert\(1\)&gt; \\\[click\\\]\(https:\/\/example\.com\) \\`code\\` \\\*bold\\\* ### Not a heading ## Nor this/);
+    assert.match(result.markdown, /x &lt;img src=x onerror=alert\(1\)&gt; &lt;SCRIPT&gt;alert\(2\)&lt;\/SCRIPT&gt; &lt;ImG SrC=x OnErRoR=alert\(3\)&gt; \\\[click\\\]\(https:\/\/example\.com\) \\`code\\` \\\*bold\\\* ### Not a heading ## Nor this/);
+    assert.match(result.markdown, /- left-pad &lt;b&gt;1&lt;\/b&gt;, &lt;B&gt;2&lt;\/B&gt;, affected: &lt;1 \\\[x\\\]\(https:\/\/example\.com\)\./);
+    assert.match(result.markdown, /Installed at node_modules\/left-pad&lt;\/li&gt;&lt;script&gt;\n/);
+    assert.match(result.markdown, /Installed at node_modules\/b\/node_modules\/left-pad&lt;\/LI&gt;&lt;SCRIPT&gt;\n/);
   });
 });
 
@@ -342,12 +349,27 @@ describe('dependency audit workflow', () => {
     return found;
   }
 
+  // The files listed under an event's paths:, as written.
+  function paths(trigger) {
+    const lines = workflow.split('\n');
+    const start = lines.indexOf(`  ${trigger}:`);
+    assert.notEqual(start, -1, trigger);
+    const found = [];
+    let listing = false;
+    for (const line of lines.slice(start + 1)) {
+      if (!line.startsWith('    ')) break;
+      if (line === '    paths:') listing = true;
+      else if (listing && line.startsWith("      - '") && line.endsWith("'")) found.push(line.slice(9, -1));
+      else listing = false;
+    }
+    return found;
+  }
+
   test('runs the audit weekly, by hand and for dependency changes, with read-only access', () => {
     assert.match(workflow, /^ {2}schedule:\n {4}- cron: '[^']+'$/m);
     assert.match(workflow, /^ {2}workflow_dispatch:$/m);
-    for (const file of ['package.json', 'package-lock.json', '.npmrc', 'scripts/dependency-audit.js']) {
-      assert.match(workflow, new RegExp(`^ {6}- '${file.replace(/\./g, '\\.')}'$`, 'm'), file);
-    }
+    const files = ['.github/workflows/dependency-audit.yml', '.npmrc', 'package.json', 'package-lock.json', 'scripts/dependency-audit.js'];
+    for (const trigger of ['pull_request', 'push']) assert.deepEqual(paths(trigger), files, trigger);
     assert.match(workflow, /^permissions:\n {2}contents: read\n\n/m);
     assert.doesNotMatch(workflow, /: write\b/);
     assert.match(workflow, /persist-credentials: false/);
