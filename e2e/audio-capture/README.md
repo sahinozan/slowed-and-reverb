@@ -646,7 +646,12 @@ It doesn't cover either:
   (`pageSweep` in `actions.js`), each only once the one before has reached
   the engine and timed from that arrival, so a Node side, page or
   background script that runs late delays the changes after it instead of
-  sending them together. Until `5cdc0a7`, Node sent them on a fixed
+  sending them together. A page's timer can go off up to about a
+  millisecond early by `performance.now()` (Chromium sent up to 0.7 ms and
+  Firefox 1 ms early on this Mac, and Node up to 1.2 ms on a hosted
+  runner), so the page checks the time again after each timer and waits
+  out the rest, and stops sending if 5 timers in a row go off early.
+  Until `5cdc0a7`, Node sent them on a fixed
   timetable, and a late Node side sent the overdue ones in a burst: in the
   hosted Firefox run of
   [workflow run 39919586145](https://github.com/sahinozan/slowed-and-reverb/actions/runs/39919586145)

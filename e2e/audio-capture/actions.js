@@ -118,6 +118,13 @@ const SWEEP_RECEIPT_MS = 1_000;
 // driver's replies, and returns when each request was sent, reached the
 // engine and was answered, and the answers. It removes its listener and
 // timers either way.
+//
+// A page's timer can go off up to about a millisecond before its time by
+// performance.now(): timers count whole milliseconds (in Chromium and in
+// Node, which runs this in the unit tests), and Firefox's performance.now()
+// does too. So after each timer it checks the time again and waits out
+// what's left, at least a millisecond at a time. If the time still hasn't
+// come after 5 timers, it sends no more.
 function pageSweep({ channel, engineChannels, requests, stepMs, receiptMs, replyMs }) {
   const timers = new Set();
   const sent = [];
@@ -163,6 +170,16 @@ function pageSweep({ channel, engineChannels, requests, stepMs, receiptMs, reply
     }
   }
   const lowerMedian = (values) => [...values].sort((a, b) => a - b)[Math.floor((values.length - 1) / 2)];
+  // True once performance.now() has reached `atMs`, false if 5 timers in a
+  // row went off before it.
+  const until = async (atMs) => {
+    for (let tries = 0; tries < 5; tries++) {
+      const left = atMs - performance.now();
+      if (left <= 0) return true;
+      await timer(tries === 0 ? left : Math.max(1, Math.ceil(left))).promise;
+    }
+    return performance.now() >= atMs;
+  };
 
   window.addEventListener('message', listener);
   return (async () => {
@@ -171,8 +188,10 @@ function pageSweep({ channel, engineChannels, requests, stepMs, receiptMs, reply
       const before = sent[index - 1];
       if (before) {
         const usual = lowerMedian(sent.map((request) => request.receiptMs - request.sentMs));
-        const pause = before.receiptMs + Math.max(0, stepMs - usual) - performance.now();
-        if (pause > 0) await timer(pause).promise;
+        if (!(await until(before.receiptMs + Math.max(0, stepMs - usual)))) {
+          stopped = `the page's timers went off early 5 times in a row before request ${index + 1} of ${requests.length}, so no more were sent`;
+          break;
+        }
       }
       const request = { id: `${index}-${Math.random().toString(36).slice(2)}`, settings, enabled };
       const reached = new Promise((resolve) => {
