@@ -7,6 +7,8 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 
+const { requestPathname } = require('../../scripts/request-target');
+
 // A stereo WAV with a different tone in each channel, so the recording can
 // tell the channels apart. Each tone fits a whole number of cycles in the
 // file, so the file loops without a jump.
@@ -158,7 +160,9 @@ async function startTrialServer() {
   ]);
 
   const server = http.createServer((request, response) => {
-    const route = routes.get(new URL(request.url, 'http://127.0.0.1').pathname);
+    const pathname = requestPathname(request, response, 'http://127.0.0.1');
+    if (pathname === null) return;
+    const route = routes.get(pathname);
     if (!route) {
       response.writeHead(404).end();
       return;

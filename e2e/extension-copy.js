@@ -7,6 +7,8 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 
+const { requestPathname } = require('../scripts/request-target');
+
 function createToneWav() {
   const sampleRate = 8_000;
   const seconds = 1;
@@ -51,7 +53,9 @@ function fixtureHtml() {
 async function startFixtureServer() {
   const html = fixtureHtml();
   const server = http.createServer((request, response) => {
-    if (new URL(request.url, 'http://127.0.0.1').pathname !== '/') {
+    const pathname = requestPathname(request, response, 'http://127.0.0.1');
+    if (pathname === null) return;
+    if (pathname !== '/') {
       response.writeHead(404).end();
       return;
     }

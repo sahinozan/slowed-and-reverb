@@ -14,6 +14,8 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 
+const { requestPathname } = require('./request-target');
+
 const TYPES = Object.freeze({
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png',
@@ -51,7 +53,8 @@ function send(response, status, file) {
 }
 
 function handle(request, response) {
-  const { pathname } = new URL(request.url, 'http://localhost');
+  const pathname = requestPathname(request, response, 'http://localhost');
+  if (pathname === null) return;
   if (pathname.endsWith('.html')) {
     const clean = pathname.replace(/(index)?\.html$/, '');
     response.writeHead(307, { location: clean || '/' });

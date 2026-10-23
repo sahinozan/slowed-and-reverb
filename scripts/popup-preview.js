@@ -12,6 +12,8 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 
+const { requestPathname } = require('./request-target');
+
 const root = path.join(__dirname, '..');
 const extensionDir = path.join(root, 'extension');
 
@@ -42,7 +44,8 @@ function startServer(extraRoutes = new Map()) {
   ]);
 
   const server = http.createServer((request, response) => {
-    const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+    const pathname = requestPathname(request, response, 'http://127.0.0.1');
+    if (pathname === null) return;
     const file = routes.get(pathname);
     if (!file || !fs.existsSync(file)) {
       response.writeHead(404).end();
