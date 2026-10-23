@@ -308,13 +308,15 @@ describe('dependency audit summary', () => {
 
 describe('dependency audit command', () => {
   // Runs the script the way npm runs a package script, with a stand-in for
-  // npm that records its arguments and prints the given output.
-  function run(t, { stdout = '', stderr = '', status = 0, args = ['out'], lock = LOCK_10_8 } = {}) {
+  // npm that records its arguments and prints the given output. setup gets
+  // the folder it runs in before it starts.
+  function run(t, { stdout = '', stderr = '', status = 0, args = ['out'], lock = LOCK_10_8, setup } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-audit-test-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
     fs.writeFileSync(path.join(dir, 'npm-output.json'), JSON.stringify({ stdout, stderr, status }));
     fs.writeFileSync(path.join(dir, 'package-lock.json'), JSON.stringify(lock));
     fs.writeFileSync(path.join(dir, 'step-summary.md'), 'Earlier step\n');
+    setup?.(dir);
     const fakeNpm = path.join(dir, 'fake-npm.js');
     fs.writeFileSync(
       fakeNpm,
@@ -442,6 +444,52 @@ describe('dependency audit command', () => {
     const result = run(t, { stdout, status: 1 });
     assert.equal(result.status, EXIT.advisories);
     assert.equal(result.exists('ran-a-command'), false);
+  });
+
+  test('fails as unfinished, keeping what it wrote, when it can\'t write its output', (t) => {
+    const stdout = fixture('clean.json');
+    const stderr = 'npm warn something\n';
+    const raw = { 'npm-audit.json': stdout, 'npm-audit.stderr.txt': stderr, 'npm-audit-exit.txt': 'npm exited with 0\n' };
+    // Where a file or folder is in the way, what the script then says it
+    // couldn't do, and whether it had already run npm and written npm's
+    // output and summary.md.
+    const cases = {
+      'the folder is a file': { block: 'out', file: true, says: (out) => `create ${out}`, ran: false },
+      'npm-audit.json is a folder': { block: 'out/npm-audit.json', says: (out) => `write ${path.join(out, 'npm-audit.json')}` },
+      'summary.md is a folder': { block: 'out/summary.md', says: (out) => `write ${path.join(out, 'summary.md')}`, output: true },
+      'the job summary is a folder': {
+        block: 'step-summary.md',
+        says: (out, dir) => `add to ${path.join(dir, 'step-summary.md')}`,
+        output: true,
+        summary: true
+      }
+    };
+    for (const [name, { block, file = false, says, ran = true, output = false, summary = false }] of Object.entries(cases)) {
+      const result = run(t, {
+        stdout,
+        stderr,
+        setup: (dir) => {
+          fs.rmSync(path.join(dir, block), { force: true });
+          if (file) fs.writeFileSync(path.join(dir, block), 'in the way\n');
+          else fs.mkdirSync(path.join(dir, block), { recursive: true });
+        }
+      });
+      const out = path.join(fs.realpathSync(result.dir), 'out');
+      assert.equal(result.status, EXIT.error, name);
+      assert.equal(result.stdout, '', name);
+      // One fixed line naming the step and the error's code, nothing else.
+      const code = / \(E[A-Z]+\),/;
+      assert.match(result.stderr, code, name);
+      assert.equal(
+        result.stderr.replace(code, ','),
+        `Dependency audit: couldn't ${says(out, result.dir)}, so this says nothing about advisories.\n`,
+        name
+      );
+      assert.equal(result.exists('npm-args.json'), ran, name);
+      if (output) for (const [kept, content] of Object.entries(raw)) assert.equal(result.read(`out/${kept}`), content, name);
+      if (summary) assert.match(result.read('out/summary.md'), /No known advisories/, name);
+      if (block !== 'step-summary.md') assert.equal(result.read('step-summary.md'), 'Earlier step\n', name);
+    }
   });
 
   test('takes exactly one folder and needs npm to run it', (t) => {

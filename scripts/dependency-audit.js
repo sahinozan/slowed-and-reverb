@@ -16,7 +16,9 @@
 // It exits with 0 only when npm returned a report with no advisories, 1 when
 // the report lists any (whatever their severity, and whether or not a fix
 // exists), and 2 when there is no report to trust: npm failed, couldn't reach
-// the registry, was stopped, or printed something this doesn't recognize.
+// the registry, was stopped, or printed something this doesn't recognize, or
+// the folder, its files or the job summary couldn't be written. Files written
+// before such a failure are left in place.
 // Nothing in npm's output is run; it is only parsed and escaped into Markdown.
 // None of it is printed either: GitHub Actions reads lines like ::add-mask::
 // in a step's output as commands, so the script prints only a fixed line
@@ -291,26 +293,44 @@ function main(args) {
     return EXIT.error;
   }
   const folder = path.resolve(args[0]);
-  fs.mkdirSync(folder, { recursive: true });
-
-  const run = spawnSync(process.execPath, [npm, ...AUDIT_ARGS], {
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: 5 * 60 * 1000
-  });
-  const ending = {
-    exitCode: run.status,
-    signal: run.signal,
-    spawnError: run.error ? run.error.message : null
-  };
-  fs.writeFileSync(path.join(folder, 'npm-audit.json'), run.stdout ?? '');
-  fs.writeFileSync(path.join(folder, 'npm-audit.stderr.txt'), run.stderr ?? '');
-  fs.writeFileSync(path.join(folder, 'npm-audit-exit.txt'), `${describeExit(ending)}\n`);
-
-  const result = summarize({ stdout: run.stdout, ...ending, lock: readLock('package-lock.json') });
   const summary = path.join(folder, 'summary.md');
-  fs.writeFileSync(summary, result.markdown);
-  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, result.markdown);
+  // What it was doing, named if that fails.
+  let step = `create ${folder}`;
+  const write = (file, data) => {
+    step = `write ${file}`;
+    fs.writeFileSync(file, data);
+  };
+  let result;
+  try {
+    fs.mkdirSync(folder, { recursive: true });
+
+    const run = spawnSync(process.execPath, [npm, ...AUDIT_ARGS], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: 5 * 60 * 1000
+    });
+    const ending = {
+      exitCode: run.status,
+      signal: run.signal,
+      spawnError: run.error ? run.error.message : null
+    };
+    write(path.join(folder, 'npm-audit.json'), run.stdout ?? '');
+    write(path.join(folder, 'npm-audit.stderr.txt'), run.stderr ?? '');
+    write(path.join(folder, 'npm-audit-exit.txt'), `${describeExit(ending)}\n`);
+
+    result = summarize({ stdout: run.stdout, ...ending, lock: readLock('package-lock.json') });
+    write(summary, result.markdown);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      step = `add to ${process.env.GITHUB_STEP_SUMMARY}`;
+      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, result.markdown);
+    }
+  } catch (error) {
+    // Rather than a crash, whose exit code 1 would read as advisories. Only
+    // the step and the error's code are printed, never its message.
+    const code = /^E[A-Z]+$/.test(error?.code) ? ` (${error.code})` : '';
+    process.stderr.write(`Dependency audit: couldn't ${step}${code}, so this says nothing about advisories.\n`);
+    return EXIT.error;
+  }
   process.stdout.write(`${STATUS_LINES[result.status]} The summary is in ${summary}.\n`);
   return result.exitCode;
 }

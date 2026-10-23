@@ -163,9 +163,9 @@ and run `npm run audit:dependencies -- <folder>` before committing any
 intentional dependency update. It runs `npm audit` on the lockfile with the
 development tools included, keeps npm's output in the folder and summarizes
 each advisory once in `summary.md` there, with the dependencies that bring it
-in. It prints only whether it found advisories and where the summary is, so
-nothing from the registry reaches the console, where GitHub Actions would read
-lines like `::add-mask::` as commands. It fails for any advisory, including
+in. It prints only whether it found advisories and where the summary is, or
+which file it couldn't write, so nothing from the registry reaches the console,
+where GitHub Actions would read lines like `::add-mask::` as commands. It fails for any advisory, including
 one with no fixed version yet that
 [SECURITY.md](SECURITY.md#development-dependencies) describes.
 
