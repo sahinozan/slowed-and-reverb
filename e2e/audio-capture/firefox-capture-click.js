@@ -3,8 +3,11 @@
 // A reproducer, with no extension involved, for a click Firefox makes on
 // its own (README.md in this folder): a player that is already playing is
 // routed into an audio graph, its speed changes 60 ms later, and one click
-// follows some seconds after. Run it with
-//   node e2e/audio-capture/firefox-capture-click.js [runs]
+// follows some seconds after. By default the player is routed a second
+// after it starts, as when the effect is turned on during a song; with
+// `playing` it is routed as it starts playing, as the Spotify engine does.
+// Run it with
+//   node e2e/audio-capture/firefox-capture-click.js [runs] [playing]
 // It prints each run's clicks; it isn't a test and passes or fails nothing.
 // Set FIREFOX_BIN to use a Firefox other than the usual install.
 
@@ -22,7 +25,7 @@ function firefoxPath() {
   return '/usr/bin/firefox';
 }
 
-async function main(runs) {
+async function main(runs, atStart) {
   const server = await startTrialServer();
   const browser = await puppeteer.launch({ browser: 'firefox', executablePath: firefoxPath(), headless: true });
   try {
@@ -31,10 +34,8 @@ async function main(runs) {
       const page = await browser.newPage();
       await page.evaluateOnNewDocument(installAudioTrialObserver, { workletUrl: server.workletPath, retainSeconds: 12 });
       await page.goto(`${server.youtubeUrl}long`);
-      await clickStart(page);
-      await sleep(1000);
       // Routes the playing player into a graph, then slows it down.
-      await page.evaluate(() => {
+      const route = () => {
         const context = new AudioContext();
         const player = document.getElementById('player');
         context.createMediaElementSource(player).connect(context.destination);
@@ -42,7 +43,15 @@ async function main(runs) {
           player.preservesPitch = false;
           player.playbackRate = 0.8;
         }, 60);
-      });
+      };
+      if (atStart) {
+        await page.evaluate(`document.getElementById('player').addEventListener('playing', ${route}, { once: true })`);
+        await clickStart(page);
+      } else {
+        await clickStart(page);
+        await sleep(1000);
+        await page.evaluate(route);
+      }
       await page.evaluate(() => window.__audioTrial.waitReady(0, 10_000));
       const start = await snapshot(page);
       await sleep(6000);
@@ -62,7 +71,7 @@ async function main(runs) {
   }
 }
 
-main(Math.max(1, Number(process.argv[2]) || 5)).catch((error) => {
+main(Math.max(1, Number(process.argv[2]) || 5), process.argv[3] === 'playing').catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

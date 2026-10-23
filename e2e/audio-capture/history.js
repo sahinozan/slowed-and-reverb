@@ -71,7 +71,7 @@ const HISTORY = [
     // at that instant, so one change can come out small: in 23 Chromium
     // runs, keeping the pitch clicked at as little as 0.061 and once not at
     // all. Turning the effect off and on, and the overlapping changes, have
-    // clicked at 0.38 or more in every run.
+    // clicked at 0.33 or more in every run of either browser.
     expect: [
       { code: 'click', during: 'during overlapping changes' },
       { code: 'click', during: 'during turn off' },

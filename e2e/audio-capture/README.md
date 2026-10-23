@@ -44,11 +44,12 @@ song plays (and the reproducer `firefox-capture-click.js`) play the tone
 aloud for about a second first, since the song has to be playing before the
 effect turns on.
 
-`firefox-capture-click.js` isn't a test. It reproduces, with no extension
-involved, a click Firefox makes on its own (see "Limits"):
+Two reproducers, which aren't tests and need no extension, show browser
+behavior the suite has to live with:
 
 ```sh
-node e2e/audio-capture/firefox-capture-click.js 6   # six tries, each about 8 seconds
+node e2e/audio-capture/firefox-capture-click.js 6   # Firefox's own click after a playing player is routed into a graph (see "Limits")
+node e2e/audio-capture/chromium-stale-frame.js 4    # Chromium's stale frame numbers, and that the sound across them is unbroken (see "How it records")
 ```
 
 On Linux the trial expects a PulseAudio (or PipeWire) sound server. The
@@ -118,10 +119,18 @@ seconds per context (20 for the suite). Each context has its own clock and
 recording; nothing adds up different contexts.
 
 For the suite, the page also notes the context frame each batch started
-at, less the recorder's own frame number. That stays the same while every
-render block reaches the recorder; any change counts as a skipped block
-(`offsetChanges`). It also maps a moment on the context's clock (a mark)
-to the recorded frame played then.
+at, less the recorder's own frame number. That stays the same from batch to
+batch while every render block reaches the recorder; any change counts as a
+skipped block (`offsetChanges`). It also maps a moment on the context's
+clock (a mark) to the recorded frame played then.
+
+Around a change of connections at the destination, Chromium sometimes gives
+the recorder a block with the previous block's frame number and then
+catches up. A steady tone recorded across such blocks, with no extension
+involved, has no click, which a repeated or missing 128-frame block would
+make, so the recorder counts these separately (`staleFrameLabels`) and
+takes each as the frame expected. Only a jump forward is a skipped block.
+`gapLog` keeps where the first few of either happened.
 
 `metrics.js` measures each window. `tests/audio-metrics.test.js` checks it
 against computed signals, without a browser. A window is healthy only if
@@ -147,7 +156,12 @@ suite's page (`/long`) plays the same tones for 30 seconds, so a recording
 never reaches the loop: Chromium leaves about 5 ms of silence where a
 looping player starts again. A second 30-second song, 500 and 750 Hz,
 stands in for the next track. Both are served from 127.0.0.1, which stands
-in for YouTube, and from localhost, which stands in for Spotify. Players start from a real click on Start. In
+in for YouTube, and from localhost, which stands in for Spotify. The page
+takes the media session's actions and ignores them: otherwise media keys
+and the system's Now Playing controls go to the test's player, the last
+page to play, and pause it from outside, as happened once while this Mac
+was in use. The suite fails a check whose player paused other than by one
+of its own actions as `interrupted`. Players start from a real click on Start. In
 both browsers that click is trusted and gives the page user activation, and
 the trial sets no autoplay preferences or flags.
 
@@ -331,9 +345,10 @@ that span starts with the recording itself, which has to begin in silence
 (`onset-not-observed` otherwise). A span is valid data only if the
 context ran throughout, no frame was lost, dropped or skipped since it
 started (or since the recording started, for a span that starts with it),
-recorded frames equal the context frames they span, and every sample is a
-number. Any of those fails the check as a recording problem, never as a
-sound problem.
+recorded frames equal the context frames they span, every sample is a
+number and nothing outside the check paused the player. Any of those fails
+the check as a measurement failure, and says so, never as a sound
+problem; a control that fails that way doesn't count as caught.
 
 Within a span:
 
@@ -342,8 +357,8 @@ Within a span:
   every tone the suite plays, and a step of size d in the wave gives 2d, so
   0.05 is a step of 0.025 (-32 dBFS) or more. The largest where nothing was
   wrong was 0.017, Chromium's own small glitch when a player changes speed;
-  the historical defects clicked at 0.09 to 1.5. A step below 0.025 isn't
-  heard by this measure.
+  the historical defects clicked at up to 1.5 (see "Suite results" for
+  their smallest). A step below 0.025 isn't heard by this measure.
 - **A gap** is a run of 5 ms blocks below -80 dBFS in both channels.
 - Each action may cause only what is expected of it. A change of settings
   that makes the player click (in Firefox any change of speed or pitch
@@ -393,7 +408,7 @@ same symptom, where the old route no longer exists.
 
 | Commit | Defect | Put back | Browsers | Caught as |
 | --- | --- | --- | --- | --- |
-| `02ef174` | Clicks when the effect or its settings changed | Narrow: every setting jumps straight to its new value, the player changes at once, no silence while a player is first routed in | Both | `click` during the pan change and during keeping the pitch |
+| `02ef174` | Clicks when the effect or its settings changed | Narrow: every setting jumps straight to its new value, the player changes at once, no silence while a player is first routed in | Both | `click` during the overlapping changes and when the effect turns off and on (it clicks at other changes too, but a value set straight away clicks only as loudly as the wave is at that instant, so a single change can come out small) |
 | `3fbb1c3` | Jumps when changes overlapped | Exact (the first of its two fixes): a change starts from the setting's value now | Both | `click` during the overlapping changes |
 | `74032cc` | Spotify skipped every 12 to 13 s in Firefox | Narrow: Spotify's speed writes reach the player again, and the engine puts its speed back with its silent dip | Firefox, where it was heard | `gap` (85 to 90 ms each) during Spotify's resets, and the player changed speed 6 times |
 | `9cde26c` | The Spotify player stayed stopped after a speed request during a waiting change | Exact | Both | `gap` (over 1.2 s) during that change, and the player at 0x afterwards |
@@ -408,7 +423,64 @@ Two defects are put back only in the browser where they were heard. The
 without one, and the old Chromium shutdown route `1127987` replaced worked
 in Chromium.
 
-RESULTS-PLACEHOLDER
+### Suite results
+
+Measured on one Mac (macOS 27, Apple silicon, built-in output, 48 kHz), in
+Playwright's Chromium 156.0.8078.4 and Firefox 158.0.1, each run of a
+browser's whole suite, controls included, one after another with no other
+browser tests. The Mac was in use for some of them.
+
+| Commit | Browser | Runs | Passed | Failed | Why they failed |
+| --- | --- | --- | --- | --- | --- |
+| `8cf89c5` | Chromium | 2 | 0 | 2 | A block out of step (`context-gap`) in the `9a900c4` control; the player paused from outside, by the system's media controls, in a check of changes on Spotify |
+| `963b6e4` | Chromium | 3 | 2 | 1 | A block out of step in the `9a900c4` control |
+| `963b6e4` | Firefox | 3 | 3 | 0 | (two of them ran with a later change to the test page) |
+| `11ac9ea` | Chromium | 23 | 17 | 6 | A block out of step five times (twice in turning the extension off on YouTube, three times in the `9a900c4` controls), and once the context's clock ran at 0.4 times the wall clock (in the `134e1c0` control) |
+| `d69226b` | Chromium | 2 | 1 | 1 | The `02ef174` control didn't click at the change of pitch mode, though it clicked at other changes (its expectation changed after this) |
+| `b4ca3c6` | Chromium | 23 | 23 | 0 | |
+| `b4ca3c6` | Firefox | 23 | 20 | 3 | Once Firefox didn't start (its WebDriver BiDi session wasn't created within 180 s; no audio was measured); twice a single click in a Spotify check (see "Limits") |
+
+Until the last Firefox batch, every failure was a measurement failure or a
+control that wasn't caught as it should be. In that batch, two Spotify
+checks failed on a click each, which is not explained (see "Limits"). One
+more `b4ca3c6` Chromium run stopped when the Mac went to sleep for three
+hours partway through; it isn't counted, and the run was done again.
+Earlier, while the suite was being written, its runs also failed on the
+looping fixture's silence in Chromium and on Firefox's own click after
+turning the effect on during a song, which led to the 30-second songs and
+the short check of that action. The
+failures led to the changes between those commits: the test page takes
+the media controls, the recorder tells a stale frame number from a missing
+block (`chromium-stale-frame.js` reproduces it with no extension, and shows
+a planted repeated or missing block clicking at 0.19 to 0.52 where the
+stale ones measure 0.000048, a clean tone), and the `02ef174` control asks
+for the clicks it always makes.
+
+In the `b4ca3c6` runs:
+
+- The unchanged sound came back 80 to 420 ms after the extension was
+  turned off or updated in Chromium (limit 1000), and 150 to 390 ms in
+  Firefox, removal included.
+- The largest third difference where nothing may click was 0.010 in
+  Chromium and 0.0045 in Firefox, outside the two failed spans, against a
+  threshold of 0.05.
+- The controls clicked, at their smallest in any run: `02ef174` at 0.39
+  when the effect turned off, 0.43 when it turned on and 0.76 during the
+  overlapping changes in Chromium (0.34, 0.50 and 0.61 in Firefox);
+  `3fbb1c3` at 0.44 in Chromium and Firefox. The other controls were caught
+  by gaps of 85 ms to 2.5 s, the unchanged sound not coming back, or the
+  wrong tones, each far from its limit.
+- In a stretch with reverb, a tone the effect shouldn't have measured up to
+  0.015 against a limit of 0.02: the previous pitch still rings in the
+  2-second reverb tail after a change of pitch mode. That is the closest
+  any passing check came to a limit.
+- Recording began at context frame 0 or 256.
+
+These runs are enough to show the suite mostly steady on this Mac, not to
+give a flake rate below a few percent, and none of them ran on a hosted
+runner. The evidence of every failed run is kept outside the repository by
+the run that made it; `chromium-stale-frame.js` and
+`firefox-capture-click.js` reproduce the browser behavior behind them.
 
 ### What it can replace, and what stays manual
 
@@ -450,15 +522,26 @@ It doesn't replace:
   recording began. The suite's spans start after it, except for turning
   the effect on while a song plays, which fails unless the recording began
   before the sound did.
-- **Firefox clicks on its own** (third difference 0.25 to 0.36) 3 to 4
+- **Firefox clicks on its own** (third difference 0.16 to 0.36) 3 to 4
   seconds after a player that is already playing is routed into a graph and
-  its speed or pitch mode changes, in about half of tries.
+  its speed or pitch mode changes, in a third to a half of tries. (It also
+  clicks about 0.2 s after the routing, which the engines' 250 ms of
+  silence hides.)
   `firefox-capture-click.js` reproduces it with no extension. Turning the
   effect on while a song plays does exactly this, so a person may hear it;
   the engines don't hide it. The suite's check of that action ends about
   1.4 seconds after it, and its other checks turn the effect on before the
   song starts, so the suite doesn't hear this click. It needs a decision,
-  not a looser threshold. Other late clicks of the browsers' own, which
+  not a looser threshold.
+- **Two clicks are unexplained.** In 2 of the last 23 Firefox runs, one
+  Spotify check heard a single click (0.32 and 0.35): one sample at
+  exactly 0 in both channels, and two samples at about a third of their
+  level. Both came about 3 seconds after the Spotify engine routed its
+  playing player into its graph, as it does when a song starts. Their shape
+  can't come from the engines' own changes, which fade over 10 to 25 ms,
+  and resembles Firefox's click above, but routing a player as it starts
+  to play, with no extension, didn't click in 8 tries. They count as
+  failures; their cause is open. Other late clicks of the browsers' own, which
   `02ef174` noted (Firefox about 0.7 s after a change to 1.25x, Chromium
   about 1.2 s after keeping the pitch), haven't appeared in any recorded
   span: every frame of a span is checked, so they would fail it.
@@ -486,6 +569,15 @@ It doesn't replace:
 - Thresholds come from this Mac at 48 kHz (and the trial's hosted runs at
   44.1 kHz). The suite hasn't yet run on a hosted runner at the time of
   writing.
+- Chromium sometimes gives the recorder a stale frame number around a
+  change of connections at the destination (see "How it records"). The
+  recorder takes such a block as the frame expected; that rests on the
+  native reproducer, where a steady tone across those blocks is unbroken,
+  not on knowing why Chromium does it.
+- Before a span, a recorder can already have skipped a block as it
+  started (one in each of the reproducer's runs). A span counts only what
+  happens from its start, or from the recording's start for a span that
+  starts with it.
 - Windows runners weren't tried.
 
 ## Recommendation
@@ -493,8 +585,10 @@ It doesn't replace:
 **Measured:** recording real engine output works in both browsers, on a
 Mac and on a hosted Ubuntu runner with a null sink, without new
 dependencies or production changes. The regression suite catches each
-audible defect the project has fixed when it is put back, and passed on
-this Mac in every run so far (see "Suite results").
+audible defect the project has fixed when it is put back. Its final
+version passed 23 of 23 runs in Chromium and 20 of 23 in Firefox on this
+Mac, with one Firefox start failure and two unexplained clicks on Spotify
+(see "Suite results").
 
 **Next:** run the suite on the hosted runner enough times to show it is
 steady there. Until then it stays out of the required check and the

@@ -361,7 +361,8 @@ function compareLevels(reference, compared, picks, toleranceDb = 1) {
 // in the waveform gives 2 * d, so 0.05 is a step of 0.025 (-32 dBFS). Where
 // nothing was wrong, the largest measured was 0.017 (Chromium's own small
 // glitch as a player changes speed); the defects the suite's controls put
-// back clicked at 0.09 and more (README.md in this folder).
+// back clicked at 0.33 and more at the changes their controls check
+// (README.md in this folder).
 const CLICK_THRESHOLD = 0.05;
 // Clicks closer together than this are one click.
 const CLICK_MERGE_MS = 5;
