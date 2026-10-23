@@ -20,6 +20,7 @@ const path = require('node:path');
 const { after, before, describe, test } = require('node:test');
 
 const {
+  CHANNEL,
   ENGINE_SETTINGS,
   READY_TIMEOUT_MS,
   RECORDER_PROBLEMS,
@@ -32,7 +33,7 @@ const {
   snapshot,
   waitFor
 } = require('./harness');
-const { ACTION_LIMIT_MS, PAGE_BACKSTOP_MS, PAGE_STEP_MS, runPageStep, withDeadline } = require('./actions');
+const { ACTION_LIMIT_MS, PAGE_BACKSTOP_MS, PAGE_STEP_MS, runPageStep, runSweep, withDeadline } = require('./actions');
 const { HISTORY, controlVerdict } = require('./history');
 const { TONE, TONE_B, encodeWav, startTrialServer } = require('./fixture');
 const {
@@ -99,11 +100,14 @@ const FIRST_ENABLE_OBSERVE_MS = 6000;
 const CLEANUP_MS = 5_000;
 // A change starts 20 ms ahead and fades over 25 ms, so a second change that
 // reaches the engine 20 to 45 ms after the first arrives mid-fade. A slider
-// sends one about every 16 ms as it is dragged; the sweep sends one every
-// 30 ms, and at least 3 of its 7 steps have to land mid-fade.
+// sends one about every 16 ms as it is dragged; the sweep paces its
+// requests to reach the engine 30 ms apart (pageSweep in actions.js), and
+// at least 3 of its 7 steps have to land mid-fade.
 const OVERLAP_MS = [20, 45];
 const SWEEP_STEP_MS = 30;
 const MIN_OVERLAPPING = 3;
+// Where the extension's content scripts reach the engines.
+const ENGINE_CHANNELS = ['SLOWED_REVERB_YOUTUBE', 'SLOWED_REVERB_SPOTIFY'];
 
 const EFFECT = Object.freeze({ ...ENGINE_SETTINGS });
 
@@ -244,12 +248,11 @@ function defineRegression(browser) {
 
     // Logs every request that reaches the page's engine, to show when
     // changes overlapped.
-    function logEngineRequests() {
+    function logEngineRequests(engineChannels) {
       window.engineRequests = [];
       window.addEventListener('message', (event) => {
         const { channel, type, enabled, settings } = event.data ?? {};
-        if (event.source !== window || type !== 'APPLY') return;
-        if (channel !== 'SLOWED_REVERB_YOUTUBE' && channel !== 'SLOWED_REVERB_SPOTIFY') return;
+        if (event.source !== window || type !== 'APPLY' || !engineChannels.includes(channel)) return;
         window.engineRequests.push({ atMs: performance.now(), enabled, pan: settings?.pan, speed: settings?.speed });
       });
     }
@@ -270,7 +273,7 @@ function defineRegression(browser) {
       } else {
         await waitFor(() => ask(page, 'whether the tone loaded', () => document.getElementById('player').readyState >= 1), 10_000, 'the tone never loaded');
       }
-      await ask(page, 'its request log', logEngineRequests);
+      await ask(page, 'its request log', logEngineRequests, ENGINE_CHANNELS);
     }
 
     // Waits for the song to be heard, so a span taken next starts in it.
@@ -638,20 +641,29 @@ function defineRegression(browser) {
       await change('pan to the middle', { ...current, pan: 0 });
       await change('speed 0.9', { ...current, speed: 0.9 });
 
-      // A dragged slider: requests SWEEP_STEP_MS apart, without waiting for
-      // the answers, so each one reaches the engine while the fade the one
-      // before started is still under way.
+      // A dragged slider: requests paced to reach the engine SWEEP_STEP_MS
+      // apart, without waiting for the answers, so each one reaches it
+      // while the fade the one before started is still under way. The
+      // engine's own log of what reached it, not the pacing, decides
+      // whether they did.
       const sweep = [100, -100, 100, -100, 100, -100, 100, -100].map((pan) => ({ ...current, pan }));
       const requestsFrom = await ask(page, 'its clock', () => performance.now());
-      await act(span, 'overlapping changes', NOTHING, () =>
-        Promise.all(sweep.map((settings, index) => sleep(index * SWEEP_STEP_MS).then(() => applyThroughExtension(page, settings, true))))
+      const paced = await act(span, 'overlapping changes', NOTHING, () =>
+        runSweep(page, {
+          channel: CHANNEL,
+          engineChannels: ENGINE_CHANNELS,
+          requests: sweep.map((settings) => ({ settings, enabled: true })),
+          stepMs: SWEEP_STEP_MS
+        })
       );
       current = sweep[sweep.length - 1];
       const requests = await ask(page, 'its engine requests', (atMs) => window.engineRequests.filter((request) => request.atMs >= atMs), requestsFrom);
       const spacing = requests.slice(1).map((request, index) => Math.round((request.atMs - requests[index].atMs) * 10) / 10);
       const overlapping = spacing.filter((gap) => gap >= OVERLAP_MS[0] && gap < OVERLAP_MS[1]).length;
-      span.actions[span.actions.length - 1].result = { spacingMs: spacing, overlapping };
-      if (requests.length !== sweep.length || requests[requests.length - 1].pan !== current.pan) {
+      span.actions[span.actions.length - 1].result = { spacingMs: spacing, overlapping, paced };
+      if (paced.stopped) {
+        span.checks.push({ code: 'setup', message: `the overlapping changes stopped: ${paced.stopped}` });
+      } else if (requests.length !== sweep.length || requests[requests.length - 1].pan !== current.pan) {
         span.checks.push({ code: 'setup', message: `the engine got ${requests.length} requests, the last with pan ${requests[requests.length - 1]?.pan}` });
       } else if (overlapping < MIN_OVERLAPPING) {
         span.checks.push({

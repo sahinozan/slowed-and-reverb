@@ -9,8 +9,8 @@
 // (e2e/audio-capture/history.js) still matches today's code exactly once and
 // is judged engine by engine, how the recorder counts frame numbers (run
 // through the real recorder-worklet.js), and the deadlines of the suite's
-// page steps (e2e/audio-capture/actions.js). No browser or sound device is
-// involved.
+// page steps and the pacing of its overlapping changes
+// (e2e/audio-capture/actions.js). No browser or sound device is involved.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -18,7 +18,16 @@ const path = require('node:path');
 const { describe, test } = require('node:test');
 const vm = require('node:vm');
 
-const { pageStep, runPageStep, withDeadline } = require('../e2e/audio-capture/actions');
+const {
+  ACTION_LIMIT_MS,
+  PAGE_BACKSTOP_MS,
+  pageStep,
+  pageSweep,
+  runPageStep,
+  runSweep,
+  sweepLimitMs,
+  withDeadline
+} = require('../e2e/audio-capture/actions');
 const { RECORDER_PROBLEMS } = require('../e2e/audio-capture/harness');
 const { HISTORY, controlVerdict } = require('../e2e/audio-capture/history');
 const {
@@ -724,5 +733,176 @@ describe('audio regression page steps', () => {
     await assert.rejects(runPageStep(page, 'nextSong', {}, { timeoutMs: 30, backstopMs: 20 }), (error) => error.code === 'timeout');
     assert.ok(Date.now() - started < 1000);
     assert.equal(await withDeadline(Promise.resolve('done'), 1000, 'unused'), 'done');
+  });
+});
+
+describe('audio regression overlapping changes', () => {
+  const STEP_MS = 30;
+  const DRIVER = 'TEST_DRIVER';
+  const PANS = [100, -100, 100, -100, 100, -100, 100, -100];
+
+  // Runs actions.js's pageSweep as the browser would: from its source, in a
+  // context of its own, with a stand-in for the extension. Each request the
+  // driver gets reaches the engine `delivery(index)` ms later (null: never)
+  // and is answered `answer(index)` ms after that (null: never) with
+  // `reply(index)`. `onPost(index)` runs as the driver gets it.
+  function inPage({ delivery = () => 5, answer = () => 5, reply = () => ({ result: { success: true } }), onPost = () => {} } = {}) {
+    const window = new globalThis.EventTarget();
+    let listening = 0;
+    const add = window.addEventListener.bind(window);
+    const remove = window.removeEventListener.bind(window);
+    window.addEventListener = (type, listener) => {
+      listening++;
+      add(type, listener);
+    };
+    window.removeEventListener = (type, listener) => {
+      listening--;
+      remove(type, listener);
+    };
+    const dispatch = (data) => {
+      const event = new globalThis.Event('message');
+      Object.assign(event, { data, source: window });
+      window.dispatchEvent(event);
+    };
+    const posted = [];
+    window.postMessage = (data) =>
+      setTimeout(() => {
+        dispatch(data);
+        if (data.channel !== DRIVER || data.type !== 'APPLY') return;
+        const index = posted.length;
+        posted.push({ atMs: globalThis.performance.now(), pan: data.settings.pan });
+        onPost(index);
+        const delay = delivery(index);
+        if (delay !== null) {
+          setTimeout(() => dispatch({ channel: 'SLOWED_REVERB_YOUTUBE', type: 'APPLY', settings: data.settings, enabled: data.enabled }), delay);
+        }
+        const wait = answer(index);
+        if (wait !== null) {
+          setTimeout(() => dispatch({ channel: DRIVER, type: 'RESULT', id: data.id, reply: JSON.stringify(reply(index)) }), (delay ?? 0) + wait);
+        }
+      }, 0);
+    const timers = new Set();
+    const sandbox = {
+      window,
+      performance: globalThis.performance,
+      setTimeout: (callback, ms) => {
+        const id = setTimeout(() => {
+          timers.delete(id);
+          callback();
+        }, ms);
+        timers.add(id);
+        return id;
+      },
+      clearTimeout: (id) => {
+        timers.delete(id);
+        clearTimeout(id);
+      }
+    };
+    const sweep = vm.runInNewContext(`(${pageSweep.toString()})`, sandbox);
+    const run = (options = {}) =>
+      sweep({
+        channel: DRIVER,
+        engineChannels: ['SLOWED_REVERB_YOUTUBE', 'SLOWED_REVERB_SPOTIFY'],
+        requests: PANS.map((pan) => ({ settings: { speed: 0.8, pan }, enabled: true })),
+        stepMs: STEP_MS,
+        receiptMs: 1000,
+        replyMs: 1000,
+        ...options
+      });
+    return { run, posted, timers, listening: () => listening, page: { evaluate: (fn, arg) => sweep(arg) } };
+  }
+
+  const arrivalGaps = (result) => result.requests.slice(1).map((request, index) => request.receiptMs - result.requests[index].receiptMs);
+
+  // Each request is sent only after the one before reached the engine, and
+  // not before STEP_MS after that, less the lower median time to get there.
+  function assertPaced(result) {
+    for (const [index, request] of result.requests.entries()) {
+      if (index === 0) continue;
+      const before = result.requests[index - 1];
+      const usual = result.requests.slice(0, index).map((entry) => entry.receiptMs - entry.sentMs).sort((a, b) => a - b);
+      const median = usual[Math.floor((usual.length - 1) / 2)];
+      assert.ok(request.sentMs >= before.receiptMs + Math.max(0, STEP_MS - median) - 1, `request ${index + 1} was sent too soon: ${JSON.stringify(result.requests)}`);
+    }
+  }
+
+  test('requests reach the engine about a step apart, sent one at a time, and the sweep cleans up', async () => {
+    const page = inPage();
+    const result = await page.run();
+    assert.equal(result.stopped, null);
+    assert.deepEqual(Array.from(result.requests, (request) => request.pan), PANS);
+    assert.ok(result.requests.every((request) => request.reply?.result?.success === true && request.replyMs !== null));
+    assertPaced(result);
+    for (const gap of arrivalGaps(result)) assert.ok(gap >= 20, `arrivals ${gap} ms apart`);
+    assert.equal(page.listening(), 0);
+    assert.equal(page.timers.size, 0);
+  });
+
+  test("a request that reaches the engine late delays the ones after it instead of bunching them", async () => {
+    const page = inPage({ delivery: (index) => (index === 2 ? 150 : 5) });
+    const result = await page.run();
+    assert.equal(result.stopped, null);
+    assertPaced(result);
+    const gaps = arrivalGaps(result);
+    assert.ok(gaps[1] >= 150, `the late one arrived ${gaps[1]} ms after the one before`);
+    for (const gap of gaps) assert.ok(gap >= 20, `arrivals ${gap} ms apart: ${gaps}`);
+  });
+
+  test('a page or Node side that stops for 150 ms during the sweep delays the requests after it instead of bunching them', async () => {
+    const page = inPage({
+      onPost: (index) => {
+        if (index !== 1) return;
+        setTimeout(() => {
+          const started = Date.now();
+          while (Date.now() - started < 150) {
+            // Everything in this thread stops, as a busy page or Node would.
+          }
+        }, 1);
+      }
+    });
+    const result = await page.run();
+    assert.equal(result.stopped, null);
+    assertPaced(result);
+    const gaps = arrivalGaps(result);
+    assert.ok(Math.max(...gaps) >= 140, `no arrival waited out the stop: ${gaps}`);
+    for (const gap of gaps) assert.ok(gap >= 20, `arrivals ${gap} ms apart: ${gaps}`);
+  });
+
+  test("a request that never reaches the engine stops the sweep there, within its deadline, and it cleans up", async () => {
+    const page = inPage({ delivery: (index) => (index === 3 ? null : 5) });
+    const started = Date.now();
+    const result = await page.run({ receiptMs: 100, replyMs: 100 });
+    assert.ok(Date.now() - started < 1000);
+    assert.match(result.stopped, /request 4 of 8 didn't reach the engine within 100 ms, so no more were sent/);
+    assert.equal(result.requests.length, 4);
+    assert.equal(page.posted.length, 4);
+    assert.equal(result.requests[3].receiptMs, null);
+    assert.equal(page.listening(), 0);
+    assert.equal(page.timers.size, 0);
+  });
+
+  test('a reply that never comes, or an error, fails on the Node side as the single requests do', async () => {
+    const silent = inPage({ answer: (index) => (index === 5 ? null : 5) });
+    const started = Date.now();
+    const result = await silent.run({ replyMs: 100 });
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(result.stopped, null);
+    assert.equal(result.requests[5].reply, null);
+    assert.equal(silent.listening(), 0);
+    assert.equal(silent.timers.size, 0);
+    const options = { channel: DRIVER, engineChannels: ['SLOWED_REVERB_YOUTUBE'], requests: PANS.map((pan) => ({ settings: { pan }, enabled: true })), stepMs: STEP_MS };
+    await assert.rejects(runSweep(inPage({ answer: (index) => (index === 5 ? null : 5) }).page, { ...options, replyMs: 100 }), /no reply from the extension's test driver within 100 ms of the sweep's last request \(request 6\)/);
+    await assert.rejects(runSweep(inPage({ reply: (index) => (index === 2 ? { error: 'refused' } : { result: {} }) }).page, options), /applying settings failed: refused \(request 3 of the sweep\)/);
+  });
+
+  test("a page that doesn't answer fails on the Node side, within the action's own limit", async () => {
+    assert.ok(sweepLimitMs(PANS.length, { stepMs: STEP_MS }) + PAGE_BACKSTOP_MS < ACTION_LIMIT_MS);
+    const page = { evaluate: () => new Promise(() => {}) };
+    const started = Date.now();
+    await assert.rejects(
+      runSweep(page, { channel: DRIVER, engineChannels: [], requests: [{ settings: {}, enabled: true }], stepMs: 10, receiptMs: 10, replyMs: 10, backstopMs: 10 }),
+      (error) => error.code === 'timeout' && /didn't finish the sweep/.test(error.message)
+    );
+    assert.ok(Date.now() - started < 1000);
   });
 });

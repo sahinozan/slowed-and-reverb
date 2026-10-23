@@ -94,4 +94,159 @@ function runPageStep(page, step, args = {}, { timeoutMs = PAGE_STEP_MS, backstop
   );
 }
 
-module.exports = { ACTION_LIMIT_MS, PAGE_BACKSTOP_MS, PAGE_STEP_MS, pageStep, runPageStep, withDeadline };
+// How long the page waits for the engine to receive each request of a
+// sweep before it sends no more.
+const SWEEP_RECEIPT_MS = 1_000;
+
+// Requests sent through the extension's test driver (harness.js) as a
+// dragged slider sends them, each meant to reach the engine `stepMs` after
+// the one before. Run in the page, as pageStep is.
+//
+// The pace is set by when requests reach the engine, not by a timetable: a
+// request is sent only once the one before has reached the engine, and
+// then `stepMs` after that arrival, less the time requests have usually
+// taken to get there so far (the lower median, which one late arrival
+// doesn't move once there are two). So a page, a Node side or a background script
+// that runs late delays the requests after it instead of sending them
+// together to catch up. A request has reached the engine when the page's
+// own message to it (from content.js or spotify-bridge.js) is dispatched:
+// the engine's listener was added first, so it has run by then. The
+// driver's reply says only that the background script is done.
+//
+// If a request doesn't reach the engine within `receiptMs`, no more are
+// sent. Then it waits up to `replyMs` after the last request for the
+// driver's replies, and returns when each request was sent, reached the
+// engine and was answered, and the answers. It removes its listener and
+// timers either way.
+function pageSweep({ channel, engineChannels, requests, stepMs, receiptMs, replyMs }) {
+  const timers = new Set();
+  const sent = [];
+  let arrived = null;
+  let replied = null;
+  const timer = (ms) => {
+    let id;
+    const promise = new Promise((resolve) => {
+      id = setTimeout(() => {
+        timers.delete(id);
+        resolve(false);
+      }, ms);
+      timers.add(id);
+    });
+    return { promise, cancel: () => (clearTimeout(id), timers.delete(id)) };
+  };
+  // `promise`, or false once `ms` have passed.
+  const within = async (promise, ms) => {
+    const deadline = timer(ms);
+    const value = await Promise.race([promise, deadline.promise]);
+    deadline.cancel();
+    return value;
+  };
+  const allReplied = () => sent.every((request) => request.reply);
+  function listener(event) {
+    const data = event.data ?? {};
+    if (data.channel === channel && data.type === 'RESULT') {
+      const request = sent.find((candidate) => candidate.id === data.id);
+      if (!request || request.reply) return;
+      request.replyMs = performance.now();
+      try {
+        request.reply = JSON.parse(data.reply);
+      } catch (error) {
+        request.reply = { error: `the test driver's reply couldn't be read: ${error.message}` };
+      }
+      if (allReplied()) replied?.();
+    } else if (event.source === window && engineChannels.includes(data.channel) && data.type === 'APPLY') {
+      const request = sent[sent.length - 1];
+      if (!request || request.receiptMs !== undefined) return;
+      if (data.enabled !== request.enabled || data.settings?.pan !== request.settings.pan) return;
+      request.receiptMs = performance.now();
+      arrived?.();
+    }
+  }
+  const lowerMedian = (values) => [...values].sort((a, b) => a - b)[Math.floor((values.length - 1) / 2)];
+
+  window.addEventListener('message', listener);
+  return (async () => {
+    let stopped = null;
+    for (const [index, { settings, enabled }] of requests.entries()) {
+      const before = sent[index - 1];
+      if (before) {
+        const usual = lowerMedian(sent.map((request) => request.receiptMs - request.sentMs));
+        const pause = before.receiptMs + Math.max(0, stepMs - usual) - performance.now();
+        if (pause > 0) await timer(pause).promise;
+      }
+      const request = { id: `${index}-${Math.random().toString(36).slice(2)}`, settings, enabled };
+      const reached = new Promise((resolve) => {
+        arrived = () => resolve(true);
+      });
+      sent.push(request);
+      request.sentMs = performance.now();
+      window.postMessage({ channel, type: 'APPLY', id: request.id, settings, enabled }, '*');
+      const inTime = await within(reached, receiptMs);
+      arrived = null;
+      if (!inTime) {
+        stopped = `request ${index + 1} of ${requests.length} didn't reach the engine within ${receiptMs} ms, so no more were sent`;
+        break;
+      }
+    }
+    if (!allReplied()) {
+      const lastSent = sent[sent.length - 1].sentMs;
+      await within(new Promise((resolve) => (replied = resolve)), Math.max(0, lastSent + replyMs - performance.now()));
+    }
+    const round = (value) => (value === undefined ? null : Math.round(value * 10) / 10);
+    return {
+      stopped,
+      replyMs,
+      requests: sent.map((request) => ({
+        pan: request.settings.pan,
+        enabled: request.enabled,
+        sentMs: round(request.sentMs),
+        receiptMs: round(request.receiptMs),
+        replyMs: round(request.replyMs),
+        reply: request.reply ?? null
+      }))
+    };
+  })().finally(() => {
+    window.removeEventListener('message', listener);
+    for (const id of timers) clearTimeout(id);
+    timers.clear();
+  });
+}
+
+// The longest a sweep of `count` requests may take in the page.
+function sweepLimitMs(count, { stepMs, receiptMs = SWEEP_RECEIPT_MS, replyMs = PAGE_STEP_MS }) {
+  return count * (stepMs + receiptMs) + replyMs;
+}
+
+// Runs a pageSweep in `page`, with the Node side's own deadline in case the
+// page stops answering. Fails, as a measurement failure, if the driver
+// didn't answer a request that was sent or answered with an error, as
+// applyThroughExtension (harness.js) does. A request that didn't reach the
+// engine is left for the caller to report (`stopped`).
+async function runSweep(
+  page,
+  { channel, engineChannels, requests, stepMs, receiptMs = SWEEP_RECEIPT_MS, replyMs = PAGE_STEP_MS, backstopMs = PAGE_BACKSTOP_MS }
+) {
+  const result = await withDeadline(
+    page.evaluate(pageSweep, { channel, engineChannels, requests, stepMs, receiptMs, replyMs }),
+    sweepLimitMs(requests.length, { stepMs, receiptMs, replyMs }) + backstopMs,
+    "the page didn't finish the sweep"
+  );
+  for (const [index, request] of result.requests.entries()) {
+    if (!request.reply) throw new Error(`applying settings failed: no reply from the extension's test driver within ${replyMs} ms of the sweep's last request (request ${index + 1})`);
+    if (request.reply.error !== undefined) throw new Error(`applying settings failed: ${request.reply.error} (request ${index + 1} of the sweep)`);
+  }
+  return result;
+}
+
+module.exports = {
+  ACTION_LIMIT_MS,
+  PAGE_BACKSTOP_MS,
+  PAGE_STEP_MS,
+  SWEEP_RECEIPT_MS,
+  pageStep,
+  pageSweep,
+  runPageStep,
+  runSweep,
+  sweepLimitMs,
+  withDeadline
+};

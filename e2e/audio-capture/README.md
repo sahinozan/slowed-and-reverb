@@ -337,7 +337,7 @@ both engines unless the table says otherwise:
 | --- | --- | --- |
 | Speed, pitch and reverb as heard | 0.8x with the pitch following, then kept; the song stopped with no reverb, then with reverb 60 | 352 and 528 Hz on the left (440 and 660 Hz with the pitch kept), nothing on the right, the player at 0.8x; silence after a song without reverb, a tail after one with it |
 | Turning the effect on while the song plays | The song plays without the effect, then the effect turns on, which creates the audio context; the span goes on for about 6 seconds | The recording starts in silence (so the change was heard from its start), only the engines' own silence before the sound comes in, then the effect, with no click anywhere in the 6 seconds |
-| Changes while the song plays | Reverb 40, pan to the middle, speed 0.9, eight pan changes sent 30 ms apart as when a slider is dragged, keeping the pitch and letting it follow again, the effect off and on | No click; silence only where the engine fades out to hide a change of the player; the right tones, channels and speed after each change; the song itself, at its exact level, with the effect off |
+| Changes while the song plays | Reverb 40, pan to the middle, speed 0.9, eight pan changes paced to reach the engine 30 ms apart, as when a slider is dragged, keeping the pitch and letting it follow again, the effect off and on | No click; silence only where the engine fades out to hide a change of the player; the right tones, channels and speed after each change; the song itself, at its exact level, with the effect off |
 | Spotify's own speed changes (Spotify only) | Spotify sets the player back to normal speed three times, holds it at 0 for a seek, asks for normal speed 5 ms into a change that is waiting to fade out, and plays the next song on the same player, then asks for normal speed again | No click or silence during the resets, and the player's speed never changes; the effect's speed after the seek and on the next song; the song itself, playing, once the effect is off |
 | Turning the extension off and on in the browser | From the extensions page in Chromium, Firefox's add-on manager in Firefox; on YouTube, with the extension off, the page takes its player out, puts it back and plays it at 1.25x; then the extension and the effect come back on | The song itself, at its exact level, within a second, with no click; the page's own 1.25x afterwards; the effect again once it's turned back on, except Spotify in Chromium, which needs a reload (Chromium doesn't put Spotify's scripts back into an open tab), so it stays unchanged and the reloaded page has the effect |
 | Removing the extension (Firefox only) | Removed through WebDriver BiDi, as from the add-ons page | As when turned off |
@@ -640,14 +640,32 @@ It doesn't cover either:
   effects sound. A click smaller than a step of 0.025 isn't heard by this
   measure.
 - The overlapping changes depend on the machine's timing: at least 3 of 7
-  have to reach the engine mid-fade, or the check fails as
-  `not-overlapping`, a setup problem.
+  have to reach the engine mid-fade (20 to 45 ms after the one before, by
+  the page's own log of what reached the engine), or the check fails as
+  `not-overlapping`, a setup problem. The page sends them itself
+  (`pageSweep` in `actions.js`), each only once the one before has reached
+  the engine and timed from that arrival, so a Node side, page or
+  background script that runs late delays the changes after it instead of
+  sending them together. Until `5cdc0a7`, Node sent them on a fixed
+  timetable, and a late Node side sent the overdue ones in a burst: in the
+  hosted Firefox run of
+  [workflow run 39919586145](https://github.com/sahinozan/slowed-and-reverb/actions/runs/39919586145)
+  they reached the engine 116, 33, 10, 15, 11, 11 and 13 ms apart. A delay
+  longer than the gaps still costs the gap it falls in; if fewer than 3
+  are left, the check still fails as `not-overlapping`. A change that
+  doesn't reach the engine within 1 s ends the changes as a `setup`
+  problem; a driver that doesn't answer them within 10 s, as a
+  measurement failure.
 - Thresholds come from this Mac at 48 kHz (and the trial's hosted runs at
-  44.1 kHz). The suite has run once on a hosted Ubuntu runner, at
-  `e0d3f11`, before the stricter checks of `10665ea` (all 17 Chromium and
-  22 Firefox checks passed, in
-  [workflow run 39910674712](https://github.com/sahinozan/slowed-and-reverb/actions/runs/39910674712));
-  `10665ea` hasn't run there yet.
+  44.1 kHz). The suite has run on a hosted Ubuntu runner at `e0d3f11`,
+  before the stricter checks of `10665ea` (all 17 Chromium and 22 Firefox
+  checks passed, in
+  [workflow run 39910674712](https://github.com/sahinozan/slowed-and-reverb/actions/runs/39910674712)),
+  and at `5cdc0a7`, with them (all 17 Chromium checks passed, and 21 of
+  22 Firefox checks: the overlapping changes failed as `not-overlapping`,
+  above, in
+  [workflow run 39919586145](https://github.com/sahinozan/slowed-and-reverb/actions/runs/39919586145)).
+  The paced changes haven't run there yet.
 - Chromium sometimes gives the recorder a stale frame number around a
   change of connections at the destination (see "How it records"). The
   recorder takes such a block as the frame expected only in the pattern the
