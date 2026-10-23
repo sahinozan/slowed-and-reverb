@@ -135,6 +135,7 @@ npm run build:firefox     # emit dist/firefox/
 npm run package           # build allowlisted ZIPs for both stores
 npm run lint:firefox      # build, then validate with web-ext
 npm run check             # run every required local and store-package check
+npm run audit:dependencies -- <folder> # ask the npm registry for advisories, development tools included
 npm run release -- <commit> # build, check and record a release's store packages from main
 npm run site:popup        # copy the current popup into the website after popup changes
 npm run site:serve        # preview the website locally, served like Cloudflare
@@ -158,7 +159,15 @@ Needs Node >= 24.19 and npm 11.19. Development tools are exact-versioned in
 than fetching tools with `npx`. The project `.npmrc` disables dependency install
 scripts, rejects Git and remote-tarball dependencies, and excludes releases less
 than seven days old when resolving dependency updates. Review lockfile changes
-and run `npm audit` before committing any intentional dependency update.
+and run `npm run audit:dependencies -- <folder>` before committing any
+intentional dependency update. It runs `npm audit` on the lockfile with the
+development tools included, keeps npm's output in the folder and summarizes
+each advisory once in `summary.md` there, with the dependencies that bring it
+in. It prints only whether it found advisories and where the summary is, or
+which file it couldn't write, so nothing from the registry reaches the console,
+where GitHub Actions would read lines like `::add-mask::` as commands. It fails for any advisory, including
+one with no fixed version yet that
+[SECURITY.md](SECURITY.md#development-dependencies) describes.
 
 The test suite runs the real extension scripts against deterministic browser,
 DOM, and Web Audio mocks. It covers tab state and shortcuts, audio graph values,
@@ -231,7 +240,9 @@ GitHub Actions runs `npm run check` for every change, and the browser tests on
 disposable Ubuntu and Windows machines unless the change can't affect them. The
 pull request's base commit decides that with its copy of
 `scripts/classify-ci-changes.js`, and changes to the workflows or the
-classifier always run them. A final manual smoke test in current Chromium and
+classifier always run them. A separate Dependency audit workflow runs the
+audit every week and for dependency changes; it isn't one of the checks a pull
+request needs. A final manual smoke test in current Chromium and
 Firefox is still recommended before a store release because browser and media-site
 behavior cannot be reproduced completely in an automated environment.
 

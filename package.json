@@ -4,6 +4,7 @@
   "description": "Slowed + Reverb and Nightcore for YouTube\u2122, YouTube Music\u2122 and Spotify. Change the speed, reverb, bass and more. Free and private.",
   "private": true,
   "scripts": {
+    "audit:dependencies": "node scripts/dependency-audit.js",
     "build:chromium": "node scripts/build-extension.js chromium",
     "build:firefox": "node scripts/build-extension.js firefox",
     "check": "npm run lint && npm test && npm run lint:firefox",
@@ -32,9 +33,9 @@
     "@playwright/test": "1.64.0",
     "adm-zip": "0.6.1",
     "eslint": "10.12.0",
-    "jsdom": "30.1.2",
+    "jsdom": "30.1.3",
     "puppeteer-core": "25.13.0",
-    "web-ext": "10.7.0"
+    "web-ext": "10.8.0"
   },
   "engines": {
     "node": ">=24.19.0"
