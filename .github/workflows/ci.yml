@@ -135,7 +135,7 @@ jobs:
     needs: classify
     if: needs.classify.outputs.browser == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -190,6 +190,12 @@ jobs:
       # Uses the Firefox already installed on GitHub's runners.
       - name: Run the Firefox turn-off test
         run: npm run test:firefox
+
+      # The popup in each state that changes its layout, and the website with
+      # its demo, as pages in Playwright's Chromium and the same installed
+      # Firefox.
+      - name: Run the popup layout and website tests
+        run: npm run test:ui
 
       - name: Upload Playwright report and screenshots
         if: ${{ !cancelled() }}

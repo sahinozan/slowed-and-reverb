@@ -149,6 +149,13 @@ describe('CI workflow structure', () => {
     assert.match(gate, /REPOSITORY_RESULT: \$\{\{ needs\.repository-checks\.result \}\}/);
   });
 
+  test('the browser job runs the extension, Firefox, popup layout and website tests', () => {
+    const job = jobText('browser-smoke');
+    for (const command of ['npm run test:e2e', 'npm run test:firefox', 'npm run test:ui']) {
+      assert.match(job, new RegExp(`^ {8}run: ${command}$`, 'm'), command);
+    }
+  });
+
   test('keeps read-only permissions and the scripts free of GitHub expressions', () => {
     assert.match(workflow, /^permissions:\n {2}contents: read\n\n/m);
     assert.doesNotMatch(workflow, /secrets\./);
@@ -196,9 +203,10 @@ describe('CI classification step', () => {
   test('mixed changes take the highest tier', (t) => {
     const repo = repository(t);
     repo.write('README.md', '# Readme\n\nUpdated.\n');
-    repo.write('site/index.html', '<p>New site</p>\n');
-    const docsAndSite = repo.commit('Docs and site');
-    assert.deepEqual(repo.pullRequest(repo.base, docsAndSite).outputs, { policy: 'base', browser: 'false' });
+    repo.write('store-assets/LISTING.md', '# Listing\n');
+    repo.write('tests/notes.test.js', '// A test.\n');
+    const docsAndTests = repo.commit('Docs and tests');
+    assert.deepEqual(repo.pullRequest(repo.base, docsAndTests).outputs, { policy: 'base', browser: 'false' });
 
     repo.write('extension/runtime.js', 'console.log("changed");\n');
     assert.deepEqual(repo.pullRequest(repo.base, repo.commit('Runtime')).outputs, { policy: 'base', browser: 'true' });
@@ -210,13 +218,20 @@ describe('CI classification step', () => {
     (t) => {
       const repo = repository(t);
       // Split at the newline, this would look like a change to extension/.
-      repo.write('site/odd name\nextension/b.js', 'site file\n');
+      repo.write('tests/odd name\nextension/b.js', 'test file\n');
       const result = repo.pullRequest(repo.base, repo.commit('Odd name'));
 
       assert.equal(result.status, 0, result.log);
       assert.deepEqual(result.outputs, { policy: 'base', browser: 'false' });
     }
   );
+
+  test('a website change runs the browser tests', (t) => {
+    const repo = repository(t);
+    repo.write('site/index.html', '<p>New site</p>\n');
+
+    assert.deepEqual(repo.pullRequest(repo.base, repo.commit('Site')).outputs, { policy: 'base', browser: 'true' });
+  });
 
   test('runs everything when the comparison is empty', (t) => {
     const repo = repository(t);

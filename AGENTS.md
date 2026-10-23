@@ -41,12 +41,24 @@ covers the features and development commands in full.
   sound device (on Linux, a PulseAudio or PipeWire sink). Run them one at a
   time, with no other browser tests. A new audible defect gets a control in
   `e2e/audio-capture/history.js`.
-- Check popup changes in both engines. Firefox draws the popup inside rounded
-  panel corners (see the `@supports (-moz-appearance: none)` rule in
-  `popup.css`) and needs a manual look. In Chromium, `npm run test:e2e` opens
-  the real popup, checks its size and saves a screenshot; for other states,
-  render it with the helpers in `scripts/popup-preview.js`, as the store-art
-  script does.
+- After changing the popup, the website, `scripts/popup-preview.js` or
+  `scripts/serve-site.js`, run `npm run test:ui`. It renders the popup page
+  in Chromium and in the installed Firefox's engine, Gecko, in each state that
+  changes its layout (presets, tabs, themes, notices, reload and permission
+  panels), and checks that it fits 340px wide without scrolling, with every
+  control on screen. It also checks the website from `site/`: the demo plays,
+  pauses and follows the popup, the theme carries over, the embedded popup is
+  sized right on a desktop and a phone, and no page requests anything from
+  another site. A new popup state that changes the layout gets an entry in
+  `STATES` in `e2e/ui/popup-layout.spec.js`; a layout defect fixed gets a
+  control there. In Chromium, `npm run test:e2e` also checks the installed
+  extension's popup this way and saves a screenshot.
+- These are pages, not the browser's popup window, so Firefox's rounded panel
+  corners (see the `@supports (-moz-appearance: none)` rule in `popup.css`)
+  and the browsers' own permission dialogs aren't drawn. A change to the
+  popup's frame in CSS still needs a look at the real popup in Firefox. For
+  other states, render the popup with the helpers in
+  `scripts/popup-preview.js`, as the store-art script and the tests do.
 
 ## Generated files
 

@@ -74,13 +74,35 @@ function startServer(extraRoutes = new Map()) {
 // Serialized into the page before popup.js runs.
 // `url` sets the page the popup thinks it is on; `siteAccess: false` shows the
 // popup before optional site access is granted (the Spotify opt-in step).
+//
+// The rest default to a tab where everything works, and let the layout tests
+// (e2e/ui/popup-layout.spec.js) put the popup in each state it can show:
+// - `tab`: fields of the tab's answer to GET_STATE, as content.js and the
+//   Spotify bridge send them: `enabled: false`, `blocked` with a
+//   `blockReason`, `pending` with `playerDetected`, `effectsUnavailable`,
+//   `live`. APPLY_TO_TAB answers with the same status.
+// - `injects: false`: the scripts can't be injected into the page.
+// - `answers: false`: nothing in the page answers GET_STATE.
+// - `permissionRequest`: 'granted', 'denied' or 'error'.
+// - `reload: 'error'`: reloading the tab fails.
+// - `firefox: true`: the manifest has Firefox's settings, as the Firefox build's does.
+// - `storage`: more of what the extension has stored, such as `ratingPrompt`.
 function installPopupBrowserMock({
   theme, settings, customPresets = [],
-  url = 'https://www.youtube.com/watch?v=store-preview', siteAccess = true
+  url = 'https://www.youtube.com/watch?v=store-preview', siteAccess = true,
+  tab = {}, injects = true, answers = true, permissionRequest = 'granted',
+  reload = 'complete', firefox = false, storage = {}
 }) {
-  const localData = { uiTheme: theme, customPresets, ...settings };
+  const localData = { uiTheme: theme, customPresets, ...settings, ...storage };
   const activeTab = { id: 9, url };
-  const tabState = { enabled: true, settings, blocked: false, live: false };
+  const tabState = { enabled: true, settings, blocked: false, live: false, ...tab };
+  const tabStatus = () => ({
+    pending: Boolean(tabState.pending),
+    playerDetected: Boolean(tabState.playerDetected),
+    effectsUnavailable: Boolean(tabState.effectsUnavailable)
+  });
+  const updateListeners = new Set();
+  const manifest = firefox ? { browser_specific_settings: { gecko: { id: 'preview@example.invalid' } } } : {};
 
   const storageGet = (defaults) => {
     if (typeof defaults === 'string') return { [defaults]: localData[defaults] };
@@ -96,16 +118,33 @@ function installPopupBrowserMock({
 
   window.chrome = {
     action: { setIcon: async () => {} },
-    permissions: { contains: async () => siteAccess, request: async () => true },
+    permissions: {
+      contains: async () => siteAccess,
+      request: async () => {
+        if (permissionRequest === 'error') throw new Error('Preview: the request failed');
+        return permissionRequest === 'granted';
+      }
+    },
     runtime: {
       id: 'store-preview-extension',
-      getManifest: () => ({}),
+      getManifest: () => manifest,
       onMessage: { addListener: () => {} },
-      sendMessage: async (message) => (
-        message.type === 'GET_TAB_STATE' ? tabState : { success: true }
-      )
+      sendMessage: async (message) => {
+        if (message.type === 'GET_TAB_STATE') return tabState;
+        if (message.type === 'APPLY_TO_TAB') {
+          tabState.enabled = message.enabled;
+          tabState.settings = message.settings;
+          return { success: true, enabled: message.enabled, ...tabStatus() };
+        }
+        return { success: true };
+      }
     },
-    scripting: { executeScript: async () => [] },
+    scripting: {
+      executeScript: async () => {
+        if (!injects) throw new Error('Preview: the page cannot be scripted');
+        return [];
+      }
+    },
     storage: {
       local: {
         get: async (defaults) => storageGet(defaults),
@@ -113,12 +152,22 @@ function installPopupBrowserMock({
       }
     },
     tabs: {
-      onUpdated: { addListener: () => {}, removeListener: () => {} },
+      onUpdated: {
+        addListener: (listener) => updateListeners.add(listener),
+        removeListener: (listener) => updateListeners.delete(listener)
+      },
       query: async () => [activeTab],
-      reload: async () => {},
-      sendMessage: async (_tabId, message) => (
-        message.type === 'GET_STATE' ? tabState : { success: true }
-      )
+      reload: async (tabId) => {
+        if (reload === 'error') throw new Error('Preview: the reload failed');
+        setTimeout(() => {
+          for (const listener of updateListeners) listener(tabId, { status: 'complete' });
+        }, 0);
+      },
+      sendMessage: async (_tabId, message) => {
+        if (message.type !== 'GET_STATE') return { success: true };
+        if (!answers) throw new Error('Preview: nothing in the page answered');
+        return tabState;
+      }
     }
   };
 }

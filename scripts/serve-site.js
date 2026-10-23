@@ -7,6 +7,8 @@
 //
 //   npm run site:serve            http://localhost:8080
 //   npm run site:serve -- 9000    another port
+//
+// e2e/ui/site.spec.js starts the same server with createSiteServer().
 
 const fs = require('fs');
 const http = require('http');
@@ -21,7 +23,6 @@ const TYPES = Object.freeze({
 const contentType = (file) => TYPES[path.extname(file)] || 'application/octet-stream';
 
 const siteRoot = path.join(__dirname, '..', 'site');
-const port = Number(process.argv[2]) || 8080;
 const hidden = new Set(
   fs.readFileSync(path.join(siteRoot, '.assetsignore'), 'utf8')
     .split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'))
@@ -49,7 +50,7 @@ function send(response, status, file) {
   fs.createReadStream(file).pipe(response);
 }
 
-http.createServer((request, response) => {
+function handle(request, response) {
   const { pathname } = new URL(request.url, 'http://localhost');
   if (pathname.endsWith('.html')) {
     const clean = pathname.replace(/(index)?\.html$/, '');
@@ -60,6 +61,17 @@ http.createServer((request, response) => {
   const file = fileFor(pathname);
   if (file) send(response, 200, file);
   else send(response, 404, path.join(siteRoot, '404.html'));
-}).listen(port, '127.0.0.1', () => {
-  console.log(`site/ at http://localhost:${port}`);
-});
+}
+
+function createSiteServer() {
+  return http.createServer(handle);
+}
+
+if (require.main === module) {
+  const port = Number(process.argv[2]) || 8080;
+  createSiteServer().listen(port, '127.0.0.1', () => {
+    console.log(`site/ at http://localhost:${port}`);
+  });
+}
+
+module.exports = { createSiteServer };

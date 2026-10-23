@@ -25,6 +25,7 @@
     "test:audio-trial:firefox": "npm run build:firefox && node --test --test-concurrency=1 e2e/audio-capture/firefox-trial.js",
     "test:e2e": "npm run build:chromium && playwright test",
     "test:firefox": "npm run build:firefox && node --test e2e/firefox-shutdown.js",
+    "test:ui": "playwright test --config=playwright.ui.config.js",
     "test:watch": "node --test --test-concurrency=1 --watch"
   },
   "devDependencies": {
