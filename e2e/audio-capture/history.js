@@ -16,8 +16,10 @@
 //   surrogate: a change that causes the same symptom by a different route,
 //     because the old route no longer exists.
 // `browsers` lists where the defect was heard; a control runs only there.
-// `expect` lists the problems it must cause ({ code, during }: the problem's
-// message names the action or steady stretch where it was heard).
+// `sites` lists the engines it was put back into, each checked on its own.
+// `expect` lists the problems it must cause in each of them ({ code,
+// during }: the problem's message names the action or steady stretch where
+// it was heard).
 
 const both = ['chromium', 'firefox'];
 
@@ -63,6 +65,7 @@ const HISTORY = [
     kind: 'narrow',
     browsers: both,
     check: 'transitions',
+    sites: ['youtube', 'spotify'],
     mutations: [
       ...straightChanges('youtube-main.js', 'param, value', 'audioContext.currentTime'),
       ...straightChanges('spotify-main.js', 'context, param, value', 'context.currentTime')
@@ -86,6 +89,7 @@ const HISTORY = [
     note: 'The first of its two fixes; the silence deadline it also fixed is left as it is today.',
     browsers: both,
     check: 'overlapping changes',
+    sites: ['youtube', 'spotify'],
     mutations: [startFromNow('youtube-main.js'), startFromNow('spotify-main.js')],
     expect: [{ code: 'click', during: 'during overlapping changes' }]
   },
@@ -97,6 +101,7 @@ const HISTORY = [
     note: "Spotify's speed writes go to the player again; the engine then puts its speed back on every ratechange, as before.",
     browsers: ['firefox'],
     check: "Spotify's speed resets",
+    sites: ['spotify'],
     mutations: [
       {
         file: 'spotify-main.js',
@@ -114,6 +119,7 @@ const HISTORY = [
     kind: 'exact',
     browsers: both,
     check: 'a speed request during a waiting change',
+    sites: ['spotify'],
     mutations: [
       {
         file: 'spotify-main.js',
@@ -135,6 +141,7 @@ const HISTORY = [
     note: "Before 134e1c0 nothing noticed the extension was gone. Today the engines ask the isolated scripts, which Chromium leaves running; here those keep answering as if it were still on.",
     browsers: ['chromium'],
     check: 'turning the extension off',
+    sites: ['youtube', 'spotify'],
     mutations: [
       {
         file: 'content.js',
@@ -159,6 +166,7 @@ const HISTORY = [
     note: "Before 1127987 the bridge turned the engine off itself, which Firefox's removal of the bridge prevented. Here the engine stops checking for its bridge, which has the same result.",
     browsers: ['firefox'],
     check: 'turning the extension off',
+    sites: ['spotify'],
     mutations: [
       {
         file: 'spotify-main.js',
@@ -176,6 +184,7 @@ const HISTORY = [
     kind: 'narrow',
     browsers: both,
     check: 'turning the extension off',
+    sites: ['youtube'],
     mutations: [
       {
         file: 'youtube-main.js',
@@ -193,6 +202,7 @@ const HISTORY = [
     kind: 'narrow',
     browsers: both,
     check: 'turning the extension off',
+    sites: ['youtube'],
     mutations: [
       {
         file: 'youtube-main.js',
@@ -211,6 +221,7 @@ const HISTORY = [
     kind: 'narrow',
     browsers: both,
     check: 'an update',
+    sites: ['youtube'],
     mutations: [
       {
         file: 'content.js',
@@ -231,6 +242,7 @@ const HISTORY = [
     kind: 'narrow',
     browsers: ['firefox'],
     check: 'an update',
+    sites: ['spotify'],
     mutations: [
       {
         file: 'spotify-bridge.js',
@@ -246,4 +258,28 @@ const HISTORY = [
   }
 ];
 
-module.exports = { HISTORY };
+// Why a control wasn't caught, empty if it was. `results` are the checks it
+// ran, [{ site, problems }], in order: there has to be one for each of the
+// entry's sites, and each has to fail with every problem the entry lists,
+// on its own, and with none of `invalidCodes` (a recording or setup that
+// failed says nothing about the sound).
+function controlVerdict(entry, results, invalidCodes) {
+  const failures = [];
+  const ran = results.map((result) => result.site);
+  if (ran.join(',') !== entry.sites.join(',')) failures.push(`ran on ${ran.join(', ') || 'no site'}, wanted ${entry.sites.join(', ')}`);
+  for (const { site, problems } of results) {
+    const listed = problems.map(({ code, message }) => `${code}: ${message}`);
+    for (const { code, during } of entry.expect) {
+      if (!problems.some((problem) => problem.code === code && problem.message.includes(during))) {
+        failures.push(`${site}: should fail with ${code} in "${during}"; got ${JSON.stringify(listed)}`);
+      }
+    }
+    const invalid = problems.filter((problem) => invalidCodes.includes(problem.code));
+    if (invalid.length) {
+      failures.push(`${site}: must fail for its sound, not its measurement or setup: ${JSON.stringify(invalid.map(({ code, message }) => `${code}: ${message}`))}`);
+    }
+  }
+  return failures;
+}
+
+module.exports = { HISTORY, controlVerdict };

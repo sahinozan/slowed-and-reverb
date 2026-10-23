@@ -389,7 +389,21 @@ function assertWindowsFail(dir, name, windows, expect, codes, forbidden = []) {
 }
 
 // Problems that mean the clock or the recorder failed, not the signal.
-const RECORDER_PROBLEMS = ['not-running', 'clock-stalled', 'no-frames', 'frames-stalled', 'frames-lost', 'recorder-error', 'recorder-not-ready', 'context-gap', 'frame-mismatch'];
+const RECORDER_PROBLEMS = [
+  'not-running',
+  'clock-stalled',
+  'no-frames',
+  'frames-stalled',
+  'frames-lost',
+  'recorder-error',
+  'recorder-not-ready',
+  'context-gap',
+  'frame-mismatch',
+  'frame-label-fault',
+  'stale-label-unverified',
+  'stale-label-discontinuity',
+  'stale-label-repeat'
+];
 
 function observerScript(server, overrides = {}) {
   return { workletUrl: server.workletPath, ...overrides };

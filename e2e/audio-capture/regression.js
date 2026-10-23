@@ -32,9 +32,20 @@ const {
   snapshot,
   waitFor
 } = require('./harness');
-const { HISTORY } = require('./history');
+const { ACTION_LIMIT_MS, PAGE_BACKSTOP_MS, PAGE_STEP_MS, runPageStep, withDeadline } = require('./actions');
+const { HISTORY, controlVerdict } = require('./history');
 const { TONE, TONE_B, encodeWav, startTrialServer } = require('./fixture');
-const { CLICK_THRESHOLD, analyzeSpan, decodeChannels, envelope, spanHealth } = require('./metrics');
+const {
+  CLICK_THRESHOLD,
+  DRY_LEVEL_TOLERANCE,
+  DRY_RESIDUAL_RMS,
+  analyzeSpan,
+  decodeChannels,
+  dryRestoration,
+  envelope,
+  markProblems,
+  spanHealth
+} = require('./metrics');
 
 const ARTIFACT_ROOT = path.join(root, 'test-results', 'audio-regression');
 // "compact" keeps the JSON but writes sound excerpts only around problems,
@@ -70,7 +81,22 @@ const ACTION_WINDOW_MS = 300;
 // within their 250 ms check and fade back to the unchanged sound. The window
 // also allows for the browser shutting the extension down first.
 const LIFECYCLE_WINDOW_MS = 1500;
+// The unchanged sound has to be back this soon after such an action: both
+// channels' own tones at their exact level and nothing else (dryRestoration
+// in metrics.js).
 const RESTORE_LIMIT_MS = 1000;
+const DRY_TONES = [
+  { hz: TONE.leftHz, amplitude: TONE.amplitude },
+  { hz: TONE.rightHz, amplitude: TONE.amplitude }
+];
+// Turning the effect on while a song plays is recorded until this long
+// after it: Firefox's own click after a playing player is routed into a
+// graph comes 2 to 4 s later (README.md in this folder), so a click then is
+// heard and fails the check.
+const FIRST_ENABLE_OBSERVE_MS = 6000;
+// How long cleaning up after a check that couldn't finish may wait for the
+// page.
+const CLEANUP_MS = 5_000;
 // A change starts 20 ms ahead and fades over 25 ms, so a second change that
 // reaches the engine 20 to 45 ms after the first arrives mid-fade. A slider
 // sends one about every 16 ms as it is dragged; the sweep sends one every
@@ -138,7 +164,20 @@ function defineRegression(browser) {
       normal = prepareTrialExtension(path.join(tempRoot, 'normal'), target);
       older = prepareTrialExtension(path.join(tempRoot, 'older'), target, { version: '0.0.1' });
       const environment = { label: browser.label, ...provenance(target), extensionCopy: normal, olderCopy: older };
-      environment.suite = { retainSeconds: RETAIN_SECONDS, settleMs: SETTLE_MS, holdMs: HOLD_MS, clickThreshold: CLICK_THRESHOLD, dipMs: DIP_MS, firstRouteMs: FIRST_ROUTE_MS, restoreLimitMs: RESTORE_LIMIT_MS };
+      environment.suite = {
+        retainSeconds: RETAIN_SECONDS,
+        settleMs: SETTLE_MS,
+        holdMs: HOLD_MS,
+        clickThreshold: CLICK_THRESHOLD,
+        dipMs: DIP_MS,
+        firstRouteMs: FIRST_ROUTE_MS,
+        firstEnableObserveMs: FIRST_ENABLE_OBSERVE_MS,
+        restoreLimitMs: RESTORE_LIMIT_MS,
+        dryLevelTolerance: DRY_LEVEL_TOLERANCE,
+        dryResidualRms: DRY_RESIDUAL_RMS,
+        pageStepMs: PAGE_STEP_MS,
+        actionLimitMs: ACTION_LIMIT_MS
+      };
       environment.hostAtLaunch = { loadAverage: os.loadavg(), freeMemoryMb: Math.round(os.freemem() / 1e6), cpus: os.cpus().length };
       try {
         environment.browser = await browser.start({ server, extensionDir: normal.extensionDir, artifacts });
@@ -158,6 +197,46 @@ function defineRegression(browser) {
     });
 
     // --- pages and spans ---------------------------------------------------
+
+    // The pages and spans of the check under way, so one that can't finish
+    // still leaves its evidence and closes its pages (guarded).
+    const live = { pages: new Set(), spans: new Set() };
+
+    // A page's answer, or a measurement failure if it doesn't answer in time.
+    function ask(page, what, fn, arg) {
+      return withDeadline(page.evaluate(fn, arg), PAGE_STEP_MS + PAGE_BACKSTOP_MS, `the page didn't answer ${what}`);
+    }
+
+    async function closePage(page) {
+      live.pages.delete(page);
+      await withDeadline(page.close(), CLEANUP_MS, 'the page did not close').catch(() => {});
+    }
+
+    // Runs a check. If it can't finish (an action or the page that never
+    // answers, a setup that fails), it writes what it has of each span to
+    // <name>-failed.json, closes its pages and fails as a measurement
+    // failure: never a sound result, and never a control caught.
+    async function guarded(name, run) {
+      try {
+        return await run();
+      } catch (error) {
+        const spans = [];
+        for (const span of live.spans) {
+          const latest = await withDeadline(snapshot(span.page), CLEANUP_MS, 'no snapshot').catch((failure) => ({ error: failure.message }));
+          spans.push({ name: span.name, fromFrame: span.fromFrame, actions: span.actions, marks: span.marks, checks: span.checks, start: span.start, latest });
+        }
+        const record = { name, browser: browser.label, error: String(error?.stack ?? error).slice(0, 4_000), spans };
+        fs.writeFileSync(path.join(artifacts, `${name}-failed.json`), `${JSON.stringify(record, null, 2)}\n`);
+        throw new Error(
+          `${name}: the check couldn't finish, so this is a measurement failure, not a sound result: ${error?.message ?? error} ` +
+            `(evidence in ${path.relative(root, artifacts)}/${name}-failed.json)`,
+          { cause: error }
+        );
+      } finally {
+        live.spans.clear();
+        for (const page of [...live.pages]) await closePage(page);
+      }
+    }
 
     function urlFor(site) {
       return `${site === 'spotify' ? server.spotifyUrl : server.youtubeUrl}long`;
@@ -181,7 +260,7 @@ function defineRegression(browser) {
         // run as it loads; the first load can come before the registration.
         await waitFor(
           async () => {
-            if (await page.evaluate(() => window.__slowedReverbSpotifyMain === true)) return true;
+            if (await ask(page, 'whether the engine ran', () => window.__slowedReverbSpotifyMain === true)) return true;
             await page.reload();
             return false;
           },
@@ -189,14 +268,14 @@ function defineRegression(browser) {
           "the extension's registered Spotify engine never ran in the page"
         );
       } else {
-        await waitFor(() => page.evaluate(() => document.getElementById('player').readyState >= 1), 10_000, 'the tone never loaded');
+        await waitFor(() => ask(page, 'whether the tone loaded', () => document.getElementById('player').readyState >= 1), 10_000, 'the tone never loaded');
       }
-      await page.evaluate(logEngineRequests);
+      await ask(page, 'its request log', logEngineRequests);
     }
 
     // Waits for the song to be heard, so a span taken next starts in it.
     async function untilSounding(page) {
-      await page.evaluate((timeout) => window.__audioTrial.waitReady(0, timeout), READY_TIMEOUT_MS);
+      await ask(page, 'that the recorder is ready', (timeout) => window.__audioTrial.waitReady(0, timeout), READY_TIMEOUT_MS);
       await sleep(START_SETTLE_MS);
     }
 
@@ -204,6 +283,7 @@ function defineRegression(browser) {
     // or with `playing` set, the song already playing without it.
     async function openSite(site, { settings = EFFECT, playing = false } = {}) {
       const page = await browser.newPage(urlFor(site), { workletUrl: server.workletPath, retainSeconds: RETAIN_SECONDS });
+      live.pages.add(page);
       await waitForEngine(page, site);
       if (playing) {
         if (site === 'spotify') await applyThroughExtension(page, settings, false);
@@ -218,7 +298,7 @@ function defineRegression(browser) {
     }
 
     async function mark(span, label) {
-      const value = await span.page.evaluate(({ label }) => window.__audioTrial.mark(0, label), { label });
+      const value = await ask(span.page, `a mark (${label})`, ({ label }) => window.__audioTrial.mark(0, label), { label });
       span.marks.push(value);
       return value;
     }
@@ -227,19 +307,31 @@ function defineRegression(browser) {
     // takes the span from the first recorded frame, for an action that
     // created the audio context itself.
     async function beginSpan(page, name, { fromStart = false } = {}) {
-      await page.evaluate((timeout) => window.__audioTrial.waitReady(0, timeout), READY_TIMEOUT_MS);
-      const start = await snapshot(page);
+      await ask(page, 'that the recorder is ready', (timeout) => window.__audioTrial.waitReady(0, timeout), READY_TIMEOUT_MS);
+      const start = await withDeadline(snapshot(page), PAGE_STEP_MS, "the page didn't answer a snapshot");
       const span = { page, name, start, fromFrame: fromStart ? 0 : start.recorder.nextFrame, marks: [], actions: [], segments: [], checks: [] };
+      live.spans.add(span);
       if (!fromStart) await sleep(PRE_ROLL_MS);
       return span;
     }
 
+    // An action, marked before and after. One that isn't done within
+    // ACTION_LIMIT_MS (or whose page step times out) fails the check as a
+    // measurement failure (guarded), with the action kept in the evidence.
     async function act(spans, label, allow, run) {
       const list = Array.isArray(spans) ? spans : [spans];
       const befores = [];
       for (const span of list) befores.push(await mark(span, `${label}: before`));
       const started = Date.now();
-      const result = await run();
+      let result;
+      try {
+        result = await withDeadline(Promise.resolve().then(run), ACTION_LIMIT_MS, `the action "${label}"`);
+      } catch (error) {
+        for (const [index, span] of list.entries()) {
+          span.actions.push({ label, startFrame: befores[index].recorderFrame, endFrame: null, durationMs: Date.now() - started, error: String(error?.message ?? error) });
+        }
+        throw error;
+      }
       const durationMs = Date.now() - started;
       for (const [index, span] of list.entries()) {
         const afterMark = await mark(span, `${label}: after`);
@@ -286,57 +378,69 @@ function defineRegression(browser) {
       return problems;
     }
 
-    // When the sound came back unchanged after a lifecycle action: the first
-    // frame from which every 10 ms of the right channel carries the song's
-    // own right tone (RMS 0.177; the effect, panned left, leaves it silent),
-    // up to the end of the steady stretch after it.
-    function restoration(analysisInput, action, segment) {
-      const { right, sampleRate, fromFrame } = analysisInput;
-      const step = Math.round(sampleRate / 100);
-      const start = action.startFrame - fromFrame;
-      const end = Math.min(right.length, (segment?.toFrame ?? fromFrame + right.length) - fromFrame);
-      let restored = null;
-      for (let block = start; block + step <= end; block += step) {
-        let sum = 0;
-        for (let i = block; i < block + step; i++) sum += right[i] ** 2;
-        const dry = Math.sqrt(sum / step) >= 0.1;
-        if (!dry) restored = null;
-        else if (restored === null) restored = block;
-      }
-      return restored === null ? null : Math.round(((restored - start) / sampleRate) * 1000);
+    // A snapshot from at least one batch after `end`, so a stale run the
+    // recorder logged near the span's end has caught up (frameLabelProblems
+    // in metrics.js). If none comes, the span's own end stands in, and such
+    // a run counts as unverified.
+    async function settledAfter(page, end) {
+      return waitFor(
+        async () => {
+          const later = await withDeadline(snapshot(page), PAGE_STEP_MS, "the page didn't answer a snapshot");
+          return later.recorder.nextFrame > end.recorder.nextFrame ? later : null;
+        },
+        1_000,
+        'no batch after the span'
+      ).catch(() => end);
     }
 
     // Ends a span, measures it and keeps its evidence. Returns its problems.
-    async function finishSpan(span) {
-      const end = await snapshot(span.page);
-      const read = await span.page.evaluate(
-        ({ from, to }) => window.__audioTrial.read(0, from, to),
-        { from: span.fromFrame, to: end.recorder.nextFrame }
-      );
+    // `wholeSpan` also keeps all of its sound, as a WAV.
+    async function finishSpan(span, { wholeSpan = false } = {}) {
+      const end = await withDeadline(snapshot(span.page), PAGE_STEP_MS, "the page didn't answer a snapshot");
+      const read = await ask(span.page, 'with its recording', ({ from, to }) => window.__audioTrial.read(0, from, to), {
+        from: span.fromFrame,
+        to: end.recorder.nextFrame
+      });
+      const settled = await settledAfter(span.page, end);
       const [left, right] = decodeChannels(read);
       const { sampleRate } = read;
-      const health = spanHealth(span.start, end, [left, right], span.fromFrame);
+      const health = [...spanHealth(span.start, end, [left, right], span.fromFrame, settled), ...markProblems(span.marks)];
       const analysis = analyzeSpan({ sampleRate, fromFrame: span.fromFrame, left, right, actions: span.actions, segments: span.segments });
       const problems = [...health, ...analysis.problems];
       for (const segment of span.segments) problems.push(...mediaProblems(segment));
 
+      // The exact unchanged sound back after the extension is turned off,
+      // removed or updated, within RESTORE_LIMIT_MS of the action's first
+      // mark and up to the end of the steady stretch after it.
       const restorations = [];
       for (const action of span.actions.filter((candidate) => candidate.allow?.restores)) {
         const segment = span.segments.find((candidate) => candidate.fromFrame > action.endFrame);
-        const restoredAfterMs = restoration({ right, sampleRate, fromFrame: span.fromFrame }, action, segment);
-        restorations.push({ action: action.label, restoredAfterMs, limitMs: RESTORE_LIMIT_MS });
+        const restoration = dryRestoration({
+          left,
+          right,
+          sampleRate,
+          fromFrame: span.fromFrame,
+          startFrame: action.startFrame,
+          toFrame: segment?.toFrame ?? span.fromFrame + left.length,
+          dry: DRY_TONES
+        });
+        const { restoredAfterMs, energyOnsetMs } = restoration;
+        restorations.push({ action: action.label, ...restoration, limitMs: RESTORE_LIMIT_MS });
         if (restoredAfterMs === null || restoredAfterMs > RESTORE_LIMIT_MS) {
+          const heard = energyOnsetMs === null ? '' : `; sound on the right from ${energyOnsetMs} ms`;
           problems.push({
             code: 'not-restored',
-            message: `${action.label}: ${restoredAfterMs === null ? 'the unchanged sound never came back' : `the unchanged sound came back after ${restoredAfterMs} ms`} (wanted within ${RESTORE_LIMIT_MS} ms)`
+            message:
+              `${action.label}: ${restoredAfterMs === null ? 'the unchanged sound never came back' : `the unchanged sound came back after ${restoredAfterMs} ms`}` +
+              ` (both songs' tones at their exact level and nothing else, wanted within ${RESTORE_LIMIT_MS} ms${heard})`
           });
         }
       }
       // The player paused by anything but the check itself, such as another
       // app taking the system's media controls: an interrupted recording,
       // not the extension's sound.
-      const playerEvents = await span.page.evaluate(() => window.playerEvents ?? []);
-      const ignoredMediaActions = await span.page.evaluate(() => window.ignoredMediaActions ?? []);
+      const playerEvents = await ask(span.page, 'its player events', () => window.playerEvents ?? []);
+      const ignoredMediaActions = await ask(span.page, 'its media actions', () => window.ignoredMediaActions ?? []);
       const startMs = span.start.wallMs;
       const byAction = (atMs) =>
         span.actions.some((action) => {
@@ -364,6 +468,11 @@ function defineRegression(browser) {
       };
       if (!COMPACT) for (const action of span.actions) keep(action.label, action.startFrame);
       for (const event of [...analysis.clicks, ...analysis.silences].filter((item) => item.allowed === false)) keep(`problem at ${event.atMs} ms`, event.frame);
+      if (wholeSpan && (!COMPACT || problems.length)) {
+        const file = `${name}-whole.wav`;
+        fs.writeFileSync(path.join(artifacts, file), encodeWav(left, right, sampleRate));
+        excerpts.push({ file, label: 'the whole span', fromMs: 0, toMs: toMs(span.fromFrame + left.length) });
+      }
 
       const record = {
         name,
@@ -391,12 +500,12 @@ function defineRegression(browser) {
         restorations,
         excerpts,
         marks: span.marks,
-        rateChanges: await span.page.evaluate(() => window.rateChanges ?? []),
+        rateChanges: await ask(span.page, 'its speed changes', () => window.rateChanges ?? []),
         playerEvents,
         ignoredMediaActions,
-        engineRequests: await span.page.evaluate(() => window.engineRequests ?? []),
+        engineRequests: await ask(span.page, 'its engine requests', () => window.engineRequests ?? []),
         envelope10ms: envelope(left, right, sampleRate),
-        snapshots: { start: span.start, end }
+        snapshots: { start: span.start, end, settled }
       };
       fs.writeFileSync(path.join(artifacts, `${name}.json`), `${JSON.stringify(record, null, 2)}\n`);
       summary.checks.push({
@@ -409,13 +518,27 @@ function defineRegression(browser) {
         quietPeak: analysis.quietPeak,
         firstContextFrame: end.recorder.firstContextFrame
       });
+      live.spans.delete(span);
       return problems;
     }
 
     // Problems that make a span invalid as a measurement: the recording,
     // the setup or something outside the check failed, so the span says
     // nothing about the sound either way.
-    const NOT_SOUND = [...RECORDER_PROBLEMS, 'observer-error', 'no-context', 'sample-rate-mismatch', 'not-stereo', 'non-finite', 'setup', 'not-covered', 'onset-not-observed', 'not-overlapping', 'interrupted'];
+    const NOT_SOUND = [
+      ...RECORDER_PROBLEMS,
+      'mark-out-of-step',
+      'observer-error',
+      'no-context',
+      'sample-rate-mismatch',
+      'not-stereo',
+      'non-finite',
+      'setup',
+      'not-covered',
+      'onset-not-observed',
+      'not-overlapping',
+      'interrupted'
+    ];
 
     function assertClean(name, problems) {
       const invalid = problems.some((problem) => NOT_SOUND.includes(problem.code));
@@ -429,10 +552,10 @@ function defineRegression(browser) {
 
     // The page's own actions, as a site does them.
     const pageActions = {
-      setRate: (page, rate) => page.evaluate((rate) => { document.getElementById('player').playbackRate = rate; }, rate),
-      pause: (page) => page.evaluate(() => document.getElementById('player').pause()),
-      play: (page) => page.evaluate(() => document.getElementById('player').play().then(() => 'playing')),
-      rateChangesSince: (page, atMs) => page.evaluate((atMs) => window.rateChanges.filter((change) => change.atMs >= atMs), atMs)
+      setRate: (page, rate) => ask(page, 'a change of speed', (rate) => { document.getElementById('player').playbackRate = rate; }, rate),
+      pause: (page) => ask(page, 'a pause', () => document.getElementById('player').pause()),
+      play: (page) => runPageStep(page, 'play'),
+      rateChangesSince: (page, atMs) => ask(page, 'its speed changes', (atMs) => window.rateChanges.filter((change) => change.atMs >= atMs), atMs)
     };
 
     // --- the checks ----------------------------------------------------------
@@ -459,19 +582,20 @@ function defineRegression(browser) {
       // The tail of a 2 s reverb, from 50 to 450 ms after the song stops.
       await hold(span, 'after the song with reverb', { channels: [{ minRms: 0.005 }, { maxRms: 0.001 }] }, { settleMs: 50, holdMs: 400 });
       const problems = await finishSpan(span);
-      await page.close();
+      await closePage(page);
       return problems;
     }
 
     // Turning the effect on while the song plays: the engine routes the
     // playing player into a new graph, and the recording starts with that
-    // graph, so the whole change is heard. The span ends about a second
-    // after the sound comes in: Firefox itself clicks once, 2 to 4 s after
-    // a playing player is routed into a graph and its speed or pitch mode
-    // changes, with or without the extension (README.md in this folder).
+    // graph, so the whole change is heard. The span goes on until
+    // FIRST_ENABLE_OBSERVE_MS after the effect turned on, through the 2 to
+    // 4 s after it in which Firefox has clicked on its own (README.md in this
+    // folder), and every frame of it is checked, so such a click fails the
+    // check. The whole span's sound is kept.
     async function firstEnableCheck(site, name) {
       const page = await openSite(site, { playing: true });
-      assert.equal(await page.evaluate(() => window.__audioTrial.contextCount()), 0, 'an audio context existed before the effect turned on');
+      assert.equal(await ask(page, 'its contexts', () => window.__audioTrial.contextCount()), 0, 'an audio context existed before the effect turned on');
       const firstOn = Date.now();
       const applied = await applyThroughExtension(page, EFFECT, true);
       const span = await beginSpan(page, name, { fromStart: true });
@@ -486,8 +610,14 @@ function defineRegression(browser) {
       });
       if (applied?.success !== true) span.checks.push({ code: 'setup', message: `the effect didn't turn on: ${JSON.stringify(applied)}` });
       await hold(span, 'on', effectExpect(EFFECT));
-      const problems = await finishSpan(span);
-      await page.close();
+      // Counted on the recording, which starts with the context the effect
+      // created.
+      const recordedMs = (span.segments[0].to.recorderFrame / span.start.context.sampleRate) * 1000;
+      await hold(span, `on, ${FIRST_ENABLE_OBSERVE_MS / 1000} s after turning it on`, effectExpect(EFFECT), {
+        settleMs: Math.max(0, FIRST_ENABLE_OBSERVE_MS - HOLD_MS - recordedMs)
+      });
+      const problems = await finishSpan(span, { wholeSpan: true });
+      await closePage(page);
       return problems;
     }
 
@@ -512,12 +642,12 @@ function defineRegression(browser) {
       // the answers, so each one reaches the engine while the fade the one
       // before started is still under way.
       const sweep = [100, -100, 100, -100, 100, -100, 100, -100].map((pan) => ({ ...current, pan }));
-      const requestsFrom = await page.evaluate(() => performance.now());
+      const requestsFrom = await ask(page, 'its clock', () => performance.now());
       await act(span, 'overlapping changes', NOTHING, () =>
         Promise.all(sweep.map((settings, index) => sleep(index * SWEEP_STEP_MS).then(() => applyThroughExtension(page, settings, true))))
       );
       current = sweep[sweep.length - 1];
-      const requests = await page.evaluate((atMs) => window.engineRequests.filter((request) => request.atMs >= atMs), requestsFrom);
+      const requests = await ask(page, 'its engine requests', (atMs) => window.engineRequests.filter((request) => request.atMs >= atMs), requestsFrom);
       const spacing = requests.slice(1).map((request, index) => Math.round((request.atMs - requests[index].atMs) * 10) / 10);
       const overlapping = spacing.filter((gap) => gap >= OVERLAP_MS[0] && gap < OVERLAP_MS[1]).length;
       span.actions[span.actions.length - 1].result = { spacingMs: spacing, overlapping };
@@ -538,7 +668,7 @@ function defineRegression(browser) {
       await act(span, 'turn on', settingsChange(target, { ...current, speed: 1 }, current), () => applyThroughExtension(page, current, true));
       await hold(span, 'on again', effectExpect(current));
       const problems = await finishSpan(span);
-      await page.close();
+      await closePage(page);
       return problems;
     }
 
@@ -549,7 +679,7 @@ function defineRegression(browser) {
       const span = await beginSpan(page, name);
       await hold(span, 'on', effectExpect(EFFECT), { settleMs: 0 });
 
-      const resetsFrom = await page.evaluate(() => performance.now());
+      const resetsFrom = await ask(page, 'its clock', () => performance.now());
       await act(span, 'Spotify resets the speed three times', NOTHING, async () => {
         for (let reset = 0; reset < 3; reset++) {
           await pageActions.setRate(page, 1);
@@ -581,7 +711,7 @@ function defineRegression(browser) {
       await act(span, 'turn off while Spotify holds the player and then asks for normal speed', ({ durationMs }) => ({ clicks: true, silenceMs: durationMs + DIP_MS }), async () => {
         await pageActions.setRate(page, 0);
         await sleep(200);
-        await page.evaluate(() => {
+        await ask(page, 'a listener for the request', () => {
           window.addEventListener('message', function listener(event) {
             if (event.source !== window || event.data?.channel !== 'SLOWED_REVERB_SPOTIFY' || event.data.type !== 'APPLY') return;
             if (event.data.enabled !== false) return;
@@ -600,20 +730,13 @@ function defineRegression(browser) {
       // its default speed, which the engine undoes, and Spotify then asks for
       // normal speed itself, which the engine keeps.
       await act(span, 'the next song', ({ durationMs }) => ({ clicks: true, silenceMs: durationMs + DIP_MS }), () =>
-        page.evaluate(async () => {
-          const player = document.getElementById('player');
-          const playing = new Promise((resolve) => player.addEventListener('playing', resolve, { once: true }));
-          player.src = '/tone-b-long.wav';
-          await player.play();
-          await playing;
-          player.playbackRate = 1;
-        })
+        runPageStep(page, 'nextSong', { src: '/tone-b-long.wav' })
       );
       await hold(span, 'the next song', effectExpect(EFFECT, TONE_B));
-      const contexts = await page.evaluate(() => window.__audioTrial.contextCount());
+      const contexts = await ask(page, 'its contexts', () => window.__audioTrial.contextCount());
       if (contexts !== 1) span.checks.push({ code: 'contexts', message: `${contexts} audio contexts, wanted 1` });
       const problems = await finishSpan(span);
-      await page.close();
+      await closePage(page);
       return problems;
     }
 
@@ -630,23 +753,16 @@ function defineRegression(browser) {
       await hold(span, 'off', dryExpect(), { settleMs: 1000 });
 
       if (site === 'youtube') {
+        // Out for longer than the engine waits before it looks at the page
+        // again.
         await act(span, 'the page takes its player out and puts it back at 1.25x', ({ durationMs }) => ({ clicks: true, silenceMs: durationMs + DIP_MS }), () =>
-          page.evaluate(async () => {
-            const player = document.getElementById('player');
-            const parent = player.parentNode;
-            player.remove();
-            // Longer than the engine waits before it looks at the page again.
-            await new Promise((resolve) => setTimeout(resolve, 400));
-            player.playbackRate = 1.25;
-            parent.append(player);
-            await player.play();
-          })
+          runPageStep(page, 'putBack', { rate: 1.25, waitMs: 400 })
         );
         await hold(span, 'put back at 1.25x', dryExpect(1.25));
       }
       if (remove) {
         const problems = await finishSpan(span);
-        await page.close();
+        await closePage(page);
         return problems;
       }
 
@@ -671,7 +787,7 @@ function defineRegression(browser) {
       }
       const problems = await finishSpan(span);
       if (spotifyNeedsReload) problems.push(...(await afterReload(page, `${name}-reloaded`, site)));
-      await page.close();
+      await closePage(page);
       return problems;
     }
 
@@ -721,7 +837,7 @@ function defineRegression(browser) {
         }
         const problems = await finishSpan(span);
         problems.push(...(await afterReload(page, `${name}-reloaded`, site)));
-        await page.close();
+        await closePage(page);
         return problems;
       } finally {
         await browser.useExtension(normal.extensionDir);
@@ -734,32 +850,37 @@ function defineRegression(browser) {
 
     for (const site of sites) {
       test(`speed, pitch and reverb as heard: ${site}`, async () => {
-        assertClean(`steady-${site}`, await steadyCheck(site, `steady-${site}`));
+        const name = `steady-${site}`;
+        assertClean(name, await guarded(name, () => steadyCheck(site, name)));
       });
     }
     for (const site of sites) {
       test(`turning the effect on while the song plays: ${site}`, async () => {
-        assertClean(`first-enable-${site}`, await firstEnableCheck(site, `first-enable-${site}`));
+        const name = `first-enable-${site}`;
+        assertClean(name, await guarded(name, () => firstEnableCheck(site, name)));
       });
     }
     for (const site of sites) {
       test(`changes while the song plays: ${site}`, async () => {
-        assertClean(`transitions-${site}`, await transitionsCheck(site, `transitions-${site}`));
+        const name = `transitions-${site}`;
+        assertClean(name, await guarded(name, () => transitionsCheck(site, name)));
       });
     }
     test("Spotify's own speed resets, a seek and the next song", async () => {
-      assertClean('spotify-resets', await spotifyResetsCheck('spotify-resets'));
+      assertClean('spotify-resets', await guarded('spotify-resets', () => spotifyResetsCheck('spotify-resets')));
     });
     for (const site of sites) {
       test(`turning the extension off and on in the browser: ${site}`, async () => {
-        assertClean(`lifecycle-${site}`, await lifecycleCheck(site, `lifecycle-${site}`));
+        const name = `lifecycle-${site}`;
+        assertClean(name, await guarded(name, () => lifecycleCheck(site, name)));
       });
     }
     if (browser.canRemove) {
       for (const site of sites) {
         test(`removing the extension: ${site}`, async () => {
+          const name = `removed-${site}`;
           try {
-            assertClean(`removed-${site}`, await lifecycleCheck(site, `removed-${site}`, { remove: true }));
+            assertClean(name, await guarded(name, () => lifecycleCheck(site, name, { remove: true })));
           } finally {
             await browser.useExtension(normal.extensionDir);
           }
@@ -768,23 +889,21 @@ function defineRegression(browser) {
     }
     for (const site of target === 'firefox' ? sites : ['youtube']) {
       test(`an update keeps the previous engine off until a reload: ${site}`, async () => {
-        assertClean(`update-${site}`, await updateCheck(site, `update-${site}`, normal));
+        const name = `update-${site}`;
+        assertClean(name, await guarded(name, () => updateCheck(site, name, normal)));
       });
     }
 
-    // The historical defects, each put back into a copy and caught.
+    // The historical defects, each put back into a copy and caught by every
+    // engine it was put back into, each on its own (controlVerdict in
+    // history.js).
     const runCheck = {
-      transitions: async (id) => [...(await transitionsCheck('youtube', `${id}-youtube`)), ...(await transitionsCheck('spotify', `${id}-spotify`))],
-      'overlapping changes': async (id) => [...(await transitionsCheck('youtube', `${id}-youtube`)), ...(await transitionsCheck('spotify', `${id}-spotify`))],
+      transitions: (id, site) => transitionsCheck(site, `${id}-${site}`),
+      'overlapping changes': (id, site) => transitionsCheck(site, `${id}-${site}`),
       "Spotify's speed resets": (id) => spotifyResetsCheck(`${id}-spotify`),
       'a speed request during a waiting change': (id) => spotifyResetsCheck(`${id}-spotify`),
-      'turning the extension off': async (id, entry) => {
-        const list = entry.id.startsWith('9a900c4') ? ['youtube'] : entry.id === '1127987' ? ['spotify'] : sites;
-        const problems = [];
-        for (const site of list) problems.push(...(await lifecycleCheck(site, `${id}-${site}`)));
-        return problems;
-      },
-      'an update': async (id, entry, copy) => updateCheck(entry.id === '4565b80' ? 'spotify' : 'youtube', `${id}-update`, copy)
+      'turning the extension off': (id, site) => lifecycleCheck(site, `${id}-${site}`),
+      'an update': (id, site, copy) => updateCheck(site, `${id}-update`, copy)
     };
 
     for (const entry of HISTORY.filter((candidate) => candidate.browsers.includes(target))) {
@@ -792,26 +911,27 @@ function defineRegression(browser) {
         const copy = prepareTrialExtension(path.join(tempRoot, `control-${entry.id}`), target, { mutations: entry.mutations });
         fs.writeFileSync(path.join(artifacts, `control-${entry.id}-copy.json`), `${JSON.stringify({ ...entry, copy }, null, 2)}\n`);
         const name = `control-${entry.id}`;
-        let problems;
+        const results = [];
+        const runAll = async () => {
+          for (const site of entry.sites) {
+            results.push({ site, problems: await guarded(`${name}-${site}`, () => runCheck[entry.check](name, site, copy)) });
+          }
+        };
         if (entry.check === 'an update') {
-          problems = await runCheck[entry.check](name, entry, copy);
+          await runAll();
         } else {
           await browser.useExtension(copy.extensionDir);
           try {
-            problems = await runCheck[entry.check](name, entry, copy);
+            await runAll();
           } finally {
             await browser.useExtension(normal.extensionDir);
           }
         }
-        const codes = problems.map((problem) => problem.code);
-        const listed = problems.map(({ code, message }) => `${code}: ${message}`);
-        summary.checks.push({ name: `${name} result`, codes: [...new Set(codes)] });
-        for (const { code, during } of entry.expect) {
-          const matching = problems.filter((problem) => problem.code === code && problem.message.includes(during));
-          assert.ok(matching.length, `${entry.id} should fail with ${code} in "${during}"; got ${JSON.stringify(listed)}`);
-        }
-        const broken = problems.filter((problem) => NOT_SOUND.includes(problem.code));
-        assert.deepEqual(broken.map(({ code, message }) => `${code}: ${message}`), [], `${entry.id} must fail for its sound, not its setup`);
+        summary.checks.push({
+          name: `${name} result`,
+          sites: results.map(({ site, problems }) => ({ site, codes: [...new Set(problems.map((problem) => problem.code))] }))
+        });
+        assert.deepEqual(controlVerdict(entry, results, NOT_SOUND), [], `${entry.id} wasn't caught as it should be`);
       });
     }
   });

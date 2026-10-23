@@ -178,6 +178,10 @@ function measureWindow(before, after, read, { tones = [[], []] } = {}) {
     contextFrameGaps: difference(recorderAfter, recorderBefore, 'contextFrameGaps'),
     emptyInputBlocks: difference(recorderAfter, recorderBefore, 'emptyInputBlocks'),
     nonStereoBlocks: difference(recorderAfter, recorderBefore, 'nonStereoBlocks'),
+    frameLabelFaults: difference(recorderAfter, recorderBefore, 'frameLabelFaults'),
+    staleFrameLabels: difference(recorderAfter, recorderBefore, 'staleFrameLabels'),
+    // The recorder's frame numbers across the window (frameLabelProblems).
+    frameLabels: read ? frameLabelProblems(before, after, channels, read.from) : [],
     blockSizes: recorderAfter.blockSizes ?? [],
     // How late the page heard about recorded audio: message timing only,
     // not a gap in the audio.
@@ -266,6 +270,7 @@ function captureProblems(m, expect = {}) {
     fail('frames-lost', `${m.lostFrames} frames lost, ${m.overflowFrames} dropped by the recorder`);
   }
   if (m.contextFrameGaps !== 0) fail('context-gap', `${m.contextFrameGaps} skipped render blocks`);
+  problems.push(...(m.frameLabels ?? []));
   if (m.contextFramesSpanned !== null && m.contextFramesSpanned !== m.frames) {
     fail('frame-mismatch', `${m.frames} frames recorded over ${m.contextFramesSpanned} context frames`);
   }
@@ -441,14 +446,112 @@ function toneLists(expect) {
   return [0, 1].map((index) => (expect?.channels?.[index]?.tones ?? []).map((tone) => tone.hz));
 }
 
+// Whether the recorder's frame numbers can be trusted across recorded
+// samples (`channels`, from recorder frame `fromFrame` to the `after`
+// snapshot's next frame; from the recording's start, counting what came
+// before `before`, when `fromFrame` is before it). Any frame number out of
+// step that isn't a stale label (recorder-worklet.js) fails, as
+// `frame-label-fault`. A stale label is taken as the frame expected only
+// where the sound shows no sign of a repeated or missing block: across each
+// stale run, from its first sample to 3 after it, no third difference may be
+// above CLICK_THRESHOLD in either channel (`stale-label-discontinuity`;
+// Chromium's own measured 0.000048, a block planted repeated or missing 0.19
+// to 0.52), and the run's samples may not repeat the block before them
+// (`stale-label-repeat`). Either means the recording, not the sound, can't
+// be told apart, so both are measurement failures. A run the recorder
+// hasn't seen catch up, or that can't be checked, is `stale-label-unverified`.
+// `settled` is a later snapshot, taken so a run near the end has caught up.
+function frameLabelProblems(before, after, channels, fromFrame, settled = after) {
+  const problems = [];
+  const fail = (code, message) => problems.push({ code, message });
+  const start = before.recorder ?? {};
+  const recorder = after.recorder ?? {};
+  const later = settled?.recorder ?? recorder;
+  const fromRecordingStart = fromFrame < (start.nextFrame ?? 0);
+  const since = (key) => (recorder[key] ?? 0) - (fromRecordingStart ? 0 : start[key] ?? 0);
+  const faults = since('frameLabelFaults');
+  if (faults) {
+    fail('frame-label-fault', `${faults} blocks with a frame number out of step, not a stale label (first logged: ${JSON.stringify((recorder.faultLog ?? []).slice(0, 3))})`);
+  }
+  const runs = since('staleRuns');
+  if (!runs) return problems;
+  const endFrame = recorder.nextFrame ?? 0;
+  const logged = (later.staleLog ?? []).filter((run) => run.recorderFrame >= fromFrame && run.recorderFrame < endFrame);
+  if (logged.length !== runs) fail('stale-label-unverified', `${runs} stale runs in the span, but ${logged.length} still logged`);
+  const [left, right] = channels;
+  for (const run of logged) {
+    const at = `stale run of ${run.blocks} at recorder frame ${run.recorderFrame} (raw ${run.contextFrame}, expected ${run.expected})`;
+    if (run.recovered === false) {
+      fail('frame-label-fault', `${at} didn't catch up (next raw ${run.recoveredContextFrame})`);
+      continue;
+    }
+    if (run.recovered !== true) {
+      fail('stale-label-unverified', `${at} hadn't caught up when the span was read`);
+      continue;
+    }
+    const index = run.recorderFrame - fromFrame;
+    const end = index + run.frames;
+    if (index < 3 || end + 3 > left.length) {
+      fail('stale-label-unverified', `${at} is too close to the span's edge to check its sound`);
+      continue;
+    }
+    let peak = 0;
+    for (let i = index; i < end + 3; i++) {
+      peak = Math.max(peak, Math.abs(thirdDifference(left, i)), Math.abs(thirdDifference(right, i)));
+    }
+    run.peak = round(peak, 6);
+    if (!(peak <= CLICK_THRESHOLD)) {
+      fail('stale-label-discontinuity', `${at}: third difference ${round(peak, 4)} across it, so it may be a repeated or missing block`);
+      continue;
+    }
+    if (index >= run.frames) {
+      const same = (samples) => samples.subarray(index, end).every((value, i) => value === samples[index - run.frames + i]);
+      const sounding = (samples) => samples.subarray(index, end).some((value) => value !== 0);
+      if (same(left) && same(right) && (sounding(left) || sounding(right))) {
+        fail('stale-label-repeat', `${at}: its samples repeat the block before it`);
+      }
+    }
+  }
+  return problems;
+}
+
+// How far before the last frame the page had received a mark may fall.
+// A mark reads the context's clock; the recorded frames reach the page
+// after they are played, so a mark falls after them, and in every recorded
+// span so far no more than 128 frames before (Firefox's clock, read by a
+// page, can run a little behind). One batch is allowed.
+const MARK_SLACK_FRAMES = 2048;
+
+// Whether marks (capture-observer.js's mark()) map to the recording as they
+// should: each falls no earlier than MARK_SLACK_FRAMES before the frames the
+// page already had, and no mark before the one taken ahead of it. Otherwise
+// the context's clock and the recorder disagree about where an action
+// happened (`mark-out-of-step`), a measurement failure.
+function markProblems(marks) {
+  const problems = [];
+  let previous = null;
+  for (const mark of marks) {
+    if (mark.recorderFrame === null || mark.recorderFrame === undefined) continue;
+    if (mark.recorderFrame < mark.nextFrame - MARK_SLACK_FRAMES) {
+      problems.push({ code: 'mark-out-of-step', message: `${mark.label}: at recorder frame ${mark.recorderFrame}, ${mark.nextFrame - mark.recorderFrame} frames before the ${mark.nextFrame} already recorded` });
+    }
+    if (previous && mark.recorderFrame < previous.recorderFrame) {
+      problems.push({ code: 'mark-out-of-step', message: `${mark.label}: at recorder frame ${mark.recorderFrame}, before "${previous.label}" at ${previous.recorderFrame}` });
+    }
+    previous = mark;
+  }
+  return problems;
+}
+
 // Whether a span of recorded samples is valid data: what captureProblems
 // checks of a window's clock and recorder, between the page snapshots
 // `before` and `after`, plus that the frames recorded before `before` from
 // `fromFrame` on (a span that starts with the recording) lost nothing
-// either, and that the context frame each batch began at stayed in step
-// with the recorder's own count (offsetChanges). `channels` are the
+// either, that the context frame each batch began at stayed in step with
+// the recorder's own count (offsetChanges), and that its frame numbers can
+// be trusted (frameLabelProblems, with `settled`). `channels` are the
 // decoded samples from `fromFrame` to the after snapshot's next frame.
-function spanHealth(before, after, channels, fromFrame) {
+function spanHealth(before, after, channels, fromFrame, settled = after) {
   const problems = [];
   const fail = (code, message) => problems.push({ code, message });
   const recorder = after.recorder ?? {};
@@ -489,6 +592,7 @@ function spanHealth(before, after, channels, fromFrame) {
   }
   const nonFinite = channels.reduce((sum, samples) => sum + channelStats(samples).nonFinite, 0);
   if (nonFinite) fail('non-finite', `${nonFinite} samples are not finite`);
+  else if (channels[0].length === expected && channels[1].length === expected) problems.push(...frameLabelProblems(before, after, channels, fromFrame, settled));
   return problems;
 }
 
@@ -591,6 +695,101 @@ function analyzeSpan({ sampleRate, fromFrame, left, right, actions = [], segment
   return { sampleRate, fromFrame, frames: length, clickThreshold, quietPeak: round(quietPeak, 5), clicks, silences, segments: measured, problems };
 }
 
+// The sine at `hz` that best fits `samples` (least squares, its phase
+// free): its amplitude, and the RMS of what is left once it is taken away.
+// Exact for a steady tone at `hz`, over any length.
+function fitTone(samples, sampleRate, hz) {
+  const step = (2 * Math.PI * hz) / sampleRate;
+  let ss = 0;
+  let cc = 0;
+  let sc = 0;
+  let ys = 0;
+  let yc = 0;
+  let yy = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const sin = Math.sin(step * i);
+    const cos = Math.cos(step * i);
+    const y = samples[i];
+    ss += sin * sin;
+    cc += cos * cos;
+    sc += sin * cos;
+    ys += y * sin;
+    yc += y * cos;
+    yy += y * y;
+  }
+  const determinant = ss * cc - sc * sc;
+  if (!(samples.length > 2 && determinant > 0)) return { amplitude: 0, residualRms: Math.sqrt(yy / Math.max(1, samples.length)) };
+  const a = (ys * cc - yc * sc) / determinant;
+  const b = (yc * ss - ys * sc) / determinant;
+  const residual = Math.max(0, yy - (a * ys + b * yc));
+  return { amplitude: Math.sqrt(a * a + b * b), residualRms: Math.sqrt(residual / samples.length) };
+}
+
+// The unchanged sound, block by block: each channel's own tone within
+// DRY_LEVEL_TOLERANCE of its level (0.24 to 0.26 for the song's 0.25, as a
+// steady stretch of the song itself is checked), with less than
+// DRY_RESIDUAL_RMS (-46 dBFS, 3% of the tone) of anything else.
+const DRY_LEVEL_TOLERANCE = 0.01;
+const DRY_RESIDUAL_RMS = 0.005;
+const DRY_BLOCK_MS = 10;
+
+// When the unchanged sound came back after an action that should restore
+// it: the first DRY_BLOCK_MS block, counted from the action's first mark
+// (`startFrame`), from which every block up to `toFrame` has, in both
+// channels, the song's own tone (`dry`: [{ hz, amplitude }] per channel) at
+// its exact level and nothing else. Partial or late restoration, the wrong
+// tone or the wrong channel never count. `energyOnsetMs` is when the right
+// channel first carried sound for good (RMS 0.1 or more in every block),
+// kept only to show how much later the exact sound was back; it isn't
+// restoration. Frames are the recorder's, `fromFrame` the first sample's.
+function dryRestoration({ left, right, sampleRate, fromFrame, startFrame, toFrame, dry }) {
+  const step = Math.round((sampleRate * DRY_BLOCK_MS) / 1000);
+  const start = startFrame - fromFrame;
+  const end = Math.min(left.length, toFrame - fromFrame);
+  const toMs = (index) => Math.round(((index - start) / sampleRate) * 1000);
+  let restored = null;
+  let energy = null;
+  let lastMiss = null;
+  const after = dry.map(() => ({ minAmplitude: Infinity, maxAmplitude: 0, maxResidualRms: 0 }));
+  for (let block = start; block + step <= end; block += step) {
+    const fits = [left, right].map((samples, channel) => fitTone(samples.subarray(block, block + step), sampleRate, dry[channel].hz));
+    const ok = fits.every(
+      (fit, channel) =>
+        Math.abs(fit.amplitude - dry[channel].amplitude) <= DRY_LEVEL_TOLERANCE && fit.residualRms < DRY_RESIDUAL_RMS
+    );
+    if (!ok) {
+      restored = null;
+      lastMiss = { atMs: toMs(block), channels: fits.map((fit) => ({ amplitude: round(fit.amplitude, 4), residualRms: round(fit.residualRms, 4) })) };
+      for (const summary of after) Object.assign(summary, { minAmplitude: Infinity, maxAmplitude: 0, maxResidualRms: 0 });
+    } else {
+      if (restored === null) restored = block;
+      fits.forEach((fit, channel) => {
+        const summary = after[channel];
+        summary.minAmplitude = Math.min(summary.minAmplitude, fit.amplitude);
+        summary.maxAmplitude = Math.max(summary.maxAmplitude, fit.amplitude);
+        summary.maxResidualRms = Math.max(summary.maxResidualRms, fit.residualRms);
+      });
+    }
+    const rms = channelStats(right.subarray(block, block + step)).rms;
+    if (!(rms >= 0.1)) energy = null;
+    else if (energy === null) energy = block;
+  }
+  return {
+    restoredAfterMs: restored === null ? null : toMs(restored),
+    energyOnsetMs: energy === null ? null : toMs(energy),
+    checkedToMs: toMs(end),
+    lastMiss,
+    afterRestored:
+      restored === null
+        ? null
+        : after.map((summary) => ({
+            minAmplitude: round(summary.minAmplitude, 4),
+            maxAmplitude: round(summary.maxAmplitude, 4),
+            maxResidualRms: round(summary.maxResidualRms, 5)
+          }))
+  };
+}
+
 function assertHealthyCapture(m, expect) {
   const problems = captureProblems(m, expect);
   if (problems.length) {
@@ -602,7 +801,10 @@ function assertHealthyCapture(m, expect) {
 
 module.exports = {
   CLICK_THRESHOLD,
+  DRY_LEVEL_TOLERANCE,
+  DRY_RESIDUAL_RMS,
   LEVEL_PROBLEMS,
+  MARK_SLACK_FRAMES,
   SIGNAL_FLOOR_RMS,
   analyzeSpan,
   assertHealthyCapture,
@@ -611,8 +813,12 @@ module.exports = {
   compareLevels,
   decodeChannels,
   dominantTone,
+  dryRestoration,
   envelope,
   findClicks,
+  fitTone,
+  frameLabelProblems,
+  markProblems,
   maxSilentRunMs,
   measureChannels,
   measureWindow,

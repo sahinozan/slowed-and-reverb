@@ -3,10 +3,13 @@
 // Checks the audio regression suite's continuity measurements
 // (e2e/audio-capture/metrics.js) against computed signals: that planted
 // clicks, dropouts and gaps are found, that the engines' own fades and
-// steady tones are not, and that a late message is kept apart from missing
-// frames. Also checks that each historical defect the suite puts back
-// (e2e/audio-capture/history.js) still matches today's code exactly once,
-// and how the recorder counts frame numbers. No browser or sound device is
+// steady tones are not, that a late message is kept apart from missing
+// frames, and that restoration means the exact unchanged sound. Also checks
+// that each historical defect the suite puts back
+// (e2e/audio-capture/history.js) still matches today's code exactly once and
+// is judged engine by engine, how the recorder counts frame numbers (run
+// through the real recorder-worklet.js), and the deadlines of the suite's
+// page steps (e2e/audio-capture/actions.js). No browser or sound device is
 // involved.
 
 const assert = require('node:assert/strict');
@@ -15,8 +18,19 @@ const path = require('node:path');
 const { describe, test } = require('node:test');
 const vm = require('node:vm');
 
-const { HISTORY } = require('../e2e/audio-capture/history');
-const { CLICK_THRESHOLD, analyzeSpan, findClicks, silentRuns, spanHealth } = require('../e2e/audio-capture/metrics');
+const { pageStep, runPageStep, withDeadline } = require('../e2e/audio-capture/actions');
+const { RECORDER_PROBLEMS } = require('../e2e/audio-capture/harness');
+const { HISTORY, controlVerdict } = require('../e2e/audio-capture/history');
+const {
+  CLICK_THRESHOLD,
+  analyzeSpan,
+  dryRestoration,
+  findClicks,
+  fitTone,
+  markProblems,
+  silentRuns,
+  spanHealth
+} = require('../e2e/audio-capture/metrics');
 const { root } = require('./helpers/load-script');
 
 const RATE = 48_000;
@@ -258,26 +272,66 @@ describe('audio regression historical controls', () => {
       const keys = [`'${entry.check}':`, `"${entry.check}":`, `${entry.check}:`];
       assert.ok(keys.some((key) => suite.includes(key)), `${entry.id}: no check "${entry.check}"`);
       assert.ok(entry.expect.length && entry.expect.every(({ code, during }) => code && during), entry.id);
+      assert.ok(entry.sites.length && entry.sites.every((site) => ['youtube', 'spotify'].includes(site)), entry.id);
+      assert.equal(new Set(entry.sites).size, entry.sites.length, entry.id);
     }
+    // Checks that only Spotify has, and updates, which check one site each.
+    for (const entry of HISTORY.filter(({ check }) => check.includes('speed') || check === 'an update')) {
+      assert.equal(entry.sites.length, 1, entry.id);
+    }
+    for (const entry of HISTORY.filter(({ check }) => check.includes('speed'))) assert.deepEqual(entry.sites, ['spotify'], entry.id);
+  });
+
+  test('are caught only if every engine they were put back into fails as listed, each on its own', () => {
+    const entry = HISTORY.find(({ id }) => id === '3fbb1c3');
+    assert.deepEqual(entry.sites, ['youtube', 'spotify']);
+    const caught = { code: 'click', message: 'click of 0.44 at 9120 ms (channel 0), during overlapping changes' };
+    const invalid = ['context-gap', 'setup'];
+    assert.deepEqual(controlVerdict(entry, [{ site: 'youtube', problems: [caught] }, { site: 'spotify', problems: [caught] }], invalid), []);
+    // The review's case: the defect put back into YouTube's engine only.
+    // YouTube clicks five times, which pooled together would have passed.
+    const onlyYouTube = controlVerdict(entry, [{ site: 'youtube', problems: [caught, caught, caught, caught, caught] }, { site: 'spotify', problems: [] }], invalid);
+    assert.equal(onlyYouTube.length, 1);
+    assert.match(onlyYouTube[0], /^spotify: should fail with click/);
+    // An engine that failed as a measurement isn't caught, whatever else it heard.
+    const broken = controlVerdict(entry, [{ site: 'youtube', problems: [caught] }, { site: 'spotify', problems: [caught, { code: 'context-gap', message: '1 skipped' }] }], invalid);
+    assert.deepEqual(broken.map((failure) => failure.split(':')[0]), ['spotify']);
+    // An engine that wasn't checked at all.
+    assert.match(controlVerdict(entry, [{ site: 'youtube', problems: [caught] }], invalid)[0], /^ran on youtube, wanted youtube, spotify/);
+    // Both engines turned off in the browser, one still playing the effect.
+    const shutdown = HISTORY.find(({ id }) => id === '134e1c0');
+    const notRestored = { code: 'not-restored', message: 'turn the extension off: the unchanged sound never came back' };
+    assert.deepEqual(controlVerdict(shutdown, [{ site: 'youtube', problems: [notRestored] }, { site: 'spotify', problems: [notRestored] }], invalid), []);
+    assert.match(controlVerdict(shutdown, [{ site: 'youtube', problems: [] }, { site: 'spotify', problems: [notRestored] }], invalid)[0], /^youtube: should fail with not-restored/);
+    // Every expected problem, not just one of them.
+    const clicks = HISTORY.find(({ id }) => id === '02ef174');
+    const during = (action) => ({ code: 'click', message: `click of 0.5 at 1 ms (channel 0), during ${action}` });
+    const all = [during('overlapping changes'), during('turn off'), during('turn on')];
+    assert.deepEqual(controlVerdict(clicks, [{ site: 'youtube', problems: all }, { site: 'spotify', problems: all }], invalid), []);
+    assert.equal(controlVerdict(clicks, [{ site: 'youtube', problems: all }, { site: 'spotify', problems: all.slice(0, 2) }], invalid).length, 1);
   });
 });
 
+// Runs recorder-worklet.js in a context of its own, as the audio thread
+// would, with `currentFrame` set before each block.
+function loadRecorder({ batchFrames = 512, poolSize = 4 } = {}) {
+  const sandbox = { sampleRate: RATE, currentFrame: 0, Float32Array, registered: null, messages: [] };
+  sandbox.AudioWorkletProcessor = class {
+    constructor() {
+      this.port = { postMessage: (message) => sandbox.messages.push(message), onmessage: null };
+    }
+  };
+  sandbox.registerProcessor = (name, processor) => {
+    sandbox.registered = processor;
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(root, 'e2e', 'audio-capture', 'recorder-worklet.js'), 'utf8'), sandbox);
+  const node = new sandbox.registered({ processorOptions: { batchFrames, poolSize } });
+  return { sandbox, node };
+}
+
 describe('audio recorder frame numbers', () => {
-  // Runs recorder-worklet.js in a context of its own, as the audio thread
-  // would, with `currentFrame` set before each block.
   function recorder() {
-    const sandbox = { sampleRate: RATE, currentFrame: 0, Float32Array, registered: null };
-    sandbox.AudioWorkletProcessor = class {
-      constructor() {
-        this.port = { postMessage: (message) => sandbox.messages.push(message), onmessage: null };
-      }
-    };
-    sandbox.registerProcessor = (name, processor) => {
-      sandbox.registered = processor;
-    };
-    sandbox.messages = [];
-    vm.runInNewContext(fs.readFileSync(path.join(root, 'e2e', 'audio-capture', 'recorder-worklet.js'), 'utf8'), sandbox);
-    const node = new sandbox.registered({ processorOptions: { batchFrames: 512, poolSize: 4 } });
+    const { sandbox, node } = loadRecorder();
     let value = 0;
     const play = (frames) => {
       for (const frame of frames) {
@@ -297,6 +351,7 @@ describe('audio recorder frame numbers', () => {
     const counters = recorder().play(blocks(0, 8));
     assert.equal(counters.contextFrameGaps, 0);
     assert.equal(counters.staleFrameLabels, 0);
+    assert.equal(counters.frameLabelFaults, 0);
   });
 
   test("a block with the previous block's number is a stale label, not a gap", () => {
@@ -307,8 +362,67 @@ describe('audio recorder frame numbers', () => {
     assert.equal(counters.contextFrameGaps, 0);
     assert.equal(counters.skippedContextFrames, 0);
     assert.equal(counters.staleFrameLabels, 1);
+    assert.equal(counters.staleRuns, 1);
+    assert.equal(counters.frameLabelFaults, 0);
+    assert.equal(counters.staleRunOpen, false);
+    // The raw numbers and where it caught up are kept.
+    assert.deepEqual(
+      { ...counters.staleLog[0] },
+      { recorderFrame: 640, contextFrame: 512, expected: 640, blocks: 1, frames: 128, recovered: true, recoveredRecorderFrame: 768, recoveredContextFrame: 768 }
+    );
     // Each batch's context frame stays in step with the recorder's count.
     for (const batch of batches()) assert.equal(batch.contextFrame, batch.startFrame);
+  });
+
+  test('two stale labels in a row that then catch up, as Chromium has shown, are one stale run', () => {
+    const { play, batches } = recorder();
+    const counters = play([0, 128, 256, 384, 384, 384, 768, 896, 1024]);
+    assert.equal(counters.staleFrameLabels, 2);
+    assert.equal(counters.staleRuns, 1);
+    assert.equal(counters.frameLabelFaults, 0);
+    assert.equal(counters.staleLog[0].blocks, 2);
+    assert.equal(counters.staleLog[0].recovered, true);
+    for (const batch of batches()) assert.equal(batch.contextFrame, batch.startFrame);
+  });
+
+  test('a run of stale labels still open is reported as open', () => {
+    const counters = recorder().play([0, 128, 256, 256]);
+    assert.equal(counters.staleRunOpen, true);
+    assert.equal(counters.staleLog[0].recovered, null);
+  });
+
+  test('three stale labels in a row are a fault, not a stale run', () => {
+    const counters = recorder().play([0, 128, 256, 256, 256, 256, 768]);
+    assert.equal(counters.staleFrameLabels, 2);
+    assert.equal(counters.frameLabelFaults, 1);
+    assert.equal(counters.faultLog[0].kind, 'stale for too long');
+    assert.equal(counters.staleLog[0].recovered, false);
+  });
+
+  test('a counter that goes back, or stops, is a fault on every block', () => {
+    // Back 512 ms (24576 frames at 48 kHz), then counting on from there.
+    const reset = recorder().play([...blocks(24_576, 4), ...blocks(0, 6)]);
+    assert.equal(reset.staleFrameLabels, 0);
+    assert.equal(reset.frameLabelFaults, 6);
+    assert.equal(reset.faultLog[0].kind, 'went back');
+    // Stopped at 0.
+    const frozen = recorder().play([...blocks(0, 4), 0, 0, 0, 0, 0]);
+    assert.equal(frozen.staleFrameLabels, 0);
+    assert.equal(frozen.frameLabelFaults, 5);
+    // Back by two blocks at once, without repeating the number before.
+    const back = recorder().play([0, 128, 256, 384, 128, 640]);
+    assert.equal(back.staleFrameLabels, 0);
+    assert.equal(back.frameLabelFaults, 1);
+  });
+
+  test("a stale run that doesn't catch up exactly is a fault", () => {
+    const ahead = recorder().play([0, 128, 256, 256, 640]);
+    assert.equal(ahead.contextFrameGaps, 1);
+    assert.equal(ahead.frameLabelFaults, 1);
+    assert.equal(ahead.staleLog[0].recovered, false);
+    const behind = recorder().play([0, 128, 256, 256, 128, 640]);
+    assert.equal(behind.frameLabelFaults, 1);
+    assert.equal(behind.staleLog[0].recovered, false);
   });
 
   test('a jump forward is a gap', () => {
@@ -316,5 +430,299 @@ describe('audio recorder frame numbers', () => {
     assert.equal(counters.contextFrameGaps, 1);
     assert.equal(counters.skippedContextFrames, 256);
     assert.equal(counters.staleFrameLabels, 0);
+    assert.equal(counters.frameLabelFaults, 0);
+  });
+});
+
+describe('audio recorder frame numbers and the sound across them', () => {
+  // Plays two tones through the real worklet, in 2048-frame batches, as the
+  // page receives them. `label(frame)` is the currentFrame given for the
+  // block that is really `frame`, and `source(frame, i)` the frame of the
+  // tone played as its sample i, so a block can be repeated or left out.
+  // Returns the observer's snapshots by the frame they end at, and the
+  // recorded samples.
+  const TOTAL = 98_304;
+  const FROM = 8_192;
+  const FAULT = 24_576;
+  function record({ label = (frame) => frame, source = (frame, i) => frame + i, tones = [440, 660], resetPageClock = false } = {}) {
+    const { sandbox, node } = loadRecorder({ batchFrames: 2048, poolSize: 64 });
+    const channels = [new Float32Array(TOTAL), new Float32Array(TOTAL)];
+    const snapshots = new Map();
+    let offset = null;
+    let offsetChanges = 0;
+    for (let frame = 0; frame < TOTAL; frame += 128) {
+      sandbox.currentFrame = label(frame);
+      const input = tones.map((hz) => Float32Array.from({ length: 128 }, (_, i) => 0.25 * Math.sin((2 * Math.PI * hz * source(frame, i)) / RATE)));
+      node.process([input], [[new Float32Array(128), new Float32Array(128)]]);
+      const last = sandbox.messages[sandbox.messages.length - 1];
+      if (last.type !== 'batch' || last.startFrame + last.frames !== frame + 128) continue;
+      const next = last.startFrame + last.frames;
+      const nextOffset = last.contextFrame - last.startFrame;
+      if (offset !== null && nextOffset !== offset) offsetChanges++;
+      offset = nextOffset;
+      const samples = new Float32Array(last.buffer);
+      for (let channel = 0; channel < 2; channel++) channels[channel].set(samples.subarray(channel * 2048, channel * 2048 + last.frames), last.startFrame);
+      const pageFrame = resetPageClock && next > FAULT ? next - FAULT : next;
+      snapshots.set(next, {
+        wallMs: (next / RATE) * 1000,
+        errors: [],
+        context: { state: 'running', sampleRate: RATE, currentTime: pageFrame / RATE },
+        recorder: {
+          ready: true,
+          error: null,
+          workletSampleRate: RATE,
+          nextFrame: next,
+          lostFrames: 0,
+          offsetChanges,
+          frameOffset: offset,
+          lastBatch: { contextFrame: last.contextFrame, frames: last.frames },
+          ...node.counters()
+        }
+      });
+    }
+    // A mark the page takes at `frame` of the real clock, as
+    // capture-observer.js maps it, with what the page had received then.
+    const markAt = (frame, labelText) => {
+      const received = Math.floor(frame / 2048) * 2048;
+      const snapshotThen = snapshots.get(received);
+      const contextFrame = resetPageClock && frame > FAULT ? frame - FAULT : frame;
+      return { label: labelText, contextFrame, recorderFrame: contextFrame - snapshotThen.recorder.frameOffset, nextFrame: received };
+    };
+    const health = (settledAt = TOTAL) =>
+      spanHealth(snapshots.get(FROM), snapshots.get(TOTAL), channels.map((samples) => samples.subarray(FROM)), FROM, snapshots.get(settledAt));
+    return { snapshots, channels, health, markAt };
+  }
+  const codes = (problems) => [...new Set(problems.map((problem) => problem.code))];
+  const staleOnce = (frame) => (frame === FAULT ? frame - 128 : frame);
+  const staleTwice = (frame) => (frame === FAULT || frame === FAULT + 128 ? FAULT - 128 : frame);
+
+  test('stale labels with unbroken sound are valid data, and marks still map to the frames played', () => {
+    for (const label of [staleOnce, staleTwice]) {
+      const recording = record({ label });
+      assert.deepEqual(recording.health(), []);
+      const end = recording.snapshots.get(TOTAL).recorder;
+      assert.equal(end.offsetChanges, 0);
+      assert.equal(end.staleRuns, 1);
+      // An action marked after the stale run maps to the frame then played.
+      const mark = recording.markAt(FAULT + 4096, 'after');
+      assert.equal(mark.recorderFrame, FAULT + 4096);
+      assert.deepEqual(markProblems([recording.markAt(FAULT - 4096, 'before'), mark]), []);
+    }
+  });
+
+  test("a counter that goes back or stops fails as the recorder's fault, not as sound", () => {
+    const back = record({ label: (frame) => (frame >= FAULT ? frame - FAULT : frame) });
+    assert.deepEqual(codes(back.health()), ['frame-label-fault']);
+    const frozen = record({ label: (frame) => (frame >= FAULT ? 0 : frame) });
+    assert.deepEqual(codes(frozen.health()), ['frame-label-fault']);
+    // The page's clock going back with it: the recorder still fails it, and
+    // a mark taken then falls before the frames already recorded.
+    const both = record({ label: (frame) => (frame >= FAULT ? frame - FAULT : frame), resetPageClock: true });
+    assert.deepEqual(codes(both.health()), ['frame-label-fault']);
+    assert.deepEqual(codes(markProblems([both.markAt(FAULT - 4096, 'before'), both.markAt(FAULT + 4096, 'after')])), ['mark-out-of-step']);
+    for (const code of ['frame-label-fault', 'stale-label-discontinuity', 'stale-label-repeat', 'stale-label-unverified']) {
+      assert.ok(RECORDER_PROBLEMS.includes(code), code);
+    }
+  });
+
+  test('a stale label over a repeated or missing block of sound fails as a measurement, not a click', () => {
+    // The block played again, under the previous block's number.
+    const repeated = record({ label: staleOnce, source: (frame, i) => (frame === FAULT ? frame - 128 + i : frame + i) });
+    assert.deepEqual(codes(repeated.health()), ['stale-label-discontinuity']);
+    // The tone skips a block, under a stale number.
+    const missing = record({ label: staleOnce, source: (frame, i) => (frame >= FAULT ? frame + 128 + i : frame + i) });
+    assert.deepEqual(codes(missing.health()), ['stale-label-discontinuity']);
+    // A tone that repeats every 128 frames (375 Hz at 48 kHz) doesn't click
+    // when a block is played again, but the block's samples repeat the one
+    // before, so it can't be told apart either.
+    const seamless = record({ label: staleOnce, source: (frame, i) => (frame === FAULT ? frame - 128 + i : frame + i), tones: [375, 750] });
+    assert.deepEqual(codes(seamless.health()), ['stale-label-repeat']);
+  });
+
+  test("a stale run the recorder hasn't seen catch up is unverified until a later snapshot shows it did", () => {
+    // The run is in the span's last block.
+    const late = record({ label: (frame) => (frame === TOTAL - 2048 - 128 ? frame - 128 : frame) });
+    const spanEnd = TOTAL - 2048;
+    const health = (settledAt) =>
+      spanHealth(late.snapshots.get(FROM), late.snapshots.get(spanEnd), late.channels.map((samples) => samples.subarray(FROM, spanEnd)), FROM, late.snapshots.get(settledAt));
+    assert.deepEqual(codes(health(spanEnd)), ['stale-label-unverified']);
+    // Caught up, but too close to the span's end to check the sound across it.
+    assert.deepEqual(codes(health(TOTAL)), ['stale-label-unverified']);
+    const earlier = record({ label: (frame) => (frame === TOTAL - 4096 ? frame - 128 : frame) });
+    assert.deepEqual(earlier.health(), []);
+  });
+
+  test('marks out of order, or before what was recorded, are out of step', () => {
+    const mark = (label, recorderFrame, nextFrame) => ({ label, recorderFrame, nextFrame });
+    assert.deepEqual(markProblems([mark('a', 4096, 4096), mark('b', 6000, 4096), mark('c', 6100, 6144)]), []);
+    // Firefox's clock, read by a page, a block behind what was received.
+    assert.deepEqual(markProblems([mark('a', 3968, 4096)]), []);
+    assert.deepEqual(codes(markProblems([mark('a', 1000, 8192)])), ['mark-out-of-step']);
+    assert.deepEqual(codes(markProblems([mark('a', 9000, 8192), mark('b', 8500, 8192)])), ['mark-out-of-step']);
+  });
+});
+
+describe('audio regression restoration', () => {
+  // A span 2 s long in which the extension is turned off at 0.3 s. Before,
+  // the effect: 352 and 528 Hz on the left, nothing on the right. `left` and
+  // `right` give each channel's sound after it.
+  const OFF = 0.3;
+  const DRY = [{ hz: 440, amplitude: 0.25 }, { hz: 660, amplitude: 0.25 }];
+  function afterOff({ left, right }) {
+    const wet = sum(sine(352, 0.29, 2), sine(528, 0.29, 2));
+    const out = [new Float32Array(2 * RATE), new Float32Array(2 * RATE)];
+    for (let i = 0; i < out[0].length; i++) {
+      const time = i / RATE;
+      out[0][i] = time < OFF ? wet[i] : left(time, i);
+      out[1][i] = time < OFF ? 0 : right(time, i);
+    }
+    return out;
+  }
+  const tone = (hz, amplitude) => (time) => amplitude * Math.sin(2 * Math.PI * hz * time);
+  // Rises in a straight line from 0 at `from` to 1 at `to` (seconds after
+  // the action).
+  const ramp = (from, to) => (time) => Math.min(1, Math.max(0, (time - OFF - from) / (to - from)));
+  const action = { label: 'turn the extension off', startFrame: OFF * RATE, endFrame: OFF * RATE + 480, allow: { restores: true, windowMs: 1500, silenceMs: 250 } };
+  const segment = { label: 'off', fromFrame: (OFF + 1) * RATE, toFrame: (OFF + 1.6) * RATE, expect: dryExpectFor(440, 660) };
+  function dryExpectFor(leftHz, rightHz) {
+    return {
+      channels: [
+        { tones: [{ hz: leftHz, min: 0.24, max: 0.26 }, { hz: rightHz, min: 0, max: 0.005 }] },
+        { tones: [{ hz: rightHz, min: 0.24, max: 0.26 }, { hz: leftHz, min: 0, max: 0.005 }] }
+      ]
+    };
+  }
+  function measure(sound) {
+    const [left, right] = afterOff(sound);
+    const analysis = analyzeSpan({ sampleRate: RATE, fromFrame: 0, left, right, actions: [action], segments: [segment] });
+    const restoration = dryRestoration({ left, right, sampleRate: RATE, fromFrame: 0, startFrame: action.startFrame, toFrame: segment.toFrame, dry: DRY });
+    return { analysis, restoration };
+  }
+
+  test('a fit of the expected tone gives its level, and what else is there', () => {
+    const fit = fitTone(sine(440, 0.25, 0.01, RATE, 1.1), RATE, 440);
+    assert.ok(Math.abs(fit.amplitude - 0.25) < 1e-6, JSON.stringify(fit));
+    assert.ok(fit.residualRms < 1e-6, JSON.stringify(fit));
+    const mixed = fitTone(sum(sine(440, 0.25, 0.01), sine(528, 0.05, 0.01)), RATE, 440);
+    assert.ok(mixed.residualRms > 0.02, JSON.stringify(mixed));
+  });
+
+  test('the unchanged sound faded in on time is restored', () => {
+    const fadeIn = ramp(0.2, 0.225);
+    const { analysis, restoration } = measure({
+      left: (time) => tone(440, 0.25)(time) * fadeIn(time),
+      right: (time) => tone(660, 0.25)(time) * fadeIn(time)
+    });
+    assert.deepEqual(analysis.problems, []);
+    assert.ok(restoration.restoredAfterMs >= 220 && restoration.restoredAfterMs <= 240, JSON.stringify(restoration));
+    assert.ok(restoration.afterRestored.every((channel) => channel.maxResidualRms < 1e-4), JSON.stringify(restoration));
+  });
+
+  test('a partial level that only reaches the exact one late is restored late, though it sounds from the start', () => {
+    // The review's case: the right tone at 60% of its level until 1.1 s
+    // after the action, then up to its level over 25 ms. The steady stretch
+    // after it, and the clicks and gaps, pass.
+    const level = (time) => {
+      const after = time - OFF;
+      if (after < 0.025) return 0.15 * (after / 0.025);
+      if (after < 1.1) return 0.15;
+      return Math.min(0.25, 0.15 + (0.1 * (after - 1.1)) / 0.025);
+    };
+    const { analysis, restoration } = measure({ left: tone(440, 0.25), right: (time) => level(time) * Math.sin(2 * Math.PI * 660 * time) });
+    assert.deepEqual(analysis.problems, []);
+    assert.ok(restoration.energyOnsetMs < 50, JSON.stringify(restoration));
+    assert.ok(restoration.restoredAfterMs > 1000, JSON.stringify(restoration));
+  });
+
+  test('the wrong tone, the wrong channel or the effect still mixed in is never restored', () => {
+    const wrongTone = measure({ left: tone(440, 0.25), right: tone(528, 0.25) }).restoration;
+    assert.equal(wrongTone.restoredAfterMs, null);
+    const swapped = measure({ left: tone(660, 0.25), right: tone(440, 0.25) }).restoration;
+    assert.equal(swapped.restoredAfterMs, null);
+    const leftover = measure({ left: (time) => tone(440, 0.25)(time) + tone(352, 0.02)(time), right: tone(660, 0.25) }).restoration;
+    assert.equal(leftover.restoredAfterMs, null);
+    const oneChannel = measure({ left: tone(440, 0.25), right: () => 0 }).restoration;
+    assert.equal(oneChannel.restoredAfterMs, null);
+  });
+
+  test('the exact sound coming back after the limit is late', () => {
+    const fadeIn = ramp(1.2, 1.225);
+    const { restoration } = measure({
+      left: (time) => tone(440, 0.25)(time) * fadeIn(time),
+      right: (time) => tone(660, 0.25)(time) * fadeIn(time)
+    });
+    assert.ok(restoration.restoredAfterMs >= 1220 && restoration.restoredAfterMs <= 1240, JSON.stringify(restoration));
+  });
+});
+
+describe('audio regression page steps', () => {
+  // Runs actions.js's pageStep as the browser would: from its source, in a
+  // context of its own with a stand-in page.
+  function inPage({ play = () => Promise.resolve(), fires = [] } = {}) {
+    const player = new EventTarget();
+    const listening = new Map();
+    const add = player.addEventListener.bind(player);
+    const remove = player.removeEventListener.bind(player);
+    player.addEventListener = (type, listener, options) => {
+      listening.set(type, (listening.get(type) ?? 0) + 1);
+      add(type, listener, options);
+    };
+    player.removeEventListener = (type, listener) => {
+      listening.set(type, (listening.get(type) ?? 0) - 1);
+      remove(type, listener);
+    };
+    player.play = () => {
+      const played = play();
+      for (const type of fires) setTimeout(() => player.dispatchEvent(new Event(type)), 5);
+      return played;
+    };
+    player.parentNode = { append() {} };
+    player.remove = () => {};
+    const timers = new Set();
+    const sandbox = {
+      document: { getElementById: () => player },
+      setTimeout: (callback, ms) => {
+        const id = setTimeout(() => {
+          timers.delete(id);
+          callback();
+        }, ms);
+        timers.add(id);
+        return id;
+      },
+      clearTimeout: (id) => {
+        timers.delete(id);
+        clearTimeout(id);
+      }
+    };
+    const step = vm.runInNewContext(`(${pageStep.toString()})`, sandbox);
+    return { step, player, listening, timers };
+  }
+
+  test('a step that is done clears its timers and listeners', async () => {
+    const page = inPage({ fires: ['playing'] });
+    assert.equal(await page.step({ step: 'nextSong', timeoutMs: 1000, src: '/b.wav' }), 'playing');
+    assert.equal(page.player.playbackRate, 1);
+    assert.equal(page.player.src, '/b.wav');
+    assert.equal(page.listening.get('playing'), 0);
+    assert.equal(page.timers.size, 0);
+    assert.equal(await inPage().step({ step: 'putBack', timeoutMs: 1000, rate: 1.25, waitMs: 5 }), 'playing');
+  });
+
+  test("a play() that never settles, or a 'playing' that never comes, fails in the page and cleans up", async () => {
+    const never = inPage({ play: () => new Promise(() => {}) });
+    await assert.rejects(never.step({ step: 'play', timeoutMs: 50 }), /"play" wasn't done within 50 ms/);
+    assert.equal(never.timers.size, 0);
+    const silent = inPage();
+    await assert.rejects(silent.step({ step: 'nextSong', timeoutMs: 50, src: '/b.wav' }), /"nextSong" wasn't done within 50 ms/);
+    assert.equal(silent.listening.get('playing'), 0);
+    assert.equal(silent.timers.size, 0);
+  });
+
+  test("a page that doesn't answer fails on the Node side", async () => {
+    const page = { evaluate: () => new Promise(() => {}) };
+    const started = Date.now();
+    await assert.rejects(runPageStep(page, 'nextSong', {}, { timeoutMs: 30, backstopMs: 20 }), (error) => error.code === 'timeout');
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(await withDeadline(Promise.resolve('done'), 1000, 'unused'), 'done');
   });
 });

@@ -11,6 +11,15 @@
 // recorder's own frame number and the context frame it started at, so the
 // page can tell a late message from a missing sample.
 
+// The most render blocks in a row that may carry a stale frame number (see
+// staleFrameLabels below). Chromium's reproducer (chromium-stale-frame.js)
+// has shown runs of one and two.
+const MAX_STALE_RUN = 2;
+// How many stale runs are kept for the page to check the sound across, and
+// how many faults of the frame numbers are kept as evidence.
+const STALE_LOG_SIZE = 32;
+const FAULT_LOG_SIZE = 8;
+
 class AudioTrialRecorder extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -34,15 +43,31 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     this.contextFrameGaps = 0;
     this.skippedContextFrames = 0;
     this.gapLog = [];
-    // Blocks whose currentFrame ran behind the frame expected. The rendering
-    // thread never goes back in time: when Chromium connects or disconnects
-    // nodes at the destination it sometimes gives this node a block with
-    // the previous block's frame number and then catches up, and the sound
-    // in those blocks carries on unbroken (a steady tone recorded across them
-    // has no click, which a repeated or missing block would make). Such a
-    // block is counted here and taken as the frame expected.
+    // Blocks whose currentFrame ran behind the frame expected. When Chromium
+    // connects or disconnects nodes at the destination it sometimes gives
+    // this node a block with the previous block's frame number, once or
+    // twice in a row, and the next block has exactly the number expected;
+    // with no extension involved, a steady tone recorded across them has no
+    // click, which a repeated or missing block would make. Only that is a
+    // stale label: a block with the same number as the block before, after a
+    // block in step, at most MAX_STALE_RUN in a row, followed by a block
+    // numbered as expected. Such a block is counted here and taken as the
+    // frame expected, and each run is logged (staleLog: the raw and
+    // expected numbers, and the block it caught up at) so the page can check
+    // that the sound across it is unbroken.
     this.staleFrameLabels = 0;
+    this.staleRuns = 0;
+    this.staleLog = [];
+    this.openStale = null;
+    // Any other frame number behind the one expected (a counter that went
+    // back, stopped, or stayed behind too long), and a stale run that didn't
+    // catch up exactly: the recording can't be placed in time, so it isn't
+    // valid data. Kept apart from stale labels, with the first few logged.
+    this.frameLabelFaults = 0;
+    this.faultLog = [];
     this.lastEnd = null;
+    this.lastRaw = null;
+    this.inStep = false;
     // Blocks with no input channels (nothing connected or playing) and with a
     // channel count other than two.
     this.emptyInputBlocks = 0;
@@ -62,20 +87,55 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     if (frames === 0) return true;
     if (!this.blockSizes.includes(frames) && this.blockSizes.length < 8) this.blockSizes.push(frames);
 
-    let frame = currentFrame;
-    if (this.lastEnd !== null && frame !== this.lastEnd) {
-      const stale = frame < this.lastEnd;
-      if (stale) this.staleFrameLabels++;
-      else {
-        this.contextFrameGaps++;
-        this.skippedContextFrames += frame - this.lastEnd;
-      }
+    const raw = currentFrame;
+    let frame = raw;
+    if (this.lastEnd === null) {
+      this.inStep = true;
+    } else if (raw === this.lastEnd) {
+      if (this.openStale) this.closeStale(true, raw);
+      this.inStep = true;
+    } else if (raw > this.lastEnd) {
+      this.contextFrameGaps++;
+      this.skippedContextFrames += raw - this.lastEnd;
       // Where the first few happened, by the recorder's own frame count.
       if (this.gapLog.length < 8) {
-        this.gapLog.push({ recorderFrame: this.recordedFrames, contextFrame: frame, expected: this.lastEnd, stale });
+        this.gapLog.push({ recorderFrame: this.recordedFrames, contextFrame: raw, expected: this.lastEnd, stale: false });
       }
-      if (stale) frame = this.lastEnd;
+      if (this.openStale) this.closeStale(false, raw);
+      this.inStep = true;
+    } else if (raw === this.lastRaw && (this.openStale ? this.openStale.blocks < MAX_STALE_RUN : this.inStep)) {
+      this.staleFrameLabels++;
+      if (this.openStale) {
+        this.openStale.blocks++;
+        this.openStale.frames += frames;
+      } else {
+        this.openStale = {
+          recorderFrame: this.recordedFrames,
+          contextFrame: raw,
+          expected: this.lastEnd,
+          blocks: 1,
+          frames,
+          recovered: null,
+          recoveredRecorderFrame: null,
+          recoveredContextFrame: null
+        };
+        this.staleRuns++;
+        this.staleLog.push(this.openStale);
+        if (this.staleLog.length > STALE_LOG_SIZE) this.staleLog.shift();
+        if (this.gapLog.length < 8) {
+          this.gapLog.push({ recorderFrame: this.recordedFrames, contextFrame: raw, expected: this.lastEnd, stale: true });
+        }
+      }
+      this.inStep = false;
+      frame = this.lastEnd;
+    } else {
+      const kind = raw === this.lastRaw ? 'stale for too long' : this.openStale ? 'went back during a stale run' : 'went back';
+      this.fault(kind, raw);
+      if (this.openStale) this.closeStale(false, raw, false);
+      this.inStep = false;
+      frame = this.lastEnd;
     }
+    this.lastRaw = raw;
     this.lastEnd = frame + frames;
     if (input.length === 0) this.emptyInputBlocks++;
     else if (input.length !== 2) this.nonStereoBlocks++;
@@ -127,6 +187,24 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     return true;
   }
 
+  fault(kind, raw) {
+    this.frameLabelFaults++;
+    if (this.faultLog.length < FAULT_LOG_SIZE) {
+      this.faultLog.push({ kind, recorderFrame: this.recordedFrames, contextFrame: raw, expected: this.lastEnd });
+    }
+  }
+
+  // Ends the open stale run: caught up at the number expected, or not (a
+  // fault, unless the block that ended it is counted as one already).
+  closeStale(recovered, raw, count = true) {
+    const run = this.openStale;
+    run.recovered = recovered;
+    run.recoveredRecorderFrame = this.recordedFrames;
+    run.recoveredContextFrame = raw;
+    if (!recovered && count) this.fault('stale run ended out of step', raw);
+    this.openStale = null;
+  }
+
   counters() {
     return {
       overflowFrames: this.overflowFrames,
@@ -135,6 +213,11 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
       skippedContextFrames: this.skippedContextFrames,
       gapLog: this.gapLog.slice(),
       staleFrameLabels: this.staleFrameLabels,
+      staleRuns: this.staleRuns,
+      staleRunOpen: this.openStale !== null,
+      staleLog: this.staleLog.map((run) => ({ ...run })),
+      frameLabelFaults: this.frameLabelFaults,
+      faultLog: this.faultLog.slice(),
       emptyInputBlocks: this.emptyInputBlocks,
       nonStereoBlocks: this.nonStereoBlocks,
       blockSizes: this.blockSizes

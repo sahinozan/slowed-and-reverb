@@ -5,10 +5,13 @@
 // 440 Hz tone plays to the destination while a silent branch is connected
 // to it and disconnected every 37 ms. Chromium then sometimes gives the
 // recorder a block with the previous block's frame number. For each such
-// block this prints the frame number Chromium reported (raw) and the one the
-// recorder took instead (expected), and the largest third difference of the
-// recorded tone around it: a repeated or missing 128-frame block would jump
-// the tone's phase by about 7 radians and click far above the suite's 0.05.
+// run of blocks this prints the frame number Chromium reported (raw), the one
+// the recorder took instead (expected), how many blocks in a row, where the
+// numbers caught up, and the largest third difference of the recorded tone
+// around it: a repeated or missing 128-frame block would jump the tone's
+// phase by about 7 radians and click far above the suite's 0.05. It also
+// prints any frame number the recorder counted as a fault, which the suite
+// would fail as a measurement.
 // To show that the measure would hear one, it then repeats one block, and
 // drops another, in a copy of the same recording and measures again.
 //
@@ -74,17 +77,22 @@ async function main(runs) {
       const from = start.recorder.nextFrame;
       const recorder = end.recorder;
       console.log(
-        `run ${run}: ${recorder.staleFrameLabels} stale labels, ${recorder.contextFrameGaps} skipped blocks, ` +
-          `${recorder.offsetChanges} offset changes since the recorder started; ` +
+        `run ${run}: ${recorder.staleFrameLabels} stale labels in ${recorder.staleRuns} runs, ${recorder.frameLabelFaults} faults, ` +
+          `${recorder.contextFrameGaps} skipped blocks, ${recorder.offsetChanges} offset changes since the recorder started; ` +
           `${findClicks(left, left, read.sampleRate).length} clicks in the 10 s recorded`
       );
-      for (const entry of (recorder.gapLog ?? []).filter((item) => item.recorderFrame >= from)) {
+      for (const entry of (recorder.staleLog ?? []).filter((item) => item.recorderFrame >= from)) {
         const index = entry.recorderFrame - from;
         console.log(
-          `  recorded frame ${entry.recorderFrame}: raw ${entry.contextFrame}, expected ${entry.expected}, ` +
-            `${entry.stale ? 'taken as expected' : 'a skipped block'}; largest third difference around it ${peakAround(left, index)}`
+          `  recorded frame ${entry.recorderFrame}: raw ${entry.contextFrame}, expected ${entry.expected}, ${entry.blocks} block(s), ` +
+            `${entry.recovered ? `caught up at raw ${entry.recoveredContextFrame}` : `not caught up (${entry.recovered})`}; ` +
+            `largest third difference around it ${peakAround(left, index)}`
         );
       }
+      for (const entry of recorder.gapLog ?? []) {
+        if (!entry.stale) console.log(`  skipped block at recorded frame ${entry.recorderFrame}: raw ${entry.contextFrame}, expected ${entry.expected}`);
+      }
+      for (const entry of recorder.faultLog ?? []) console.log(`  fault at recorded frame ${entry.recorderFrame}: ${entry.kind}, raw ${entry.contextFrame}, expected ${entry.expected}`);
       // The same recording with one block repeated, and one left out.
       const middle = Math.floor(left.length / BLOCK / 2) * BLOCK;
       const repeated = new Float32Array(left.length + BLOCK);
