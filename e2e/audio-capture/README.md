@@ -62,7 +62,14 @@ starts), `quiet` (the player at volume 0 until it is routed, so nothing is
 heard; a different condition, see "Limits") and `seconds=<n>` (how long it
 records, default 6). `recorder-first-block.js` takes `chromium` or
 `firefox`, the runs, the context's sample rate, and a control that has to
-fail (`planted`, `clock-stopped`, `clock-fast`); it is silent.
+fail (`planted`, `clock-stopped`, `clock-fast`); it is silent. Both give a
+browser 60 seconds to start. Firefox starts through `e2e/firefox-launch.js`,
+which prints how the start went and ends one that runs out of time: it
+aborts puppeteer's launch (puppeteer then kills the browser's processes),
+closes a browser that starts after all, and kills the process it started
+if it is still running after that (each of these waits at most 10
+seconds), before the reproducer stops with the deadline's error. Nothing is tried again. Chromium's start is ended by
+Playwright's own launch timeout.
 
 On Linux the trial expects a PulseAudio (or PipeWire) sound server. The
 workflow `.github/workflows/audio-capture-trial.yml` sets one up with a
@@ -74,6 +81,16 @@ pulseaudio --start --exit-idle-time=-1
 pactl load-module module-null-sink sink_name=audio_trial
 pactl set-default-sink audio_trial
 ```
+
+Every step of the workflow's two jobs has its own deadline, setting up
+included (24 minutes at most, against under a minute on a hosted run), and
+the deadlines add up to 5 minutes less than the job's own limit, with 5 of
+them for the upload. So a step that runs out of time fails as a step and
+the evidence is still uploaded, rather than the whole job being cancelled.
+`tests/audio-workflow.test.js` checks those sums, with each step in turn
+running out of time and GitHub's rules for which steps run after a
+failure; it doesn't run the workflow. The Firefox step runs after a
+Chromium failure too, once the sink is there.
 
 The trial's evidence goes to `test-results/audio-trial/<run>/`, about 2 MB
 in all:
@@ -176,6 +193,14 @@ ahead while the clock moved one block, the clock moving more than the
 label, and a clock that is missing, stopped, not a number or doesn't move
 one frame per sample within the block are faults. It is read to within half
 a block, which float32 keeps for far longer than any context here lives.
+That tells one block from two only if every block has the same length, as
+a context's blocks do (its render quantum, 128 frames unless it asks for
+another): a block of 512 frames followed by one of 128 with 128 left out
+between them moves the clock 640 frames, within half a block of 512. So
+the recorder takes the first block's length as every block's, and a block
+of another length, or a first block shorter than 128 frames, is a fault
+on every such block; it doesn't try to read a recording whose blocks
+change length. Every context so far has had 128-frame blocks.
 
 It corrects one number, and only one. When Chromium starts rendering a
 worklet, the recorder's very first block can carry a number one or more
@@ -804,8 +829,10 @@ It doesn't cover either:
   on YouTube in 1 of 2 whole-suite runs on this Mac with the paced changes,
   on both engines in the hosted run at `39fdb16`, and on Spotify in the
   hosted run at `2878e3f` (512 frames after recording began at 2048). That
-  hosted pattern is the one the first-block correction takes, but no
-  hosted run has used it yet. The correction rests on the native clock and
+  hosted pattern is the one the first-block correction takes, and the
+  hosted run at `f1f253e` took it once, on YouTube: the first block, numbered
+  2048, was taken as 2560, with 128-frame blocks, no gap, fault or change of
+  offset after it, and the check passed. The correction rests on the native clock and
   those reproducer runs, not on knowing every way Chromium can start a
   worklet; any other pattern stays a measurement failure.
 - Windows runners weren't tried.

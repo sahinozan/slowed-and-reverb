@@ -27,6 +27,7 @@
 // It prints one JSON line per run. It isn't a test and passes or fails
 // nothing. Set FIREFOX_BIN to use a Firefox other than the usual install.
 
+const { launchFirefox } = require('../firefox-launch');
 const { installAudioTrialObserver } = require('./capture-observer');
 const { withDeadline } = require('./actions');
 const { startTrialServer } = require('./fixture');
@@ -35,6 +36,11 @@ const { decodeChannels } = require('./metrics');
 
 const RAMP_FRAMES = 2 ** 20;
 const STEP_MS = 15_000;
+// How long the browser may take to start. Each browser's launcher ends a
+// start that runs out of time itself: Playwright's timeout, and for
+// Firefox e2e/firefox-launch.js, which also closes a browser that starts
+// after all.
+const LAUNCH_MS = 60_000;
 const CONTROLS = ['none', 'planted', 'clock-stopped', 'clock-fast'];
 
 function firefoxPath() {
@@ -47,7 +53,7 @@ function firefoxPath() {
 async function launch(name, unmuted) {
   if (name === 'chromium') {
     const { chromium } = require('@playwright/test');
-    const browser = await chromium.launch({ channel: 'chromium', headless: true, ...(unmuted ? { ignoreDefaultArgs: ['--mute-audio'] } : {}) });
+    const browser = await chromium.launch({ channel: 'chromium', headless: true, timeout: LAUNCH_MS, ...(unmuted ? { ignoreDefaultArgs: ['--mute-audio'] } : {}) });
     return {
       version: browser.version(),
       newPage: async (options) => {
@@ -59,22 +65,30 @@ async function launch(name, unmuted) {
     };
   }
   const puppeteer = require('puppeteer-core');
-  const browser = await puppeteer.launch({ browser: 'firefox', executablePath: firefoxPath(), headless: true });
+  const browser = await launchFirefox((options) => puppeteer.launch(options), { browser: 'firefox', executablePath: firefoxPath(), headless: true }, { deadline: LAUNCH_MS });
+  const close = async () => {
+    try {
+      await withDeadline(browser.close(), STEP_MS, 'Firefox did not close');
+    } catch (error) {
+      browser.process()?.kill('SIGKILL');
+      throw error;
+    }
+  };
+  let version;
+  try {
+    version = await withDeadline(browser.version(), STEP_MS, 'Firefox gave no version');
+  } catch (error) {
+    await close().catch(() => {});
+    throw error;
+  }
   return {
-    version: await browser.version(),
+    version,
     newPage: async (options) => {
       const page = await browser.newPage();
       await page.evaluateOnNewDocument(installAudioTrialObserver, options);
       return page;
     },
-    close: async () => {
-      try {
-        await withDeadline(browser.close(), STEP_MS, 'Firefox did not close');
-      } catch (error) {
-        browser.process()?.kill('SIGKILL');
-        throw error;
-      }
-    }
+    close
   };
 }
 
@@ -189,7 +203,7 @@ async function main([name, runsText, rateText, controlText = 'none', unmutedText
   const server = await startTrialServer();
   let browser = null;
   try {
-    browser = await withDeadline(launch(name, unmutedText === 'unmuted'), 60_000, `${name} did not start`);
+    browser = await launch(name, unmutedText === 'unmuted');
     console.log(JSON.stringify({ browser: name, version: browser.version, muted: name === 'chromium' && unmutedText !== 'unmuted', sampleRate, control: controlText }));
     for (let index = 1; index <= runs; index++) {
       try {

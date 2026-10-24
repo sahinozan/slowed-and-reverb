@@ -323,8 +323,8 @@ describe('audio regression historical controls', () => {
 
 // Runs recorder-worklet.js in a context of its own, as the audio thread
 // would, with `currentFrame` set before each block.
-function loadRecorder({ batchFrames = 512, poolSize = 4 } = {}) {
-  const sandbox = { sampleRate: RATE, currentFrame: 0, Float32Array, registered: null, messages: [] };
+function loadRecorder({ batchFrames = 512, poolSize = 4, rate = RATE } = {}) {
+  const sandbox = { sampleRate: rate, currentFrame: 0, Float32Array, registered: null, messages: [] };
   sandbox.AudioWorkletProcessor = class {
     constructor() {
       this.port = { postMessage: (message) => sandbox.messages.push(message), onmessage: null };
@@ -484,6 +484,146 @@ describe('the audio recorder\'s native clock', () => {
     const skipped = sequence([0, 128, 512, 640].map((frame) => [hour + frame, nativeClock(hour + frame)])).counters;
     assert.equal(skipped.contextFrameGaps, 1);
     assert.equal(skipped.frameLabelFaults, 0);
+  });
+});
+
+describe("the audio recorder's block length", () => {
+  // Renders blocks of `sizes` frames one after the other from context frame
+  // `from`, as the browser would, and calls the real worklet for each block
+  // not in `skip` (its index in `sizes`): a skipped block is a callback the
+  // recorder never got, not changed samples. Each block's native clock and
+  // its samples come from the frame it really is (the left channel counts
+  // frames, one step of 2^-20 each), never from the label it is given:
+  // `labels` maps a block's index to another currentFrame, and the rest
+  // carry their real one.
+  function render({ sizes, skip = [], labels = {}, from = 512, rate = RATE, batchFrames = 4096 }) {
+    const { sandbox, node } = loadRecorder({ batchFrames, poolSize: 8, rate });
+    let frame = from;
+    sizes.forEach((frames, index) => {
+      const real = frame;
+      frame += frames;
+      if (skip.includes(index)) return;
+      sandbox.currentFrame = labels[index] ?? real;
+      const input = [Float32Array.from({ length: frames }, (_, i) => (real + i + 1) / 2 ** 20), new Float32Array(frames)];
+      node.process([input], [[new Float32Array(frames), new Float32Array(frames)]], nativeClock(real, { length: frames, rate }));
+    });
+    // Flushes what is left into a batch, as a full one would be.
+    if (node.fill) node.flush();
+    const batches = sandbox.messages.filter(({ type }) => type === 'batch');
+    // The recorded left channel, as the frame numbers the samples carry.
+    const played = batches.flatMap((batch) =>
+      Array.from(new Float32Array(batch.buffer).subarray(0, batch.frames), (value) => Math.round(value * 2 ** 20) - 1)
+    );
+    return { counters: node.counters(), batches, played };
+  }
+  const sum = (sizes) => sizes.reduce((total, frames) => total + frames, 0);
+
+  for (const rate of [44_100, 48_000]) {
+    test(`a block left out after a block of another length is a fault, never a relabelled first block (${rate} Hz)`, () => {
+      // The review's cases: 128 frames left out after a first block of 512,
+      // and 64 after 256. Within half a block of 512 (or of 256), the native
+      // clock moving 640 (or 320) frames looks like one block, so the
+      // recorder used to relabel the first block 128 (or 64) frames on and
+      // count no gap at all.
+      for (const sizes of [[512, 128, 128, 128, 128], [256, 64, 512, 128]]) {
+        const { counters, played } = render({ sizes, skip: [1], rate });
+        assert.equal(counters.initialFrameLabel, null, `${sizes}`);
+        assert.equal(counters.firstContextFrame, 512, `${sizes}`);
+        assert.ok(counters.frameLabelFaults >= 1, `${sizes}`);
+        assert.equal(counters.faultLog[0].kind, 'block length changed', `${sizes}`);
+        assert.deepEqual({ frames: counters.faultLog[0].frames, blockFrames: counters.faultLog[0].blockFrames }, { frames: sizes[2], blockFrames: sizes[0] });
+        // The samples really are missing.
+        assert.equal(played[sizes[0]] - played[sizes[0] - 1], 1 + sizes[1], `${sizes}`);
+      }
+      // Lengths that change with nothing left out fail the same way: the
+      // recorder can't tell them apart.
+      for (const sizes of [[512, 128, 128, 128], [256, 64, 512, 128], [64, 256, 128, 64]]) {
+        for (const labels of [{}, { 0: 0 }]) {
+          const { counters } = render({ sizes, labels, rate });
+          // Every block but a first one of 128 frames or more.
+          assert.equal(counters.frameLabelFaults, sizes[0] < 128 ? sizes.length : sizes.length - 1, `${sizes}`);
+          assert.equal(counters.initialFrameLabel, null, `${sizes}`);
+        }
+      }
+      // And so does every later block of another length, after a first
+      // block relabelled while the lengths were still the same.
+      const changed = render({ sizes: [128, 128, 256, 256, 128], labels: { 0: 0 }, rate }).counters;
+      assert.deepEqual({ ...changed.initialFrameLabel }, { raw: 0, corrected: 512, frames: 128 });
+      assert.equal(changed.frameLabelFaults, 2);
+      assert.deepEqual(Array.from(changed.faultLog, ({ kind }) => kind), ['block length changed', 'block length changed']);
+      assert.deepEqual([...changed.blockSizes], [128, 256]);
+    });
+
+    test(`a block left out right after the first, at one length, is a gap of exactly that block (${rate} Hz)`, () => {
+      for (const frames of [128, 256, 512]) {
+        const sizes = Array(6).fill(frames);
+        const { counters, played } = render({ sizes, skip: [1], rate });
+        assert.equal(counters.contextFrameGaps, 1, `${frames}`);
+        assert.equal(counters.skippedContextFrames, frames, `${frames}`);
+        assert.equal(counters.frameLabelFaults, 0, `${frames}`);
+        assert.equal(counters.initialFrameLabel, null, `${frames}`);
+        assert.equal(counters.firstContextFrame, 512, `${frames}`);
+        assert.equal(played[frames] - played[frames - 1], 1 + frames, `${frames}`);
+        // Two left out, and one later on.
+        const two = render({ sizes, skip: [1, 2], rate }).counters;
+        assert.deepEqual([two.contextFrameGaps, two.skippedContextFrames, two.frameLabelFaults], [1, 2 * frames, 0], `${frames}`);
+        const later = render({ sizes, skip: [3], rate }).counters;
+        assert.deepEqual([later.contextFrameGaps, later.skippedContextFrames, later.frameLabelFaults], [1, frames, 0], `${frames}`);
+        // Left out while the label stays in step: a fault, not a gap.
+        const hidden = render({ sizes, skip: [3], labels: Object.fromEntries([4, 5].map((index) => [index, 512 + (index - 1) * frames])), rate }).counters;
+        assert.equal(hidden.contextFrameGaps, 0, `${frames}`);
+        assert.equal(hidden.faultLog[0].kind, 'native clock skipped frames the label did not', `${frames}`);
+      }
+    });
+
+    test(`a first block numbered behind is relabelled at any one length of 128 frames or more (${rate} Hz)`, () => {
+      for (const frames of [128, 256, 512]) {
+        const sizes = Array(6).fill(frames);
+        // Numbered a block, and four blocks, behind.
+        for (const behind of [1, 4]) {
+          const { counters, batches, played } = render({ sizes, labels: { 0: 512 - behind * frames }, rate });
+          assert.equal(counters.frameLabelFaults, 0, `${frames} ${behind}`);
+          assert.equal(counters.contextFrameGaps, 0, `${frames} ${behind}`);
+          assert.equal(counters.firstContextFrame, 512, `${frames} ${behind}`);
+          assert.deepEqual({ ...counters.initialFrameLabel }, { raw: 512 - behind * frames, corrected: 512, frames });
+          // Every sample is there, and a mark at a context frame maps to
+          // the sample played then.
+          assert.equal(played.length, sum(sizes));
+          assert.ok(played.every((value, index) => value === 512 + index));
+          const offset = batches[0].contextFrame - batches[0].startFrame;
+          assert.equal(played[1000 + 512 - offset - 512], 1000 + 512 - offset);
+          assert.equal(offset, 512);
+        }
+        // Behind, then a block left out: no relabel, and a fault.
+        const both = render({ sizes, skip: [1], labels: { 0: 512 - frames }, rate }).counters;
+        assert.equal(both.initialFrameLabel, null, `${frames}`);
+        assert.equal(both.contextFrameGaps, 1, `${frames}`);
+        assert.ok(both.frameLabelFaults >= 1, `${frames}`);
+      }
+    });
+  }
+
+  test('blocks shorter than 128 frames fail every block, at one length too', () => {
+    for (const frames of [64, 32]) {
+      const { counters } = render({ sizes: Array(4).fill(frames) });
+      assert.equal(counters.frameLabelFaults, 4, `${frames}`);
+      assert.equal(counters.faultLog[0].kind, 'block too short');
+      // Not even a first block behind is relabelled.
+      const behind = render({ sizes: Array(4).fill(frames), labels: { 0: 512 - frames } }).counters;
+      assert.equal(behind.initialFrameLabel, null);
+      assert.ok(behind.frameLabelFaults >= 4);
+    }
+  });
+
+  test('a length kept for an hour, or after ten minutes of float32, still tells one block from two', () => {
+    for (const from of [600 * RATE, 3600 * RATE]) {
+      for (const frames of [128, 512]) {
+        const sizes = Array(5).fill(frames);
+        assert.equal(render({ sizes, from }).counters.frameLabelFaults, 0, `${from} ${frames}`);
+        const skipped = render({ sizes, from, skip: [2] }).counters;
+        assert.deepEqual([skipped.contextFrameGaps, skipped.skippedContextFrames, skipped.frameLabelFaults], [1, frames, 0]);
+      }
+    }
   });
 });
 

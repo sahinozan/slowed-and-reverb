@@ -28,6 +28,7 @@
 
 const puppeteer = require('puppeteer-core');
 
+const { launchFirefox } = require('../firefox-launch');
 const { withDeadline } = require('./actions');
 const { installAudioTrialObserver } = require('./capture-observer');
 const { startTrialServer } = require('./fixture');
@@ -35,7 +36,8 @@ const { clickStart, sleep, snapshot } = require('./harness');
 const { decodeChannels, findClicks, spanHealth } = require('./metrics');
 
 // Every step in the page or the browser, and the browser's own start and
-// close, give up after these.
+// close, give up after these. A start that runs out of time is ended, and
+// its browser closed if it starts after all (e2e/firefox-launch.js).
 const STEP_MS = 15_000;
 const LAUNCH_MS = 60_000;
 
@@ -93,12 +95,8 @@ async function main(runs, { atStart, quiet, seconds }) {
   const server = await startTrialServer();
   let browser = null;
   try {
-    browser = await withDeadline(
-      puppeteer.launch({ browser: 'firefox', executablePath: firefoxPath(), headless: true }),
-      LAUNCH_MS,
-      'Firefox did not start'
-    );
-    console.log(`Firefox ${await browser.version()}; routed ${atStart ? 'as it starts playing' : 'a second after it starts'}${quiet ? ', quiet until then' : ''}; ${seconds} s recorded`);
+    browser = await launchFirefox((options) => puppeteer.launch(options), { browser: 'firefox', executablePath: firefoxPath(), headless: true }, { deadline: LAUNCH_MS });
+    console.log(`Firefox ${await withDeadline(browser.version(), STEP_MS, 'no version')}; routed ${atStart ? 'as it starts playing' : 'a second after it starts'}${quiet ? ', quiet until then' : ''}; ${seconds} s recorded`);
     for (let run = 1; run <= runs; run++) {
       const page = await withDeadline(browser.newPage(), STEP_MS, 'no new page');
       const step = (promise, what) => withDeadline(promise, STEP_MS, what);

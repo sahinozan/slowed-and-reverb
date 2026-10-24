@@ -21,6 +21,8 @@ const STALE_LOG_SIZE = 32;
 const FAULT_LOG_SIZE = 8;
 // How long the native clock (contextClock below) runs: a day, in seconds.
 const CLOCK_SPAN_SECONDS = 86_400;
+// The shortest block the recorder accepts (see blockFrames below).
+const MIN_BLOCK_FRAMES = 128;
 
 class AudioTrialRecorder extends AudioWorkletProcessor {
   // A second clock, kept by the browser rather than by currentFrame: the
@@ -103,6 +105,15 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     this.emptyInputBlocks = 0;
     this.nonStereoBlocks = 0;
     this.blockSizes = [];
+    // The length of every block, taken from the first. A context renders
+    // all its blocks at one length, its render quantum: 128 frames unless
+    // it asks for another. The checks against the native clock tell one
+    // block from more to within half a block, which can't tell a block of
+    // one length from a block of another plus a shorter one left out, or
+    // read a block much shorter than 128 frames to that precision. So a
+    // block of any other length than the first, or a first block shorter
+    // than MIN_BLOCK_FRAMES, is a fault: the recording isn't valid data.
+    this.blockFrames = null;
     this.port.onmessage = (event) => {
       if (event.data && event.data.type === 'recycle') this.pool.push(new Float32Array(event.data.buffer));
     };
@@ -112,10 +123,13 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
   process(inputs, outputs, parameters) {
     const input = inputs[0] || [];
     const output = outputs[0];
-    // The block length isn't assumed to be 128 frames.
+    // The block length is read, not assumed to be 128 frames, and has to
+    // stay the same (blockFrames above).
     const frames = output && output[0] ? output[0].length : input[0] ? input[0].length : 0;
     if (frames === 0) return true;
     if (!this.blockSizes.includes(frames) && this.blockSizes.length < 8) this.blockSizes.push(frames);
+    if (this.blockFrames === null) this.blockFrames = frames;
+    const lengthOk = frames === this.blockFrames && frames >= MIN_BLOCK_FRAMES;
 
     const raw = currentFrame;
     const clock = this.readClock(parameters, frames);
@@ -123,10 +137,12 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     // began, and whether that was exactly the previous block, to within half
     // a block: far more than float32 loses in any context here (the unit
     // tests read it after an hour, and after ten minutes of Chromium's x86
-    // ramp, which adds its values up).
+    // ramp, which adds its values up). With every block the same length,
+    // a block left out moves it a whole block more.
     const nativeStep = clock !== null && this.lastClock !== null ? (clock - this.lastClock) * sampleRate : null;
-    const nextBlock = nativeStep !== null && Math.abs(nativeStep - this.lastFrames) < this.lastFrames / 2;
+    const nextBlock = lengthOk && nativeStep !== null && Math.abs(nativeStep - this.lastFrames) < this.lastFrames / 2;
     const faultsBefore = this.frameLabelFaults;
+    if (!lengthOk) this.fault(frames === this.blockFrames ? 'block too short' : 'block length changed', raw, null, frames);
     if (clock === null) this.fault('native clock unreadable', raw);
     let frame = raw;
     let skipped = 0;
@@ -252,10 +268,12 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     return true;
   }
 
-  fault(kind, raw, nativeStep = null) {
+  fault(kind, raw, nativeStep = null, frames = null) {
     this.frameLabelFaults++;
     if (this.faultLog.length < FAULT_LOG_SIZE) {
-      this.faultLog.push({ kind, recorderFrame: this.recordedFrames, contextFrame: raw, expected: this.lastEnd, nativeStep });
+      const entry = { kind, recorderFrame: this.recordedFrames, contextFrame: raw, expected: this.lastEnd, nativeStep };
+      if (frames !== null) Object.assign(entry, { frames, blockFrames: this.blockFrames });
+      this.faultLog.push(entry);
     }
   }
 

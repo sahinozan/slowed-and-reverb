@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const readline = require('node:readline');
-const { test } = require('node:test');
+const { describe, test } = require('node:test');
 
 const { MAX_LINES, MAX_LINE_LENGTH, installedVersion, launchFirefox, lineReader } = require('../e2e/firefox-launch');
 
@@ -302,3 +302,210 @@ test(
     assert.equal(diagnosticsChannel.hasSubscribers('child_process'), false);
   }
 );
+
+// A process that lives until it is killed, as a Firefox that hangs would,
+// started by a stand-in for puppeteer.launch that calls `then(child, options)`
+// for what the launch does next.
+function hangingLaunch(then) {
+  return (options) => {
+    const child = spawn(options.executablePath, ['-e', 'setInterval(() => {}, 1000);'], {
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    return then(child, options);
+  };
+}
+
+function deadlineLaunch(launchFunction, helperOptions) {
+  const reports = [];
+  const result = launchFirefox(launchFunction, { executablePath: process.execPath }, {
+    log: (report) => reports.push(report),
+    deadline: 200,
+    abortWait: 1_000,
+    ...helperOptions
+  });
+  return { result, reports };
+}
+
+const deadlineError = (error) => error.code === 'timeout' && /^Firefox did not start \(not done within 200 ms\)$/.test(error.message);
+
+describe('a start given a deadline', () => {
+  test('passes no signal without one, and returns a start within it unchanged', async () => {
+    let given;
+    const plain = launchFirefox(async (options) => ((given = options), { version: async () => 'fake/1.0' }), { executablePath: process.execPath }, { log: () => {} });
+    await plain;
+    assert.equal('signal' in given, false);
+    const { result, reports } = deadlineLaunch(async (options) => ((given = options), { version: async () => 'fake/1.0' }));
+    await result;
+    assert.ok(given.signal instanceof globalThis.AbortSignal);
+    assert.equal(given.signal.aborted, false);
+    assert.match(reports[0], /^Firefox start succeeded/);
+  });
+
+  test('aborts a launch that outlasts it and waits for the browser to end, as puppeteer does on abort', async () => {
+    let child;
+    let signal;
+    const { result, reports } = deadlineLaunch(
+      hangingLaunch((started, options) => {
+        child = started;
+        signal = options.signal;
+        // As @puppeteer/browsers: the abort kills the process, and the
+        // launch rejects once it has exited.
+        return new Promise((resolve, reject) => {
+          options.signal.addEventListener('abort', () => started.kill('SIGKILL'), { once: true });
+          started.once('exit', () => reject(new Error('Failed to launch the browser process: Code: null')));
+        });
+      })
+    );
+    await assert.rejects(result, deadlineError);
+    assert.equal(signal.aborted, true);
+    assert.equal(child.signalCode, 'SIGKILL');
+    assert.match(reports[0], /^Firefox start failed after 0\.\d s: /);
+    assert.match(reports[0], /after the deadline: the aborted launch ended: Failed to launch the browser process/);
+    assert.match(reports[0], /process exited with code null, signal SIGKILL/);
+    assert.equal(diagnosticsChannel.hasSubscribers('child_process'), false);
+  });
+
+  test('closes a browser that starts after it', async () => {
+    let child;
+    const closed = [];
+    const { result, reports } = deadlineLaunch(
+      hangingLaunch((started) => {
+        child = started;
+        // The session started at 300 ms, after the deadline, whatever the
+        // signal said.
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ close: async () => (closed.push(true), started.kill('SIGKILL')) }), 300)
+        );
+      })
+    );
+    await assert.rejects(result, deadlineError);
+    // Closed before the start's failure was handed back, not later.
+    assert.deepEqual(closed, [true]);
+    await ended(child);
+    assert.match(reports[0], /after the deadline: the browser started after the deadline and was closed/);
+    assert.doesNotMatch(reports[0], /was killed/);
+  });
+
+  test('kills the process it started when the launch neither ends nor closes', async () => {
+    for (const late of ['never ends', 'never closes']) {
+      let child;
+      const { result, reports } = deadlineLaunch(
+        hangingLaunch((started) => {
+          child = started;
+          return late === 'never ends' ? new Promise(() => {}) : new Promise((resolve) => setTimeout(() => resolve({ close: () => new Promise(() => {}) }), 300));
+        }),
+        { abortWait: 300 }
+      );
+      await assert.rejects(result, deadlineError);
+      assert.ok(child.signalCode === 'SIGKILL', late);
+      const said = late === 'never ends' ? /the launch had not ended 300 ms after it was aborted/ : /started after the deadline and had not closed within 300 ms/;
+      assert.match(reports[0], said, late);
+      assert.match(reports[0], new RegExp(`process ${child.pid} was killed(;|$)`, 'm'), late);
+    }
+  });
+
+  test('leaves other processes from the same executable alone', async () => {
+    // One started before the start and one after it, as another Firefox
+    // would be.
+    const before = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+    let after;
+    let child;
+    try {
+      const { result } = deadlineLaunch(
+        hangingLaunch((started) => {
+          child = started;
+          after = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+          return new Promise(() => {});
+        }),
+        { abortWait: 300 }
+      );
+      await assert.rejects(result, deadlineError);
+      assert.equal(child.signalCode, 'SIGKILL');
+      assert.equal(before.exitCode ?? before.signalCode, null);
+      assert.equal(after.exitCode ?? after.signalCode, null);
+    } finally {
+      for (const other of [before, after]) other?.kill('SIGKILL');
+      await Promise.all([before, after].filter(Boolean).map(ended));
+    }
+  });
+
+  test('passes on a launch that fails within it unchanged', async () => {
+    const failure = new Error('Timed out after 30000 ms while waiting for the WS endpoint URL to appear in stdout!');
+    const { result, reports } = deadlineLaunch(
+      hangingLaunch((started) => {
+        setTimeout(() => started.kill('SIGKILL'), 20);
+        return new Promise((resolve, reject) => started.once('exit', () => reject(failure)));
+      })
+    );
+    await assert.rejects(result, (error) => error === failure);
+    assert.doesNotMatch(reports[0], /after the deadline/);
+  });
+});
+
+// Node standing in for Firefox, for the installed puppeteer: `announce`
+// prints the WebDriver BiDi line for a WebSocket server that completes the
+// handshake and then answers nothing, so session.new never comes back.
+function standIn(directory, { announce }) {
+  const executablePath = path.join(directory, 'firefox');
+  fs.writeFileSync(
+    executablePath,
+    `#!${process.execPath}
+    const announce = ${announce};
+    if (!announce) { console.error('*** You are running in headless mode.'); setInterval(() => {}, 1000); }
+    else {
+      const crypto = require('node:crypto');
+      const server = require('node:http').createServer();
+      server.on('upgrade', (request, socket) => {
+        const accept = crypto.createHash('sha1').update(request.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+        socket.write('HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: ' + accept + '\\r\\n\\r\\n');
+        socket.on('data', () => {});
+        console.error('session requested');
+      });
+      server.listen(0, '127.0.0.1', () => console.error('WebDriver BiDi listening on ws://127.0.0.1:' + server.address().port));
+    }
+    `,
+    { mode: 0o755 }
+  );
+  return executablePath;
+}
+
+for (const [phase, announce, pattern] of [
+  ['the port is never announced', false, /WebDriver BiDi port announced at never/],
+  ['the session never starts', true, /stderr: session requested/]
+]) {
+  test(
+    `ends the installed puppeteer's start at the deadline when ${phase}`,
+    { skip: process.platform === 'win32' && 'the stand-in is started through a #! line', timeout: 20_000 },
+    async (t) => {
+      const puppeteer = require('puppeteer-core');
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'firefox-launch-test-'));
+      t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+      const executablePath = standIn(directory, { announce });
+      let child;
+      const onSpawn = ({ process: started }) => process.nextTick(() => {
+        if (started.spawnfile === executablePath) child = started;
+      });
+      diagnosticsChannel.subscribe('child_process', onSpawn);
+      t.after(() => diagnosticsChannel.unsubscribe('child_process', onSpawn));
+      const reports = [];
+      const started = Date.now();
+      // Puppeteer's own timeouts, 10 s for the port and 10 s for the
+      // session, are far beyond the deadline, so only the abort ends it.
+      const launching = launchFirefox(
+        (options) => puppeteer.launch(options),
+        { browser: 'firefox', executablePath, headless: true, timeout: 10_000, protocolTimeout: 10_000 },
+        { log: (report) => reports.push(report), deadline: 1_500, abortWait: 3_000 }
+      );
+      await assert.rejects(launching, (error) => error.code === 'timeout' && /within 1500 ms/.test(error.message));
+      assert.ok(Date.now() - started < 6_000);
+      assert.ok(child, 'the stand-in was started');
+      assert.equal(child.signalCode, 'SIGKILL');
+      const [report] = reports;
+      assert.match(report, pattern);
+      assert.match(report, /after the deadline: the aborted launch ended: /);
+      assert.doesNotMatch(report, /was killed/);
+      assert.equal(diagnosticsChannel.hasSubscribers('child_process'), true);
+    }
+  );
+}
