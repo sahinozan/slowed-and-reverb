@@ -24,7 +24,7 @@ function jobText(name) {
   return match[0];
 }
 
-// Each step's name, condition, deadline and id.
+// Each step's name, condition, deadline, id and one-line run command.
 function steps(job) {
   return job
     .split(/\n(?= {6}- name: )/)
@@ -33,6 +33,7 @@ function steps(job) {
       name: /^ {6}- name: (.*)$/m.exec(text)[1],
       id: /^ {8}id: (\S+)$/m.exec(text)?.[1] ?? null,
       condition: /^ {8}if: (.*)$/m.exec(text)?.[1] ?? null,
+      run: /^ {8}run: (.*)$/m.exec(text)?.[1] ?? null,
       minutes: Number(/^ {8}timeout-minutes: (\d+)$/m.exec(text)?.[1] ?? NaN)
     }));
 }
@@ -85,11 +86,26 @@ function lateUploads(all, cap) {
   return late;
 }
 
+// What is wrong with a job's two browser steps: each has to run its own
+// browser's command, the Chromium step first, the Firefox step right after.
+function browserStepProblems(job, commands) {
+  const all = steps(job);
+  const problems = [];
+  const chromium = all.findIndex((step) => step.name.includes('Chromium audio'));
+  const firefox = all.findIndex((step) => step.name.includes('Firefox audio'));
+  if (chromium === -1 || firefox !== chromium + 1) problems.push('the Firefox step does not follow the Chromium step');
+  if (all[chromium]?.run !== commands.chromium) problems.push(`the Chromium step runs ${all[chromium]?.run}`);
+  if (all[firefox]?.run !== commands.firefox) problems.push(`the Firefox step runs ${all[firefox]?.run}`);
+  return problems;
+}
+
+const JOBS = [
+  ['linux-null-sink', 45, { chromium: 'npm run test:audio-trial:chromium', firefox: 'npm run test:audio-trial:firefox' }],
+  ['linux-regression', 55, { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' }]
+];
+
 describe('the audio workflow', () => {
-  for (const [job, cap, tests] of [
-    ['linux-null-sink', 45, 'npm run test:audio-trial:'],
-    ['linux-regression', 55, 'npm run test:audio:']
-  ]) {
+  for (const [job, cap, commands] of JOBS) {
     test(`${job}: every step has a deadline, and the upload has its time whichever step runs out`, () => {
       const text = jobText(job);
       assert.match(text, new RegExp(`^ {4}timeout-minutes: ${cap}$`, 'm'));
@@ -112,10 +128,40 @@ describe('the audio workflow', () => {
       assert.equal(all[firefox].condition, "${{ !cancelled() && steps.sink.outputs.ready == 'true' }}");
       assert.ok(runsAfterFailure(all[firefox], chromium, firefox, all));
       assert.equal(runsAfterFailure(all[firefox], all.findIndex(({ id }) => id === 'sink'), firefox, all), false);
-      assert.match(text, new RegExp(`run: ${tests.replace(/[.:]/g, '\\$&')}chromium`));
-      assert.match(text, new RegExp(`run: ${tests.replace(/[.:]/g, '\\$&')}firefox`));
+      assert.deepEqual(browserStepProblems(text, commands), [], job);
     });
   }
+
+  test("finds a browser step that runs the wrong command, another browser's, or none", () => {
+    const trial = jobText('linux-null-sink');
+    const [, , commands] = JOBS[0];
+    const chromiumLine = '        run: npm run test:audio-trial:chromium\n';
+    const firefoxLine = '        run: npm run test:audio-trial:firefox\n';
+    assert.equal(trial.split(chromiumLine).length, 2);
+    assert.equal(trial.split(firefoxLine).length, 2);
+    const swapped = trial.replace(chromiumLine, 'SWAP').replace(firefoxLine, chromiumLine).replace('SWAP', firefoxLine);
+    assert.deepEqual(browserStepProblems(swapped, commands), [
+      'the Chromium step runs npm run test:audio-trial:firefox',
+      'the Firefox step runs npm run test:audio-trial:chromium'
+    ]);
+    // The regression suite's command in the trial's job.
+    assert.deepEqual(browserStepProblems(trial.replace(chromiumLine, '        run: npm run test:audio:chromium\n'), commands), [
+      'the Chromium step runs npm run test:audio:chromium'
+    ]);
+    // Both steps on one browser.
+    assert.deepEqual(browserStepProblems(trial.replace(firefoxLine, chromiumLine), commands), [
+      'the Firefox step runs npm run test:audio-trial:chromium'
+    ]);
+    // A step with its command gone, though the command is still written in
+    // the job (here in a comment).
+    assert.deepEqual(browserStepProblems(trial.replace(firefoxLine, `        # ${commands.firefox}\n`), commands), [
+      'the Firefox step runs null'
+    ]);
+    // A command with something after it.
+    assert.deepEqual(browserStepProblems(trial.replace(chromiumLine, '        run: npm run test:audio-trial:chromium || true\n'), commands), [
+      'the Chromium step runs npm run test:audio-trial:chromium || true'
+    ]);
+  });
 
   test('finds a setup step given more time than the job has left, or none', () => {
     // The check above, against the trial's job with npm ci given 10
