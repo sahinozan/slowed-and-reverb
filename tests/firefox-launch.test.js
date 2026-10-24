@@ -125,6 +125,44 @@ test('reports a start that times out, with the processes and how the browser end
   assert.equal(diagnosticsChannel.hasSubscribers('child_process'), false);
 });
 
+test('lists the processes during a slow start, and the start still succeeds', async () => {
+  const { result, reports } = await launch(
+    `setTimeout(() => console.error(${JSON.stringify(ENDPOINT)}), 400); setTimeout(() => {}, 5000);`,
+    { timeout: 3_000 },
+    { slowStartMs: 100 }
+  );
+  const browser = await result;
+  try {
+    const [report] = reports;
+    assert.match(report, /^Firefox start succeeded after /);
+    assert.match(report, /WebDriver BiDi port announced at 0\.[4-9] s|WebDriver BiDi port announced at [1-9]/);
+    assert.match(report, /processes at 0\.\d s, before the port was announced \(pid ppid pgid stat elapsed cpu-time wchan args\):/);
+    if (process.platform !== 'win32') {
+      assert.match(report, new RegExp(`before the port was announced[^\\n]*\\n\\s+${browser.child.pid}\\s`));
+    }
+  } finally {
+    browser.child.kill('SIGKILL');
+    await ended(browser.child);
+  }
+});
+
+test('lists no processes for a start that announces the port in time', async () => {
+  const { result, reports } = await launch(
+    `setTimeout(() => console.error(${JSON.stringify(ENDPOINT)}), 50); setTimeout(() => {}, 5000);`,
+    {},
+    { slowStartMs: 1_000 }
+  );
+  const browser = await result;
+  try {
+    // Past the point a slow start would have been listed.
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    assert.doesNotMatch(reports[0], /before the port was announced/);
+  } finally {
+    browser.child.kill('SIGKILL');
+    await ended(browser.child);
+  }
+});
+
 test('says when the browser is still running after the wait', async () => {
   let child;
   const { result, reports } = await launch(

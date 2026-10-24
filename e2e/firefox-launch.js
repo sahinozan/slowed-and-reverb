@@ -24,6 +24,14 @@
 // after all, and for the process it started to exit, killing that process
 // (and its group) itself if it hasn't. Only that process is touched. The
 // deadline's error is what the caller gets, with nothing tried again.
+//
+// A start that is slow but succeeds says nothing about where the time went,
+// and on GitHub's Ubuntu runners some starts have taken 24 to 25 seconds to
+// open the port, close to puppeteer's 30. So if the port hasn't been
+// announced 15 seconds after the process started, this also takes a list of
+// the browser's processes then (with the CPU time each has used), and the
+// report shows it whether the start then succeeds or fails. It changes no
+// timeout.
 
 const { execFileSync } = require('node:child_process');
 const diagnosticsChannel = require('node:diagnostics_channel');
@@ -41,6 +49,8 @@ const EXIT_WAIT_MS = 10_000;
 // exit, before and after this kills it.
 const ABORT_WAIT_MS = 10_000;
 const ENDPOINT_LINE = /^WebDriver BiDi listening on ws:\/\//;
+// How long after the process starts a start counts as slow (see above).
+const SLOW_START_MS = 15_000;
 
 // The version Firefox records next to its executable (on macOS, in the app's
 // Resources folder), read without starting another Firefox.
@@ -115,7 +125,7 @@ function lineReader(onLine) {
 // Watches for the first process started from `executablePath` and records
 // when it started, its first lines of output and how it ended. stop() lets go
 // of the process without pausing its output, which puppeteer still reads.
-function watchLaunch(executablePath, now = () => performance.now()) {
+function watchLaunch(executablePath, { now = () => performance.now(), slowStartMs = SLOW_START_MS } = {}) {
   const startedAt = now();
   const record = {
     executablePath,
@@ -125,10 +135,12 @@ function watchLaunch(executablePath, now = () => performance.now()) {
     lines: [],
     droppedLines: 0,
     finishedAt: null,
-    exit: null
+    exit: null,
+    slowStart: null
   };
   let child = null;
   let stopped = false;
+  let slowTimer = null;
   const detach = [];
   let resolveExit;
   const exited = new Promise((resolve) => {
@@ -180,6 +192,12 @@ function watchLaunch(executablePath, now = () => performance.now()) {
       record.spawnedAt = elapsed();
       follow(child.stdout, 'stdout');
       follow(child.stderr, 'stderr');
+      slowTimer = setTimeout(() => {
+        if (stopped || record.endpointAt !== null || record.exit) return;
+        record.slowStart = { at: elapsed(), processes: processSnapshot(record.pid) };
+      }, slowStartMs);
+      slowTimer.unref?.();
+      detach.push(() => clearTimeout(slowTimer));
       const onExit = (code, signal) => {
         record.exit = { at: elapsed(), code, signal };
         resolveExit();
@@ -234,13 +252,15 @@ function watchLaunch(executablePath, now = () => performance.now()) {
 }
 
 // The processes in the browser's process group (puppeteer starts it as a
-// group leader on Linux and macOS), with each one's state and, where the
-// system reports it, the kernel function it is waiting in.
+// group leader on Linux and macOS), with each one's state, the CPU time it
+// has used and, where the system reports it, the kernel function it is
+// waiting in.
+const SNAPSHOT_COLUMNS = 'pid ppid pgid stat elapsed cpu-time wchan args';
 function processSnapshot(pid) {
   if (!pid || process.platform === 'win32') return null;
   let output;
   try {
-    output = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat=,etime=,wchan=,args='], {
+    output = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,pgid=,stat=,etime=,time=,wchan=,args='], {
       encoding: 'utf8',
       timeout: 5_000,
       stdio: ['ignore', 'pipe', 'ignore']
@@ -268,10 +288,14 @@ function formatReport({ record, outcome, version, browserVersion, snapshot, erro
     lines.push(`  process ${record.pid} started at ${seconds(record.spawnedAt)}`);
     lines.push(`  WebDriver BiDi port announced at ${seconds(record.endpointAt)}`);
   }
+  if (record.slowStart?.processes) {
+    lines.push(`  processes at ${seconds(record.slowStart.at)}, before the port was announced (${SNAPSHOT_COLUMNS}):`);
+    for (const row of record.slowStart.processes) lines.push(`    ${row}`);
+  }
   if (error) lines.push(`  error: ${String(error.message ?? error).split('\n')[0]}`);
   if (abandoned) lines.push(`  after the deadline: ${abandoned.join('; ')}`);
   if (snapshot) {
-    lines.push('  processes when it failed (pid ppid pgid stat elapsed wchan args):');
+    lines.push(`  processes when it failed (${SNAPSHOT_COLUMNS}):`);
     for (const row of snapshot) lines.push(`    ${row}`);
   }
   if (record.exit) {
@@ -330,9 +354,11 @@ async function abandon(launching, controller, watch, reason, wait) {
 // a `deadline` in ms, the launch is also given `signal`, an AbortSignal, and
 // a start that outlasts the deadline is ended (see the top of this file)
 // and fails with the deadline's error, whose `code` is 'timeout'.
-async function launchFirefox(launch, options, { log = console.error, exitWait = EXIT_WAIT_MS, deadline = null, abortWait = ABORT_WAIT_MS } = {}) {
+// `slowStartMs` is when a start counts as slow (SLOW_START_MS; the tests
+// shorten it).
+async function launchFirefox(launch, options, { log = console.error, exitWait = EXIT_WAIT_MS, deadline = null, abortWait = ABORT_WAIT_MS, slowStartMs = SLOW_START_MS } = {}) {
   const version = installedVersion(options.executablePath);
-  const watch = watchLaunch(options.executablePath);
+  const watch = watchLaunch(options.executablePath, { slowStartMs });
   const controller = deadline === null ? null : new AbortController();
   const launching = Promise.resolve().then(() => launch(controller ? { ...options, signal: controller.signal } : options));
   let expired = null;
@@ -380,4 +406,4 @@ async function launchFirefox(launch, options, { log = console.error, exitWait = 
   return browser;
 }
 
-module.exports = { ABORT_WAIT_MS, MAX_LINES, MAX_LINE_LENGTH, installedVersion, launchFirefox, lineReader };
+module.exports = { ABORT_WAIT_MS, MAX_LINES, MAX_LINE_LENGTH, SLOW_START_MS, installedVersion, launchFirefox, lineReader };
