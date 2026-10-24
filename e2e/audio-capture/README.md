@@ -52,15 +52,19 @@ Three reproducers, which aren't tests and need no extension, show browser
 behavior the suite has to live with:
 
 ```sh
-node e2e/audio-capture/firefox-capture-click.js 6               # Firefox's own click after a playing player is routed into a graph (see "Limits")
+node e2e/audio-capture/firefox-capture-click.js 6               # Firefox's own frame of silence after a playing player is routed into a graph (see "Limits")
 node e2e/audio-capture/chromium-stale-frame.js 4                # Chromium's stale frame numbers, and that the sound across them is unbroken (see "How it records")
 node e2e/audio-capture/recorder-first-block.js chromium 12 48000 # where the recorder's first block falls, against two known ramps (see "How it records")
 ```
 
 `firefox-capture-click.js` also takes `playing` (route the player as it
 starts), `quiet` (the player at volume 0 until it is routed, so nothing is
-heard; a different condition, see "Limits") and `seconds=<n>` (how long it
-records, default 6). `recorder-first-block.js` takes `chromium` or
+heard; a different condition, see "Limits"), `seconds=<n>` (how long it
+records, default 6) and `rate=<speed>` (the speed set after routing,
+default 0.8; `rate=1` leaves it alone, and Firefox's frame of silence is
+then recorded as one frame of exactly 0 in both channels). Run it with
+`MOZ_LOG=timestamp,MediaDecoder:5,AudioSink:4 MOZ_LOG_FILE=<path>` to get
+Firefox's own log of it. `recorder-first-block.js` takes `chromium` or
 `firefox`, the runs, the context's sample rate, and a control that has to
 fail (`planted`, `clock-stopped`, `clock-fast`); it is silent. Both give a
 browser 60 seconds to start. Firefox starts through `e2e/firefox-launch.js`,
@@ -106,8 +110,9 @@ in all:
 - `launch-failure.json`, if the browser didn't start.
 - `firefox-launch.txt` (Firefox): how its start went, from
   `e2e/firefox-launch.js` (its version, when its WebDriver BiDi port
-  opened, its first lines of output and, if it failed, what its processes
-  were doing). The suite writes it too.
+  opened, its first lines of output, what its processes were doing if the
+  port hadn't opened 15 seconds into the start and, if it failed, what they
+  were doing then). The suite writes it too.
 
 The suite's goes to `test-results/audio-regression/<browser>/`, about 6 MB
 (under 1 MB with compact evidence):
@@ -655,8 +660,8 @@ and gaps when settings change, Spotify's own speed changes, and the sound
 coming back unchanged when the effect or the extension is turned off,
 removed or updated, and each defect the project has shipped and fixed is
 caught when put back. But turning the effect on while a song plays fails in
-Firefox on a click that hasn't been explained or decided on, two other
-Firefox clicks are unexplained (see "Limits"), and the suite hasn't run
+Firefox on a click of Firefox's own that hasn't been decided on (see
+"Limits"), and the suite hasn't run
 often enough on any machine to give it a flake rate. Run it after an engine
 change, as well as listening.
 
@@ -693,48 +698,90 @@ It doesn't cover either:
   The suite's spans start after it, except for turning the effect on while
   a song plays, which fails unless the recording began before the sound
   did.
-- **Firefox clicks on its own** (third difference 0.16 to 0.36) 3 to 4
-  seconds after a player that is already playing is routed into a graph and
-  its speed or pitch mode changes, in a third to a half of tries. (It also
-  clicks about 0.2 s after the routing, which the engines' 250 ms of
-  silence hides.)
-  `firefox-capture-click.js` reproduces it with no extension. Changing the
-  player's speed after, before or with the routing all still clicked (in 6
-  of 9 runs on this Mac with AirPods at 48 kHz, at 3.0 to 3.4 s, 7 to 11
-  samples long, 0.23 to 0.39), so reordering the engines' steps wouldn't
-  hide it. With `quiet`, where the player plays at volume 0 until it is
-  routed and is turned up then, it didn't click late in 6 runs of 12
-  seconds each (the same Mac and output, Firefox 158.0.1), and the
-  context's clock ran at 0.9995 to 0.9999 times the wall clock. That
-  suggests the click needs the player to have been heard on its own before
-  it was routed, but six runs don't show it, and the audible runs that
-  would compare weren't repeated alongside them. The reproducer now also
-  prints, for each click, how far the tone moved across it in samples
-  (about 1 for a sample dropped or added, about 0 for a gap that leaves it
-  in place) and how fast the context and the player ran, to test whether
-  it is a correction between the player's clock and the output's; the
-  hosted runs, on a null sink, haven't heard it in this check. Turning the
-  effect on while a song plays does exactly this, so a person may hear it;
-  the engines don't hide it. The suite's check of that action records about
-  6 seconds and fails on it: in Firefox, 1 of 6 runs on YouTube and 4 of 6
-  on Spotify, then on Spotify in the whole-suite run at `117b822` (see
-  "Suite results"), with clicks of 0.22 to 0.56. That
-  the reproducer clicks without the extension doesn't show the engines play
-  no part, and the check stays a failure until the click is fixed or a
-  decision accepts it, not a looser threshold. The suite's other checks
-  turn the effect on before the song starts.
-- **Two clicks are unexplained.** In 2 of the last 23 Firefox runs, one
-  Spotify check heard a single click (0.32 and 0.35): one sample at
-  exactly 0 in both channels, and two samples at about a third of their
-  level. Both came about 3 seconds after the Spotify engine routed its
-  playing player into its graph, as it does when a song starts. Their shape
-  can't come from the engines' own changes, which fade over 10 to 25 ms,
-  and resembles Firefox's click above, but routing a player as it starts
-  to play, with no extension, didn't click in 8 tries. They count as
-  failures; their cause is open. Other late clicks of the browsers' own, which
-  `02ef174` noted (Firefox about 0.7 s after a change to 1.25x, Chromium
-  about 1.2 s after keeping the pitch), haven't appeared in any recorded
-  span: every frame of a span is checked, so they would fail it.
+- **Firefox puts one frame of silence into the song** about 2 to 4
+  seconds after a player that is already playing is routed into a graph,
+  and that frame clicks (third difference 0.16 to 0.75). On this Mac, in
+  Firefox 158.0.1, the inserted frame is shown by Firefox's own log and the
+  recordings; why it is inserted is read from Firefox's source and agrees
+  with every logged run, but no Firefox change has been built to confirm
+  it. The engines turn the effect on exactly this way, and no change to
+  them was found that avoids it safely. `firefox-capture-click.js` reproduces it with
+  no extension.
+
+  While a player plays on its own, Firefox sends its sound to the output
+  itself (its AudioSink). When a graph captures the player, Firefox stops
+  that and feeds the graph instead (its DecodedStream). The AudioSink hands
+  back the sound it hadn't played yet, timed backward from the next packet
+  of the song, and the DecodedStream fills the time between where playback
+  stood and that sound with silence: the gap of about 0.2 s at the routing
+  (with this Mac's AirPods), which the engines' 250 ms of silence hides.
+  Then each time more of the song arrives, it checks for a gap again by
+  turning the times into whole microseconds and those into frames, rounding
+  down both times (`CreateSilenceDataIfGapExists` in
+  `dom/media/mediasink/DecodedStream.cpp`). A frame at 48 kHz lasts 20.83
+  microseconds, so a time that isn't a whole number of microseconds loses a
+  frame on the way. When the sound handed back starts at such a time and a
+  later packet doesn't, the check finds a gap of one frame and fills it with
+  one frame of silence. That happens in the first packet decoded after the
+  routing, about 2 seconds of song past the end of what was queued then,
+  which at the effect's speed comes 2 to 4 seconds later. Afterwards the
+  count is a frame ahead, so by the same arithmetic it happens at most once
+  per player.
+
+  With Firefox's log on (`MOZ_LOG=timestamp,MediaDecoder:5,AudioSink:4`),
+  every late click came with "Detect a gap in audio, insert silence=1" from
+  the DecodedStream, and the runs without one had no late click. In 9 logged
+  sessions on this Mac (the reproducer, a page of its own, and the suite's
+  check of turning the effect on, in both engines), the sizes of both
+  silences Firefox logged match that arithmetic to the frame. At normal
+  speed the recording has one frame of exactly 0 in both channels and the
+  tone continues one sample later; at 0.8 it continues 1.25 samples later,
+  one frame of the song slowed down, which is the move of about +1.2 the
+  reproducer had measured. With `quiet`, the player never played through
+  its AudioSink, nothing is handed back and nothing is filled. Whether it
+  happens depends on how much of the song the output had taken by the
+  routing: on this Mac the sound handed back was always a whole number of
+  64-frame steps, and it clicked whenever that wasn't a multiple of 192
+  frames (in 6 of the 9 logged sessions; the arithmetic gives 2 in 3).
+  Only this Mac, its AirPods at 48 kHz and a 48 kHz WAV song were logged;
+  other outputs, sample rates, the real sites' formats and other Firefox
+  versions weren't. The hosted Firefox runs (157.0, on a null sink)
+  haven't heard it in 8 checks of turning the effect on; why isn't known.
+
+  No change to the extension was found that avoids it. Capturing a player
+  before it plays would miss the effect being turned on during a song, and
+  the Spotify engine waits for Firefox's encrypted-media setup on purpose;
+  muting or seeking the page's player first would be seen by the page, and
+  a mute would have to last about a second for the sound handed back to
+  pass; capturing every player while the effect is off would change what
+  turning it off means; hiding the click would take 2 to 4 seconds of
+  silence or repairing the sound in a worklet. The fix belongs in Firefox:
+  its check could allow one frame of rounding, as Firefox's AudioSink
+  already does (`AUDIO_FUZZ_FRAMES`), or compare the exact times. Neither
+  has been built or tried in Firefox; only a model of the arithmetic
+  shows them removing the late frame. The code
+  is the same on Firefox's main branch as of 2026-10-24, and no Bugzilla
+  report of it was found by its summary; a report has been drafted but not
+  sent. Until Firefox changes, turning the effect on during a song in
+  Firefox can click once a few seconds later. The suite's check of that
+  records about 6 seconds and fails on it (in Firefox, 1 of 6 runs on
+  YouTube and 4 of 6 on Spotify, then on Spotify in the whole-suite run at
+  `117b822`; see "Suite results"), and it stays a failure, not a looser
+  threshold, until Firefox is fixed or a decision accepts it. The suite's
+  other checks turn the effect on before the song starts.
+- **Two older clicks are probably the same.** In 2 of the last 23 Firefox
+  runs of `b4ca3c6`, one Spotify check heard a single click (0.32 and 0.35):
+  one sample at exactly 0 in both channels, and two samples at about a
+  third of their level. Both came about 3 seconds after the Spotify engine
+  routed its playing player into its graph, as it does when a song starts.
+  That is the frame of silence above, but those runs kept no Firefox log,
+  so it isn't shown. Routing a player as it starts to play, with no
+  extension (`playing`), didn't click in 8 tries; if the output hadn't taken
+  any of the song yet, whole packets were handed back, which can't click.
+  Other late clicks of the browsers' own, which `02ef174` noted (Firefox
+  about 0.7 s after a change to 1.25x, Chromium about 1.2 s after keeping
+  the pitch), haven't appeared in any recorded span: every frame of a span
+  is checked, so they would fail it.
 - Chromium can't remove an extension without a confirmation dialog
   (`chrome.management.uninstall` and `developerPrivate.removeMultipleExtensions`
   both wait for one), so removal is checked only in Firefox. Spotify after
@@ -856,9 +903,9 @@ unexplained clicks on Spotify; it didn't record long enough after turning
 the effect on during a song to hear Firefox's late click. `10665ea` does,
 and fails in Firefox on it in most runs (see "Suite results").
 
-**Next:** decide what to do about Firefox's click after the effect turns
-on while a song plays (fix it, or accept it explicitly), find what the two
-other Firefox clicks were, and run the suite on the hosted runner enough
-times to show it is steady there. Until then it stays out of the required
+**Next:** decide what to do about Firefox's frame of silence after the
+effect turns on while a song plays (report it to Mozilla and wait for a
+fix, or accept it explicitly; see "Limits"), and run the suite on the
+hosted runner enough times to show it is steady there. Until then it stays out of the required
 check and the release, and the routine listen after an engine change stays,
 with the real-site listen before a store release.

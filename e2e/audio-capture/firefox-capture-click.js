@@ -1,15 +1,24 @@
 'use strict';
 
 // A reproducer, with no extension involved, for a click Firefox makes on
-// its own (README.md in this folder): a player that is already playing is
-// routed into an audio graph, its speed changes 60 ms later, and one click
-// follows some seconds after. By default the player is routed a second
-// after it starts, as when the effect is turned on during a song; with
-// `playing` it is routed as it starts playing, as the Spotify engine does.
-// Run it with
-//   node e2e/audio-capture/firefox-capture-click.js [runs] [playing] [quiet] [seconds=6]
+// its own (README.md in this folder, "Limits"): a player that is already
+// playing is routed into an audio graph, its speed changes 60 ms later, and
+// one click follows some seconds after. Firefox puts one frame of silence
+// into the song there, as it changes over from playing the player itself
+// to feeding the graph. By default the player is routed a second after it
+// starts, as when the effect is turned on during a song; with `playing` it
+// is routed as it starts playing, as the Spotify engine does. Run it with
+//   node e2e/audio-capture/firefox-capture-click.js [runs] [playing] [quiet] [seconds=6] [rate=0.8]
 // It prints each run's clicks; it isn't a test and passes or fails nothing.
-// Set FIREFOX_BIN to use a Firefox other than the usual install.
+// Set FIREFOX_BIN to use a Firefox other than the usual install. Firefox's
+// own account of it is in its log: with
+//   MOZ_LOG=timestamp,MediaDecoder:5,AudioSink:4 MOZ_LOG_FILE=<path>
+// set, the content process's log has "Detect a gap in audio, insert
+// silence=1" from DecodedStream at the time of the click.
+//
+// `rate=<speed>` is the speed set after routing (0.8 unless given);
+// `rate=1` leaves the speed alone, and the frame of silence is then
+// recorded as it is: one frame of exactly 0 in both channels.
 //
 // The song is heard for that first second, before it is routed. With
 // `quiet`, the player plays at volume 0 until it is routed and is turned up
@@ -22,16 +31,19 @@
 // moves it by about -1 and one added by about +1; a gap that leaves the tone
 // where it was, by about 0. The phase only gives the move to within the
 // tone's period (136 samples at 352 Hz), so a whole block of 128 played
-// twice or left out reads as about -8 or +8. It also
-// prints how fast the context's clock and the player ran against the wall
-// clock.
+// twice or left out reads as about -8 or +8. `sourceFrames` is that move
+// in frames of the song itself (the move times the speed): Firefox's frame
+// of silence reads as 1 at any speed (1.25 samples at 0.8). `zeroFrame` is
+// where, from the click's first frame, a frame of exactly 0 in both channels
+// follows one that isn't near 0, or null. It also prints how fast the
+// context's clock and the player ran against the wall clock.
 
 const puppeteer = require('puppeteer-core');
 
 const { launchFirefox } = require('../firefox-launch');
 const { withDeadline } = require('./actions');
 const { installAudioTrialObserver } = require('./capture-observer');
-const { startTrialServer } = require('./fixture');
+const { TONE, startTrialServer } = require('./fixture');
 const { clickStart, sleep, snapshot } = require('./harness');
 const { decodeChannels, findClicks, spanHealth } = require('./metrics');
 
@@ -91,12 +103,21 @@ function slipAt(samples, sampleRate, frame, hz) {
   };
 }
 
-async function main(runs, { atStart, quiet, seconds }) {
+// Where, from `frame`, a frame within two of it is exactly 0 in both
+// channels after one that isn't near 0; null if none is.
+function zeroFrameAt([left, right], frame) {
+  for (let k = Math.max(1, frame - 2); k <= frame + 2 && k < left.length; k++) {
+    if (left[k] === 0 && right[k] === 0 && Math.abs(left[k - 1]) + Math.abs(right[k - 1]) > 0.02) return k - frame;
+  }
+  return null;
+}
+
+async function main(runs, { atStart, quiet, seconds, rate }) {
   const server = await startTrialServer();
   let browser = null;
   try {
     browser = await launchFirefox((options) => puppeteer.launch(options), { browser: 'firefox', executablePath: firefoxPath(), headless: true }, { deadline: LAUNCH_MS });
-    console.log(`Firefox ${await withDeadline(browser.version(), STEP_MS, 'no version')}; routed ${atStart ? 'as it starts playing' : 'a second after it starts'}${quiet ? ', quiet until then' : ''}; ${seconds} s recorded`);
+    console.log(`Firefox ${await withDeadline(browser.version(), STEP_MS, 'no version')}; routed ${atStart ? 'as it starts playing' : 'a second after it starts'}${quiet ? ', quiet until then' : ''}; ${rate === 1 ? 'speed left at 1' : `speed ${rate}`}; ${seconds} s recorded`);
     for (let run = 1; run <= runs; run++) {
       const page = await withDeadline(browser.newPage(), STEP_MS, 'no new page');
       const step = (promise, what) => withDeadline(promise, STEP_MS, what);
@@ -104,24 +125,25 @@ async function main(runs, { atStart, quiet, seconds }) {
         await step(page.evaluateOnNewDocument(installAudioTrialObserver, { workletUrl: server.workletPath, retainSeconds: seconds + 6 }), 'the observer was not installed');
         await step(page.goto(`${server.youtubeUrl}long`), 'the page did not load');
         if (quiet) await step(page.evaluate(() => { document.getElementById('player').volume = 0; }), 'the player was not turned down');
-        // Routes the playing player into a graph, then slows it down.
-        const route = (quiet) => {
+        // Routes the playing player into a graph, then changes its speed.
+        const route = (quiet, rate) => {
           const context = new AudioContext();
           const player = document.getElementById('player');
           context.createMediaElementSource(player).connect(context.destination);
           if (quiet) player.volume = 1;
+          if (rate === 1) return;
           setTimeout(() => {
             player.preservesPitch = false;
-            player.playbackRate = 0.8;
+            player.playbackRate = rate;
           }, 60);
         };
         if (atStart) {
-          await step(page.evaluate(`document.getElementById('player').addEventListener('playing', () => (${route})(${quiet}), { once: true })`), 'the routing was not set up');
+          await step(page.evaluate(`document.getElementById('player').addEventListener('playing', () => (${route})(${quiet}, ${rate}), { once: true })`), 'the routing was not set up');
           await step(clickStart(page), 'the player did not start');
         } else {
           await step(clickStart(page), 'the player did not start');
           await sleep(1000);
-          await step(page.evaluate(route, quiet), 'the player was not routed');
+          await step(page.evaluate(route, quiet, rate), 'the player was not routed');
         }
         await step(page.evaluate(() => window.__audioTrial.waitReady(0, 10_000)), 'the recorder did not start');
         const start = await step(snapshot(page), 'no first snapshot');
@@ -136,13 +158,17 @@ async function main(runs, { atStart, quiet, seconds }) {
           player: Math.round(((end.media.clock - start.media.clock) / wall) * 1e5) / 1e5,
           outputLatency: end.context.outputLatency
         };
-        const clicks = findClicks(...channels, read.sampleRate).map(({ frame, frames, peak, channel }) => ({
-          ms: Math.round((frame / read.sampleRate) * 1000),
-          peak,
-          channel,
-          frames,
-          slip: slipAt(channels[0], read.sampleRate, frame, 352)
-        }));
+        const clicks = findClicks(...channels, read.sampleRate).map(({ frame, frames, peak, channel }) => {
+          const slip = slipAt(channels[0], read.sampleRate, frame, TONE.leftHz * rate);
+          return {
+            ms: Math.round((frame / read.sampleRate) * 1000),
+            peak,
+            channel,
+            frames,
+            slip: slip && { ...slip, sourceFrames: Math.round(slip.samples * rate * 100) / 100 },
+            zeroFrame: zeroFrameAt(channels, frame)
+          };
+        });
         console.log(JSON.stringify({ run, clicks, health, rates }));
       } catch (error) {
         console.log(JSON.stringify({ run, error: String(error?.message ?? error) }));
@@ -165,10 +191,12 @@ async function main(runs, { atStart, quiet, seconds }) {
 
 const args = process.argv.slice(2);
 const secondsArg = args.find((arg) => arg.startsWith('seconds='));
+const rateArg = args.find((arg) => arg.startsWith('rate='));
 main(Math.max(1, Number(args[0]) || 5), {
   atStart: args.includes('playing'),
   quiet: args.includes('quiet'),
-  seconds: Math.min(14, Math.max(1, Number(secondsArg?.split('=')[1]) || 6))
+  seconds: Math.min(14, Math.max(1, Number(secondsArg?.split('=')[1]) || 6)),
+  rate: Math.min(2, Math.max(0.5, Number(rateArg?.split('=')[1]) || 0.8))
 }).catch((error) => {
   console.error(error);
   process.exitCode = 1;
