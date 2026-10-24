@@ -168,10 +168,12 @@ function firefoxPath() {
 const FIREFOX_EXTENSION_ID = 'slowed-reverb@sahinozan';
 
 // The installed Firefox, headless, with puppeteer's own preferences only: no
-// autoplay or audio preferences are set. `addonManager` also lets the test
-// use Firefox's add-on manager, as the about:addons switch does
-// (--remote-allow-system-access, as in e2e/firefox-shutdown.js), and starts
-// Firefox through e2e/firefox-launch.js, which reports how the start went.
+// autoplay or audio preferences are set. It starts through
+// e2e/firefox-launch.js, which reports how the start went (in the log and in
+// firefox-launch.txt with the evidence) without changing how Firefox is
+// started. `addonManager` also lets the test use Firefox's add-on manager,
+// as the about:addons switch does (--remote-allow-system-access, as in
+// e2e/firefox-shutdown.js).
 // Firefox puts an extension's declared content scripts back into open tabs
 // when it is turned on again, so reinjectDriver has nothing to do.
 function firefoxBrowser({ addonManager = false } = {}) {
@@ -199,17 +201,15 @@ function firefoxBrowser({ addonManager = false } = {}) {
     canRemove: true,
     async start({ extensionDir, artifacts }) {
       const options = { browser: 'firefox', executablePath: firefoxPath(), headless: true };
+      if (addonManager) options.args = ['--remote-allow-system-access'];
+      const { launchFirefox } = require('../firefox-launch');
+      const log = (report) => {
+        console.error(report);
+        fs.appendFileSync(path.join(artifacts, 'firefox-launch.txt'), `${report}\n`);
+      };
       const started = Date.now();
       try {
-        if (addonManager) {
-          const { launchFirefox } = require('../firefox-launch');
-          browser = await launchFirefox((launchOptions) => puppeteer.launch(launchOptions), {
-            ...options,
-            args: ['--remote-allow-system-access']
-          });
-        } else {
-          browser = await puppeteer.launch(options);
-        }
+        browser = await launchFirefox((launchOptions) => puppeteer.launch(launchOptions), options, { log });
       } catch (error) {
         writeLaunchFailure(artifacts, Date.now() - started, error);
         throw error;

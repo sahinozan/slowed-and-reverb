@@ -338,16 +338,171 @@ function loadRecorder({ batchFrames = 512, poolSize = 4 } = {}) {
   return { sandbox, node };
 }
 
+// The recorder's native clock (its contextClock parameter) for the block
+// that is really context frame `frame`, as the browser computes it: the
+// context's time in seconds since the clock began, in float32. `origin` is
+// where the ramp's value was 0, which Chromium can move a few blocks
+// (recorder-worklet.js), and `length` the values given.
+function nativeClock(frame, { origin = 0, length = 128, rate = RATE } = {}) {
+  return { contextClock: Float32Array.from({ length }, (_, i) => (frame - origin + i) / rate) };
+}
+
+describe('the audio recorder\'s native clock', () => {
+  // Blocks of 128 silent frames: [currentFrame, the block's real context
+  // frame or its clock parameters].
+  function sequence(blocks, { batchFrames = 512 } = {}) {
+    const { sandbox, node } = loadRecorder({ batchFrames, poolSize: 8 });
+    for (const [raw, clock] of blocks) {
+      sandbox.currentFrame = raw;
+      const input = [new Float32Array(128), new Float32Array(128)];
+      node.process([input], [[new Float32Array(128), new Float32Array(128)]], typeof clock === 'number' ? nativeClock(clock, { origin: -64 }) : clock);
+    }
+    return { counters: node.counters(), batches: sandbox.messages.filter(({ type }) => type === 'batch') };
+  }
+
+  test("a first block numbered behind, as Chromium's start can give, is relabelled without losing a sample", () => {
+    // Chromium's measured case: the first block says 512, the second 896,
+    // and the native clock advanced one block between them.
+    const { counters, batches } = sequence([[512, 768], [896, 896], [1024, 1024], [1152, 1152]]);
+    assert.equal(counters.contextFrameGaps, 0);
+    assert.equal(counters.frameLabelFaults, 0);
+    assert.equal(counters.firstContextFrame, 768);
+    assert.deepEqual({ ...counters.initialFrameLabel }, { raw: 512, corrected: 768, frames: 128 });
+    assert.equal(batches[0].startFrame, 0);
+    assert.equal(batches[0].frames, 512);
+    assert.equal(batches[0].contextFrame, 768);
+    // So a mark at context frame 1280 maps to recorded frame 512, the one
+    // played then.
+    assert.equal(1280 - (batches[0].contextFrame - batches[0].startFrame), 512);
+    // Behind by four blocks, as on the hosted runner.
+    const hosted = sequence([[2048, 2560], [2688, 2688], [2816, 2816]]).counters;
+    assert.equal(hosted.contextFrameGaps, 0);
+    assert.equal(hosted.firstContextFrame, 2560);
+  });
+
+  test('a first block in step is left as it is, whatever the clock\'s own value', () => {
+    for (const origin of [0, 64, 256, -256]) {
+      const blocks = [0, 128, 256, 384].map((frame) => [frame + 256, nativeClock(frame + 256, { origin })]);
+      const { counters } = sequence(blocks);
+      assert.equal(counters.frameLabelFaults, 0, `origin ${origin}`);
+      assert.equal(counters.firstContextFrame, 256);
+      assert.equal(counters.initialFrameLabel, null);
+    }
+  });
+
+  test('frames really skipped, even right after the first block, stay a gap', () => {
+    // The native clock skipped as the label did: a gap, not a stale label.
+    const skipped = sequence([[256, 256], [896, 896], [1024, 1024]]).counters;
+    assert.equal(skipped.contextFrameGaps, 1);
+    assert.equal(skipped.frameLabelFaults, 0);
+    assert.equal(skipped.initialFrameLabel, null);
+    // A first block behind and frames skipped after it: not relabelled, and
+    // the label and the clock disagree on how many, so a fault as well.
+    const both = sequence([[512, 768], [1408, 1408], [1536, 1536]]).counters;
+    assert.equal(both.contextFrameGaps, 1);
+    assert.equal(both.frameLabelFaults, 1);
+    assert.equal(both.initialFrameLabel, null);
+    // Later on, too.
+    const later = sequence([[0, 0], [128, 128], [512, 512], [640, 640]]).counters;
+    assert.equal(later.contextFrameGaps, 1);
+    assert.equal(later.skippedContextFrames, 256);
+    assert.equal(later.frameLabelFaults, 0);
+  });
+
+  test('only the first block is relabelled: a later label ahead of the native clock is a fault', () => {
+    const later = sequence([[0, 0], [128, 128], [512, 256], [640, 384]]).counters;
+    assert.equal(later.contextFrameGaps, 1);
+    assert.equal(later.frameLabelFaults, 1);
+    assert.equal(later.faultLog[0].kind, 'label skipped frames the native clock did not');
+    assert.equal(later.initialFrameLabel, null);
+    // Nor a first block whose batch was already sent.
+    const sent = sequence([[512, 768], [896, 896], [1024, 1024]], { batchFrames: 128 }).counters;
+    assert.equal(sent.initialFrameLabel, null);
+    assert.equal(sent.contextFrameGaps, 1);
+    assert.equal(sent.frameLabelFaults, 1);
+  });
+
+  test('blocks rendered without the recorder while its numbers stay in step are a fault', () => {
+    const hidden = sequence([[0, 0], [128, 128], [256, 512], [384, 640]]).counters;
+    assert.equal(hidden.contextFrameGaps, 0);
+    assert.equal(hidden.frameLabelFaults, 1);
+    assert.equal(hidden.faultLog[0].kind, 'native clock skipped frames the label did not');
+    assert.equal(hidden.faultLog[0].nativeStep, 384);
+    // A stale label is checked the same way: one block on, by the clock.
+    const stale = sequence([[0, 0], [128, 128], [128, 256], [384, 384]]).counters;
+    assert.equal(stale.staleFrameLabels, 1);
+    assert.equal(stale.frameLabelFaults, 0);
+    const staleOverSkip = sequence([[0, 0], [128, 128], [128, 384], [384, 512]]).counters;
+    assert.ok(staleOverSkip.frameLabelFaults >= 1);
+  });
+
+  test('a native clock that is missing, stopped, not a number or out of step fails every such block', () => {
+    const stopped = nativeClock(0);
+    stopped.contextClock.fill(stopped.contextClock[0]);
+    const jumping = nativeClock(0);
+    jumping.contextClock[64] += 1;
+    const backwards = nativeClock(0);
+    backwards.contextClock[64] = backwards.contextClock[62];
+    for (const clock of [undefined, {}, { contextClock: new Float32Array([0]) }, { contextClock: new Float32Array(128).fill(-1) },
+      { contextClock: new Float32Array(128).fill(NaN) }, stopped, jumping, backwards]) {
+      const { counters } = sequence([[0, clock], [128, clock], [256, clock]]);
+      assert.equal(counters.frameLabelFaults, 3);
+      assert.equal(counters.faultLog[0].kind, 'native clock unreadable');
+    }
+    // And without its clock, a first block behind isn't relabelled.
+    const unread = sequence([[512, undefined], [896, 896], [1024, 1024]]).counters;
+    assert.equal(unread.initialFrameLabel, null);
+    assert.equal(unread.contextFrameGaps, 1);
+  });
+
+  test("Chromium's x86 ramp, added up in float32 four samples at a time, still reads after ten minutes", () => {
+    // ProcessLinearRamp in audio_param_handler.cc: each block starts from
+    // its own time, then each of four lanes adds 4 / sampleRate 32 times.
+    const x86 = (frame) => {
+      const values = new Float32Array(128);
+      const lanes = [0, 1, 2, 3].map((lane) => Math.fround(Math.fround(frame / RATE) + Math.fround(lane / RATE)));
+      const step = Math.fround(4 / RATE);
+      for (let i = 0; i < 128; i += 4) {
+        for (let lane = 0; lane < 4; lane++) {
+          values[i + lane] = lanes[lane];
+          lanes[lane] = Math.fround(lanes[lane] + step);
+        }
+      }
+      return { contextClock: values };
+    };
+    const at = 600 * RATE;
+    const { counters } = sequence([0, 128, 256, 384].map((frame) => [at + frame, x86(at + frame)]));
+    assert.equal(counters.frameLabelFaults, 0);
+    const hidden = sequence([0, 128, 384, 512].map((frame, index) => [at + [0, 128, 256, 384][index], x86(at + frame)])).counters;
+    assert.equal(hidden.frameLabelFaults, 1);
+  });
+
+  test('float32 keeps the clock within half a block after an hour', () => {
+    const hour = 3600 * RATE;
+    const { counters } = sequence([0, 128, 256, 384].map((frame) => [hour + frame, nativeClock(hour + frame)]));
+    assert.equal(counters.frameLabelFaults, 0);
+    const skipped = sequence([0, 128, 512, 640].map((frame) => [hour + frame, nativeClock(hour + frame)])).counters;
+    assert.equal(skipped.contextFrameGaps, 1);
+    assert.equal(skipped.frameLabelFaults, 0);
+  });
+});
+
 describe('audio recorder frame numbers', () => {
   function recorder() {
     const { sandbox, node } = loadRecorder();
     let value = 0;
+    let next = null;
     const play = (frames) => {
       for (const frame of frames) {
         sandbox.currentFrame = frame;
         const block = [new Float32Array(128).fill(value), new Float32Array(128).fill(value)];
         value += 1;
-        node.process([block], [[new Float32Array(128), new Float32Array(128)]]);
+        // The browser's native clock keeps advancing one block at a time
+        // when a label is stale or goes back; a label that jumps ahead is
+        // taken as frames really skipped.
+        const real = Math.max(frame, next ?? frame);
+        node.process([block], [[new Float32Array(128), new Float32Array(128)]], nativeClock(real));
+        next = real + 128;
       }
       return node.counters();
     };
@@ -462,7 +617,7 @@ describe('audio recorder frame numbers and the sound across them', () => {
     for (let frame = 0; frame < TOTAL; frame += 128) {
       sandbox.currentFrame = label(frame);
       const input = tones.map((hz) => Float32Array.from({ length: 128 }, (_, i) => 0.25 * Math.sin((2 * Math.PI * hz * source(frame, i)) / RATE)));
-      node.process([input], [[new Float32Array(128), new Float32Array(128)]]);
+      node.process([input], [[new Float32Array(128), new Float32Array(128)]], nativeClock(frame));
       const last = sandbox.messages[sandbox.messages.length - 1];
       if (last.type !== 'batch' || last.startFrame + last.frames !== frame + 128) continue;
       const next = last.startFrame + last.frames;
@@ -1008,5 +1163,60 @@ describe('audio regression overlapping changes', () => {
       (error) => error.code === 'timeout' && /didn't finish the sweep/.test(error.message)
     );
     assert.ok(Date.now() - started < 1000);
+  });
+});
+
+describe("the reverb's tail in the suite's steady stretches", () => {
+  const { dryExpect, effectExpect, ringingTones, withoutRinging } = require('../e2e/audio-capture/regression');
+  const { ENGINE_SETTINGS } = require('../e2e/audio-capture/harness');
+
+  test('only a tone heard before and gone now is left to the tail, and only with reverb on', () => {
+    // The changes of the transitions check, in order.
+    const reverb = { ...ENGINE_SETTINGS, reverb: 40 };
+    const middle = { ...reverb, pan: 0 };
+    const slower = { ...middle, speed: 0.9 };
+    const swept = { ...slower, pan: -100 };
+    const kept = { ...swept, keepPitch: true };
+    const following = { ...kept, keepPitch: false };
+    const steps = [
+      [effectExpect(ENGINE_SETTINGS), reverb, []],
+      [effectExpect(reverb), middle, []],
+      [effectExpect(middle), slower, []],
+      [effectExpect(slower), swept, []],
+      // The pitch the player had before rings at 396 Hz, then at 440 Hz.
+      [effectExpect(swept), kept, [396]],
+      [effectExpect(kept), following, [440]],
+      // Turning the effect back on: the song itself, 440 Hz, rings.
+      [dryExpect(), following, [440]]
+    ];
+    for (const [previous, settings, ringing] of steps) {
+      assert.deepEqual(ringingTones(previous, effectExpect(settings), settings), ringing, JSON.stringify(settings));
+    }
+    // Without reverb nothing rings, so the stretch is checked at once.
+    assert.deepEqual(ringingTones(effectExpect({ ...swept, reverb: 0 }), effectExpect({ ...kept, reverb: 0 }), { ...kept, reverb: 0 }), []);
+  });
+
+  test('the stretch before the tail ends still checks every other tone', () => {
+    const settings = { ...ENGINE_SETTINGS, reverb: 40, speed: 0.9, keepPitch: true };
+    const expect = effectExpect(settings);
+    const early = withoutRinging(expect, [396]);
+    // 396 Hz is still measured, with no limit.
+    assert.deepEqual(early.channels[0].tones.slice(0, 2), expect.channels[0].tones.slice(0, 2));
+    assert.deepEqual(early.channels[0].tones[2], { hz: 396, min: 0, ringing: true });
+    // A loud 396 Hz passes the stretch before the tail ends and is kept with
+    // it; a missing 660 Hz still fails there. The full expectation fails it.
+    const left = sum(sine(440, 0.27), sine(396, 0.1));
+    const span = (segmentExpect) =>
+      analyzeSpan({ sampleRate: RATE, fromFrame: 0, left, right: new Float32Array(left.length), segments: [{ label: 'keep the pitch', fromFrame: 0, toFrame: left.length, expect: segmentExpect }] });
+    const ringingSpan = span(early);
+    assert.deepEqual(ringingSpan.problems.map(({ message }) => message.replace(/ at .*/, '')), ['keep the pitch: channel 0: 660 Hz']);
+    assert.ok(Math.abs(ringingSpan.segments[0].channels[0].tones.find(({ expectedHz }) => expectedHz === 396).amplitude - 0.1) < 1e-3);
+    assert.equal(span(expect).problems.length, 2);
+    assert.match(span(expect).problems[1].message, /396 Hz at 0.0999\d* \(wanted 0 to 0.02\)/);
+    assert.deepEqual(early.channels[1], expect.channels[1]);
+    assert.deepEqual(early.media, expect.media);
+    // The full expectation, 396 Hz under 0.02 included, is left as it was
+    // for the stretch after the tail.
+    assert.deepEqual(expect.channels[0].tones.map(({ hz, max }) => [hz, max]), [[440, 0.5], [660, 0.5], [396, 0.02]]);
   });
 });

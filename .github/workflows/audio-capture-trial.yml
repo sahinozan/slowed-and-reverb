@@ -18,6 +18,7 @@ on:
       - 'package-lock.json'
       # The suites' server reads its request targets with this.
       - 'scripts/request-target.js'
+      - 'scripts/ci-package-downloads.sh'
   workflow_dispatch:
 
 permissions:
@@ -32,7 +33,9 @@ jobs:
   linux-null-sink:
     name: Audio capture trial (Ubuntu, PulseAudio null sink)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Every step below has its own deadline; together they leave time to
+    # upload the evidence of a step that ran out of time.
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -52,6 +55,10 @@ jobs:
       - name: Install exact dependencies
         run: npm ci
 
+      - name: Download Ubuntu packages from Ubuntu's archive
+        timeout-minutes: 1
+        run: bash scripts/ci-package-downloads.sh
+
       - name: Read the Playwright version
         id: playwright
         shell: bash
@@ -68,14 +75,18 @@ jobs:
 
       - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         run: npx playwright install --with-deps --no-shell chromium
 
       - name: Install Chromium's system libraries
         if: steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 10
         run: npx playwright install-deps chromium
 
       # A virtual output device: both browsers play into it as into speakers.
       - name: Start a PulseAudio null sink
+        id: sink
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
@@ -87,26 +98,32 @@ jobs:
           pactl set-default-sink audio_trial
           pactl info
           pactl list short sinks
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       - name: Run the Chromium audio capture trial
+        timeout-minutes: 5
         run: npm run test:audio-trial:chromium
 
-      # Runs after a Chromium failure too, for its own evidence; either
-      # failure fails the job.
+      # Runs after a Chromium failure too, for its own evidence, once the
+      # sink is there; either failure fails the job.
       - name: Run the Firefox audio capture trial
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' }}
+        timeout-minutes: 5
         run: npm run test:audio-trial:firefox
 
       - name: Show the sound server's state
         if: ${{ !cancelled() }}
+        timeout-minutes: 1
         shell: bash
         run: |
           pactl info || true
           pactl list short sinks || true
           pactl list short sink-inputs || true
 
+      # Whatever happened before, even a cancelled run, keeps what it has.
       - name: Upload the trial's evidence
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
+        timeout-minutes: 5
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: audio-capture-trial-linux
@@ -118,8 +135,10 @@ jobs:
     name: Audio regression suite (Ubuntu, PulseAudio null sink)
     runs-on: ubuntu-latest
     # Both browsers' suites take about 10 minutes together; installing the
-    # sound server has taken up to 13 on its own.
-    timeout-minutes: 30
+    # sound server took up to 13 on its own from the Azure mirror. Every
+    # step below has its own deadline; together they leave time to upload
+    # the evidence of a step that ran out of time.
+    timeout-minutes: 55
 
     steps:
       - name: Check out repository
@@ -139,6 +158,10 @@ jobs:
       - name: Install exact dependencies
         run: npm ci
 
+      - name: Download Ubuntu packages from Ubuntu's archive
+        timeout-minutes: 1
+        run: bash scripts/ci-package-downloads.sh
+
       - name: Read the Playwright version
         id: playwright
         shell: bash
@@ -155,14 +178,18 @@ jobs:
 
       - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         run: npx playwright install --with-deps --no-shell chromium
 
       - name: Install Chromium's system libraries
         if: steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 10
         run: npx playwright install-deps chromium
 
       # A virtual output device: both browsers play into it as into speakers.
       - name: Start a PulseAudio null sink
+        id: sink
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
@@ -174,26 +201,32 @@ jobs:
           pactl set-default-sink audio_trial
           pactl info
           pactl list short sinks
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       - name: Run the Chromium audio regression suite
+        timeout-minutes: 10
         run: npm run test:audio:chromium
 
-      # Runs after a Chromium failure too, for its own evidence; either
-      # failure fails the job.
+      # Runs after a Chromium failure too, for its own evidence, once the
+      # sink is there; either failure fails the job.
       - name: Run the Firefox audio regression suite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' }}
+        timeout-minutes: 10
         run: npm run test:audio:firefox
 
       - name: Show the sound server's state
         if: ${{ !cancelled() }}
+        timeout-minutes: 1
         shell: bash
         run: |
           pactl info || true
           pactl list short sinks || true
           pactl list short sink-inputs || true
 
+      # Whatever happened before, even a cancelled run, keeps what it has.
       - name: Upload the suite's evidence
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
+        timeout-minutes: 5
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: audio-regression-linux

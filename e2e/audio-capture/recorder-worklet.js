@@ -19,8 +19,25 @@ const MAX_STALE_RUN = 2;
 // how many faults of the frame numbers are kept as evidence.
 const STALE_LOG_SIZE = 32;
 const FAULT_LOG_SIZE = 8;
+// How long the native clock (contextClock below) runs: a day, in seconds.
+const CLOCK_SPAN_SECONDS = 86_400;
 
 class AudioTrialRecorder extends AudioWorkletProcessor {
+  // A second clock, kept by the browser rather than by currentFrame: the
+  // page ramps this parameter by one per second of context time
+  // (capture-observer.js), and the browser computes its value for each
+  // sample of the block it is rendering. Only the change from one block to
+  // the next is used. Chromium moves an event scheduled in the past to the
+  // block where the parameter is first computed and keeps its value
+  // (ClampNewEventsToCurrentTime in audio_param_handler.cc), so the ramp's
+  // own value can be a few blocks off the context's time, but it still
+  // advances with every block rendered: one block's worth between two
+  // blocks rendered one after the other, more when blocks were rendered
+  // without this node.
+  static get parameterDescriptors() {
+    return [{ name: 'contextClock', defaultValue: -1, minValue: -1, maxValue: CLOCK_SPAN_SECONDS, automationRate: 'a-rate' }];
+  }
+
   constructor(options) {
     super();
     const { batchFrames, poolSize } = options.processorOptions;
@@ -67,7 +84,20 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     this.faultLog = [];
     this.lastEnd = null;
     this.lastRaw = null;
+    this.lastFrames = 0;
+    this.lastClock = null;
+    this.blocks = 0;
     this.inStep = false;
+    // The context frame the recording began at. When Chromium starts
+    // rendering a worklet, the first block's currentFrame can be a block or
+    // more behind, as a stale label is later (staleFrameLabels), and the
+    // second block's number is then ahead of the one expected. Where the
+    // native clock shows that the two blocks were rendered one after the
+    // other, the first block is taken as the one before the second, and the
+    // raw and corrected numbers are kept (initialFrameLabel). That is the
+    // only number the native clock corrects.
+    this.firstContextFrame = null;
+    this.initialFrameLabel = null;
     // Blocks with no input channels (nothing connected or playing) and with a
     // channel count other than two.
     this.emptyInputBlocks = 0;
@@ -79,7 +109,7 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     this.port.postMessage({ type: 'hello', sampleRate, currentFrame, batchFrames, poolSize });
   }
 
-  process(inputs, outputs) {
+  process(inputs, outputs, parameters) {
     const input = inputs[0] || [];
     const output = outputs[0];
     // The block length isn't assumed to be 128 frames.
@@ -88,15 +118,36 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     if (!this.blockSizes.includes(frames) && this.blockSizes.length < 8) this.blockSizes.push(frames);
 
     const raw = currentFrame;
+    const clock = this.readClock(parameters, frames);
+    // Context frames the native clock advanced since the previous block
+    // began, and whether that was exactly the previous block, to within half
+    // a block: far more than float32 loses in any context here (the unit
+    // tests read it after an hour, and after ten minutes of Chromium's x86
+    // ramp, which adds its values up).
+    const nativeStep = clock !== null && this.lastClock !== null ? (clock - this.lastClock) * sampleRate : null;
+    const nextBlock = nativeStep !== null && Math.abs(nativeStep - this.lastFrames) < this.lastFrames / 2;
+    const faultsBefore = this.frameLabelFaults;
+    if (clock === null) this.fault('native clock unreadable', raw);
     let frame = raw;
+    let skipped = 0;
     if (this.lastEnd === null) {
+      this.firstContextFrame = raw;
+      this.inStep = true;
+    } else if (this.blocks === 1 && raw > this.lastEnd && nextBlock && this.batchStartFrame === 0 && this.fill === this.lastFrames) {
+      // The first block's number was behind: it was the block just before
+      // this one. Its batch hasn't been sent, so it is relabelled there.
+      const corrected = raw - this.lastFrames;
+      this.initialFrameLabel = { raw: this.lastRaw, corrected, frames: this.lastFrames };
+      this.firstContextFrame = corrected;
+      this.batchContextFrame = corrected;
       this.inStep = true;
     } else if (raw === this.lastEnd) {
       if (this.openStale) this.closeStale(true, raw);
       this.inStep = true;
     } else if (raw > this.lastEnd) {
+      skipped = raw - this.lastEnd;
       this.contextFrameGaps++;
-      this.skippedContextFrames += raw - this.lastEnd;
+      this.skippedContextFrames += skipped;
       // Where the first few happened, by the recorder's own frame count.
       if (this.gapLog.length < 8) {
         this.gapLog.push({ recorderFrame: this.recordedFrames, contextFrame: raw, expected: this.lastEnd, stale: false });
@@ -135,7 +186,21 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
       this.inStep = false;
       frame = this.lastEnd;
     }
+    // The frame numbers, as read, must agree with the native clock: one
+    // block on from the last for a block in step or a stale label, and as
+    // many frames as were skipped more for a gap. A label that jumps ahead
+    // while the native clock moved one block, or the native clock skipping
+    // blocks the label doesn't, is a fault.
+    if (nativeStep !== null && this.frameLabelFaults === faultsBefore) {
+      const wanted = this.lastFrames + skipped;
+      if (!(Math.abs(nativeStep - wanted) < this.lastFrames / 2)) {
+        this.fault(skipped ? 'label skipped frames the native clock did not' : 'native clock skipped frames the label did not', raw, Math.round(nativeStep));
+      }
+    }
+    if (clock !== null) this.lastClock = clock;
     this.lastRaw = raw;
+    this.lastFrames = frames;
+    this.blocks++;
     this.lastEnd = frame + frames;
     if (input.length === 0) this.emptyInputBlocks++;
     else if (input.length !== 2) this.nonStereoBlocks++;
@@ -187,11 +252,24 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
     return true;
   }
 
-  fault(kind, raw) {
+  fault(kind, raw, nativeStep = null) {
     this.frameLabelFaults++;
     if (this.faultLog.length < FAULT_LOG_SIZE) {
-      this.faultLog.push({ kind, recorderFrame: this.recordedFrames, contextFrame: raw, expected: this.lastEnd });
+      this.faultLog.push({ kind, recorderFrame: this.recordedFrames, contextFrame: raw, expected: this.lastEnd, nativeStep });
     }
+  }
+
+  // The native clock at the block's first sample, in seconds, or null if
+  // it isn't there for every sample, isn't a number, or doesn't advance one
+  // frame per sample across the block (to within half a block).
+  readClock(parameters, frames) {
+    const values = parameters ? parameters.contextClock : null;
+    if (!values || values.length !== frames) return null;
+    for (let i = 0; i < frames; i++) {
+      if (!Number.isFinite(values[i]) || values[i] < 0 || (i > 0 && values[i] < values[i - 1])) return null;
+    }
+    const across = (values[frames - 1] - values[0]) * sampleRate;
+    return Math.abs(across - (frames - 1)) < frames / 2 ? values[0] : null;
   }
 
   // Ends the open stale run: caught up at the number expected, or not (a
@@ -207,6 +285,8 @@ class AudioTrialRecorder extends AudioWorkletProcessor {
 
   counters() {
     return {
+      firstContextFrame: this.firstContextFrame,
+      initialFrameLabel: this.initialFrameLabel,
       overflowFrames: this.overflowFrames,
       overflowEvents: this.overflowEvents,
       contextFrameGaps: this.contextFrameGaps,

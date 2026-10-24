@@ -33,24 +33,36 @@ chooses another Firefox, as for `npm run test:firefox`.
 `AUDIO_TRIAL_WINDOWS` (1 to 10, default 3) sets how many one-second windows
 each of the trial's engine captures records. `AUDIO_REGRESSION_EVIDENCE=compact`
 keeps the suite's sound excerpts to those around a problem, for repeated
-runs.
+runs. `AUDIO_REGRESSION_MUTE=1` runs the Chromium suite with Playwright's
+default `--mute-audio`, so nothing at all reaches the speakers, on a
+machine someone is listening to; the trial found that the recorder gets
+the same samples either way (see "Trial results"), and its evidence goes
+to `chromium-mute-audio/`. Firefox has no such switch.
 
 Almost nothing is heard: the recording ends in a gain of 0, and the
 YouTube engine captures the player before it starts. A few exceptions
 remain. The Spotify engine captures the player only once it plays, so a few
 milliseconds can reach the speakers first. The trial's muted-player control
 plays nothing audible. The suite's checks of turning the effect on while a
-song plays (and the reproducer `firefox-capture-click.js`) play the tone
-aloud for about a second first, since the song has to be playing before the
-effect turns on.
+song plays (and the reproducer `firefox-capture-click.js`, unless it is
+given `quiet`) play the tone aloud for about a second first, since the
+song has to be playing before the effect turns on.
 
-Two reproducers, which aren't tests and need no extension, show browser
+Three reproducers, which aren't tests and need no extension, show browser
 behavior the suite has to live with:
 
 ```sh
-node e2e/audio-capture/firefox-capture-click.js 6   # Firefox's own click after a playing player is routed into a graph (see "Limits")
-node e2e/audio-capture/chromium-stale-frame.js 4    # Chromium's stale frame numbers, and that the sound across them is unbroken (see "How it records")
+node e2e/audio-capture/firefox-capture-click.js 6               # Firefox's own click after a playing player is routed into a graph (see "Limits")
+node e2e/audio-capture/chromium-stale-frame.js 4                # Chromium's stale frame numbers, and that the sound across them is unbroken (see "How it records")
+node e2e/audio-capture/recorder-first-block.js chromium 12 48000 # where the recorder's first block falls, against two known ramps (see "How it records")
 ```
+
+`firefox-capture-click.js` also takes `playing` (route the player as it
+starts), `quiet` (the player at volume 0 until it is routed, so nothing is
+heard; a different condition, see "Limits") and `seconds=<n>` (how long it
+records, default 6). `recorder-first-block.js` takes `chromium` or
+`firefox`, the runs, the context's sample rate, and a control that has to
+fail (`planted`, `clock-stopped`, `clock-fast`); it is silent.
 
 On Linux the trial expects a PulseAudio (or PipeWire) sound server. The
 workflow `.github/workflows/audio-capture-trial.yml` sets one up with a
@@ -75,6 +87,10 @@ in all:
 - `<case>-w<n>.wav`: the first 0.2 seconds of the window, 16-bit stereo.
 - `comparison.json` (Chromium): the `--mute-audio` comparison.
 - `launch-failure.json`, if the browser didn't start.
+- `firefox-launch.txt` (Firefox): how its start went, from
+  `e2e/firefox-launch.js` (its version, when its WebDriver BiDi port
+  opened, its first lines of output and, if it failed, what its processes
+  were doing). The suite writes it too.
 
 The suite's goes to `test-results/audio-regression/<browser>/`, about 6 MB
 (under 1 MB with compact evidence):
@@ -143,6 +159,38 @@ number behind the one expected (a counter that went back, stopped, or stayed
 behind longer) is a fault (`frameLabelFaults`, the first few in `faultLog`).
 A jump forward is a skipped block, as before. `gapLog` keeps where the first
 few skipped blocks and stale runs happened.
+
+The recorder also has a clock of its own that doesn't come from
+`currentFrame`: an AudioParam, `contextClock`, which the page ramps by one
+per second of context time from when the recorder is made, and which the
+browser computes for every sample of the block it renders. Chromium moves
+an automation event scheduled in the past to the first block where the
+parameter is computed, keeping its value (`ClampNewEventsToCurrentTime` in
+Chromium's `audio_param_handler.cc`), so the ramp's own value can be a few
+blocks off the context's time; the recorder uses only how much it moves
+from one block to the next, which that doesn't change. Between two blocks
+rendered one after the other it moves by one block. Each block's numbers
+have to agree with it: a block in step or a stale label one block on, a
+skipped block as many frames more as were skipped. A label that jumps
+ahead while the clock moved one block, the clock moving more than the
+label, and a clock that is missing, stopped, not a number or doesn't move
+one frame per sample within the block are faults. It is read to within half
+a block, which float32 keeps for far longer than any context here lives.
+
+It corrects one number, and only one. When Chromium starts rendering a
+worklet, the recorder's very first block can carry a number one or more
+blocks behind, as a stale label does later (Chromium sets the worklet's
+`currentFrame` after each block only when it gets the graph's lock, in
+`UpdateWorkletGlobalScopeOnRenderingThread`), and the second block then has
+the number expected after the real first one: a jump forward. The recorder
+can't see that from the numbers alone. Where the native clock shows the two
+blocks were rendered one after the other, and the first block's batch
+hasn't been sent, the first block is taken as the one just before the
+second, and its raw and corrected numbers are kept (`initialFrameLabel`);
+`firstContextFrame` is where recording really began. No sample is added,
+taken away or assumed silent. A jump forward anywhere else, or one the
+clock doesn't confirm, is a skipped block as before.
+`recorder-first-block.js` shows it with two known ramps (see "Limits").
 
 `metrics.js` measures each window. `tests/audio-metrics.test.js` checks it
 against computed signals, without a browser. A window is healthy only if
@@ -404,7 +452,14 @@ Within a span:
 - Steady stretches between actions, from 400 ms after one action for
   600 ms, are checked for the tones expected in each channel (within 3% of
   their frequency), for silence where there should be none, and for the
-  player's speed within 15%. The effect's tones may be 0.1 to 0.5 (the
+  player's speed within 15%. After a change of pitch with reverb on, and
+  after the effect turns back on with it, the reverb's 2-second tail still
+  rings the tones played before (its convolver comes before the pan and
+  keeps hearing the song while the effect is off). There a tone the effect
+  shouldn't have, if it was there before the change, is measured but not
+  judged in that stretch, and a second stretch from 2.4 s after the change
+  checks everything again, that tone included (`... : after the reverb
+  tail`). Clicks and gaps are still looked for in every frame between. The effect's tones may be 0.1 to 0.5 (the
   compressor raises a tone of 0.25 to 0.287, and reverb adds copies at
   other phases), and the tones it shouldn't have under 0.02; the song
   itself has to be 0.24 to 0.26, with under 0.005 of the other tone.
@@ -547,7 +602,17 @@ In the `b4ca3c6` runs:
 
 These runs are enough to show the suite mostly steady on this Mac, not to
 give a flake rate below a few percent, and none of them ran on a hosted
-runner. The evidence of every failed run is kept outside the repository by
+runner.
+
+With the native clock and the stretches after the reverb tail, one
+whole-suite Chromium run on this Mac (AirPods at 48 kHz, with
+`AUDIO_REGRESSION_MUTE=1`) passed 17 of 17, each control caught as listed,
+with nothing of the previous tone above 0.00004 after the tail. Five more
+runs of turning the effect on while a song plays, muted, passed; recording
+began at context frame 0 in all of them, so none needed the first-block
+correction. Firefox's suite wasn't run with these changes: its checks of
+turning the effect on during a song play the tone aloud, and the Mac was
+in use. The evidence of every failed run is kept outside the repository by
 the run that made it; `chromium-stale-frame.js` and
 `firefox-capture-click.js` reproduce the browser behavior behind them.
 
@@ -592,15 +657,32 @@ It doesn't cover either:
   measured against an uninstrumented recording, such as OS loopback.
 - The recorder starts once its worklet has loaded, which can be after the
   first frames (up to 46 ms in so far). `firstContextFrame` records where
-  recording began. The suite's spans start after it, except for turning
-  the effect on while a song plays, which fails unless the recording began
-  before the sound did.
+  recording began (before the native clock, it was the first block's raw
+  number, which Chromium could give a block or more behind; see below).
+  The suite's spans start after it, except for turning the effect on while
+  a song plays, which fails unless the recording began before the sound
+  did.
 - **Firefox clicks on its own** (third difference 0.16 to 0.36) 3 to 4
   seconds after a player that is already playing is routed into a graph and
   its speed or pitch mode changes, in a third to a half of tries. (It also
   clicks about 0.2 s after the routing, which the engines' 250 ms of
   silence hides.)
-  `firefox-capture-click.js` reproduces it with no extension. Turning the
+  `firefox-capture-click.js` reproduces it with no extension. Changing the
+  player's speed after, before or with the routing all still clicked (in 6
+  of 9 runs on this Mac with AirPods at 48 kHz, at 3.0 to 3.4 s, 7 to 11
+  samples long, 0.23 to 0.39), so reordering the engines' steps wouldn't
+  hide it. With `quiet`, where the player plays at volume 0 until it is
+  routed and is turned up then, it didn't click late in 6 runs of 12
+  seconds each (the same Mac and output, Firefox 158.0.1), and the
+  context's clock ran at 0.9995 to 0.9999 times the wall clock. That
+  suggests the click needs the player to have been heard on its own before
+  it was routed, but six runs don't show it, and the audible runs that
+  would compare weren't repeated alongside them. The reproducer now also
+  prints, for each click, how far the tone moved across it in samples
+  (about 1 for a sample dropped or added, about 0 for a gap that leaves it
+  in place) and how fast the context and the player ran, to test whether
+  it is a correction between the player's clock and the output's; the
+  hosted runs, on a null sink, haven't heard it in this check. Turning the
   effect on while a song plays does exactly this, so a person may hear it;
   the engines don't hide it. The suite's check of that action records about
   6 seconds and fails on it: in Firefox, 1 of 6 runs on YouTube and 4 of 6
@@ -639,6 +721,20 @@ It doesn't cover either:
 - Steady tones measure speed, pitch, routing and continuity, not how the
   effects sound. A click smaller than a step of 0.025 isn't heard by this
   measure.
+- After a change of pitch with reverb on, a tone the effect shouldn't have
+  is judged only from 2.4 s on (see "How it measures"). In the hosted
+  Chromium run at `aaf240c`, the previous pitch measured 0.0215 at 400 ms
+  after keeping the pitch, over the old limit of 0.02, with valid data and
+  no click; earlier passing runs reached 0.015. On this Mac, in muted
+  Chromium with the engine's random impulse response seeded, the tone
+  played before measured 0.005 to 0.022 from 200 to 400 ms after keeping
+  the pitch, letting it follow again or turning the effect back on, in 4
+  seeds, and fell to 0.00005 or less by 1.6 s; with the same seed and the
+  convolver's output disconnected it was 0.00008 or less from 200 ms on; a
+  pitch mode that never changes, and a 396 Hz tone at 0.03 left playing
+  from the change on, both failed (the second only in the stretch after
+  the tail). A previous pitch that fades away by itself within 2 seconds
+  for some other reason isn't told apart from the tail.
 - The overlapping changes depend on the machine's timing: at least 3 of 7
   have to reach the engine mid-fade (20 to 45 ms after the one before, by
   the page's own log of what reached the engine), or the check fails as
@@ -684,26 +780,34 @@ It doesn't cover either:
   stale pattern fails as a measurement, even if Chromium could produce it
   harmlessly. A repeated block in a sound that repeats every 128 frames
   fails the same way, since it can't be told apart.
-- When an AudioWorklet starts rendering in a Chromium context, Chromium
-  renders one block for it and then moves the context's frame number on by
-  256 frames on this Mac (512 on the hosted runner). A tone played through
-  the graph carries on across the jump with no sample missing, as if those
-  frames were never rendered. With no extension and no recorder, a worklet
-  added 400 ms into a running context did this in 4 of 4 tries. The
-  recorder, added as a context is created, did it in 7 of 8, and in each of
-  `chromium-stale-frame.js`'s runs. The engines use no worklet; the
-  recorder brings one. When the jump comes before the recorder's first
-  block, recording just begins later (`firstContextFrame`). When it comes
-  after, the recorder counts a skipped block. A span counts only what
-  happens from its start, or from the recording's start for a span that
-  starts with it. So turning the effect on while a song plays, whose
-  context and recording start with the action, fails in Chromium as a
-  measurement when the jump comes after the first block. That happened on
-  YouTube in 1 of 2 whole-suite runs on this Mac with the paced changes,
-  and on both engines in the hosted run at `39fdb16`. The recording was
-  silent on both sides of the jump each time. The check doesn't assume the
-  frames it didn't see were silent too, so this stays a measurement failure
-  unless a way to tell them apart is reviewed.
+- When an AudioWorklet starts rendering in a Chromium context, the first
+  block it is given can carry a frame number 256 frames behind on this Mac
+  (512 on the hosted runner), and the next block the number expected after
+  the real first one. This was first read as Chromium moving the context's
+  frame number on after the first block, with a tone carrying on across the
+  jump as if those frames were never rendered. The native clock and two
+  known ramps (`recorder-first-block.js`, Chromium 156, muted, on this Mac
+  with AirPods at 48 kHz) show what happens: in 10 of 24 runs at 48 and
+  44.1 kHz the first block's number was 256 frames behind (once 512), while the native clock
+  moved exactly one block between the first two blocks, a ramp playing
+  from before the recorder started was unbroken from the first recorded
+  sample on, and a ramp started at a known context frame was recorded
+  exactly where the corrected numbers put it, in every run. The recorder
+  from before the native clock counted the same pattern as a skipped block
+  of 256 or 512 frames in 6 of 24 runs, over the same unbroken ramp. In
+  Firefox 158 (18 runs, at both rates, with either recorder) the first block was at frame 0 and nothing needed correcting.
+  Controls failed as they should: a ramp with a block planted missing and
+  one planted twice broke exactly there (by +129 and -127 steps), and a
+  native clock that was stopped or ran twice as fast made every block a
+  fault. Before this, turning the effect on while a song plays failed in
+  Chromium as a measurement whenever the jump came after the first block:
+  on YouTube in 1 of 2 whole-suite runs on this Mac with the paced changes,
+  on both engines in the hosted run at `39fdb16`, and on Spotify in the
+  hosted run at `2878e3f` (512 frames after recording began at 2048). That
+  hosted pattern is the one the first-block correction takes, but no
+  hosted run has used it yet. The correction rests on the native clock and
+  those reproducer runs, not on knowing every way Chromium can start a
+  worklet; any other pattern stays a measurement failure.
 - Windows runners weren't tried.
 
 ## Recommendation
