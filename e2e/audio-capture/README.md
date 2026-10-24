@@ -564,6 +564,8 @@ browser tests. The Mac was in use for some of them.
 | `b4ca3c6` | Firefox | 23 | 20 | 3 | Once Firefox didn't start (its WebDriver BiDi session wasn't created within 180 s; no audio was measured); twice a single click in a Spotify check (see "Limits") |
 | `10665ea` | Chromium | 1 | 1 | 0 | |
 | `10665ea` | Firefox | 1 | 0 | 1 | Turning the effect on while a song plays clicked on YouTube (0.50 at 2.13 s) and on Spotify (0.22 at 2.91 s) (see "Limits") |
+| `117b822` | Chromium | 1 | 1 | 0 | (AirPods Pro output at 48 kHz) |
+| `117b822` | Firefox | 1 | 0 | 1 | Turning the effect on while a song plays clicked on Spotify (0.44 at 2.22 s), with valid recorder data (AirPods Pro output at 48 kHz) |
 
 Until the last Firefox batch, every failure was a measurement failure or a
 control that wasn't caught as it should be. In that batch, two Spotify
@@ -711,7 +713,8 @@ It doesn't cover either:
   effect on while a song plays does exactly this, so a person may hear it;
   the engines don't hide it. The suite's check of that action records about
   6 seconds and fails on it: in Firefox, 1 of 6 runs on YouTube and 4 of 6
-  on Spotify so far (see "Suite results"), with clicks of 0.22 to 0.56. That
+  on Spotify, then on Spotify in the whole-suite run at `117b822` (see
+  "Suite results"), with clicks of 0.22 to 0.56. That
   the reproducer clicks without the extension doesn't show the engines play
   no part, and the check stays a failure until the click is fixed or a
   decision accepts it, not a looser threshold. The suite's other checks
