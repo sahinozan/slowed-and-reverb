@@ -1,8 +1,9 @@
 'use strict';
 
-// Starts Firefox for e2e/firefox-shutdown.js through puppeteer.launch and
-// prints how the start went: which Firefox it is, how long it took to open
-// its WebDriver BiDi port, what it printed meanwhile and, if the start failed,
+// Starts Firefox for e2e/firefox-shutdown.js, the audio suites and their
+// reproducers (e2e/audio-capture/) through puppeteer.launch and prints how
+// the start went: which Firefox it is, how long it took to open its
+// WebDriver BiDi port, what it printed meanwhile and, if the start failed,
 // what its processes were doing and how they ended. Puppeteer's own timeout
 // error says none of this, and Firefox has sometimes not opened the port
 // within the 30 seconds puppeteer allows on GitHub's Ubuntu runners.
@@ -11,6 +12,18 @@
 // so this finds it through Node's 'child_process' diagnostics channel, which
 // reports every process the test starts, and keeps only the first lines of
 // output from the start.
+//
+// Given a deadline, it also ends a start that outlasts it. Puppeteer's own
+// timeout covers only the wait for the port (30 seconds); the WebDriver
+// BiDi session that follows can wait up to its protocol timeout (180
+// seconds), and racing the launch against a timer would leave it running,
+// or leave a browser that starts later with nobody to close it. So the
+// launch gets an AbortSignal, which puppeteer answers by killing the
+// browser's processes, and the deadline is aborted; then this waits, for a
+// bounded time, for the launch to end and closes a browser it hands over
+// after all, and for the process it started to exit, killing that process
+// (and its group) itself if it hasn't. Only that process is touched. The
+// deadline's error is what the caller gets, with nothing tried again.
 
 const { execFileSync } = require('node:child_process');
 const diagnosticsChannel = require('node:diagnostics_channel');
@@ -23,6 +36,10 @@ const MAX_LINE_LENGTH = 500;
 // Puppeteer gives a Firefox that didn't start 5 seconds to quit before it
 // kills it, so this waits a little longer to see how it ended.
 const EXIT_WAIT_MS = 10_000;
+// After a deadline, how long each of these may take: the launch to end once
+// aborted, a browser it hands over after all to close, and the process to
+// exit, before and after this kills it.
+const ABORT_WAIT_MS = 10_000;
 const ENDPOINT_LINE = /^WebDriver BiDi listening on ws:\/\//;
 
 // The version Firefox records next to its executable (on macOS, in the app's
@@ -191,6 +208,22 @@ function watchLaunch(executablePath, now = () => performance.now()) {
       await Promise.race([exited, new Promise((resolve) => (timer = setTimeout(resolve, timeout)))]);
       clearTimeout(timer);
     },
+    // Whether the process seen starting is still running.
+    get running() {
+      return child !== null && record.exit === null;
+    },
+    // Kills that process, and the group it leads outside Windows (puppeteer
+    // starts it as a group leader there). Until its exit is seen, Node
+    // hasn't reaped it, so its number can't belong to another process.
+    kill() {
+      if (!child || record.exit) return;
+      try {
+        if (process.platform === 'win32') child.kill('SIGKILL');
+        else process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    },
     stop() {
       if (stopped) return;
       stopped = true;
@@ -222,7 +255,7 @@ function processSnapshot(pid) {
   return rows.length ? rows : [`no processes left in group ${pid}`];
 }
 
-function formatReport({ record, outcome, version, browserVersion, snapshot, error, exitWait }) {
+function formatReport({ record, outcome, version, browserVersion, snapshot, error, exitWait, abandoned }) {
   const seconds = (ms) => (ms === null || ms === undefined ? 'never' : `${(ms / 1000).toFixed(1)} s`);
   const lines = [
     `Firefox start ${outcome} after ${seconds(record.finishedAt)}: ${record.executablePath}`,
@@ -236,6 +269,7 @@ function formatReport({ record, outcome, version, browserVersion, snapshot, erro
     lines.push(`  WebDriver BiDi port announced at ${seconds(record.endpointAt)}`);
   }
   if (error) lines.push(`  error: ${String(error.message ?? error).split('\n')[0]}`);
+  if (abandoned) lines.push(`  after the deadline: ${abandoned.join('; ')}`);
   if (snapshot) {
     lines.push('  processes when it failed (pid ppid pgid stat elapsed wchan args):');
     for (const row of snapshot) lines.push(`    ${row}`);
@@ -252,30 +286,98 @@ function formatReport({ record, outcome, version, browserVersion, snapshot, erro
   return lines.join('\n');
 }
 
+// `promise`'s outcome, { value } or { error }, or null if it has none
+// within `ms`.
+async function within(promise, ms) {
+  let timer;
+  const outcome = Promise.resolve(promise).then(
+    (value) => ({ value }),
+    (error) => ({ error })
+  );
+  const late = new Promise((resolve) => (timer = setTimeout(() => resolve(null), ms)));
+  try {
+    return await Promise.race([outcome, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Ends a launch that outlasted its deadline (see the top of this file) and
+// says what it took, for the report.
+async function abandon(launching, controller, watch, reason, wait) {
+  const steps = [];
+  controller.abort(reason);
+  const ended = await within(launching, wait);
+  if (ended === null) {
+    steps.push(`the launch had not ended ${wait} ms after it was aborted`);
+  } else if (ended.error) {
+    steps.push(`the aborted launch ended: ${String(ended.error.message ?? ended.error).split('\n')[0]}`);
+  } else {
+    const closed = await within(Promise.resolve().then(() => ended.value.close()), wait);
+    steps.push(`the browser started after the deadline and ${closed === null ? `had not closed within ${wait} ms` : closed.error ? `failed to close (${closed.error.message})` : 'was closed'}`);
+  }
+  if (watch.running) await watch.waitForExit(wait);
+  if (watch.running) {
+    watch.kill();
+    await watch.waitForExit(wait);
+    steps.push(watch.running ? `process ${watch.record.pid} was killed but had not exited within ${wait} ms` : `process ${watch.record.pid} was killed`);
+  }
+  return steps;
+}
+
 // Calls launch(options), which starts Firefox, and prints a report on how the
-// start went through `log`. Rethrows the launch's own error unchanged.
-async function launchFirefox(launch, options, { log = console.error, exitWait = EXIT_WAIT_MS } = {}) {
+// start went through `log`. Rethrows the launch's own error unchanged. With
+// a `deadline` in ms, the launch is also given `signal`, an AbortSignal, and
+// a start that outlasts the deadline is ended (see the top of this file)
+// and fails with the deadline's error, whose `code` is 'timeout'.
+async function launchFirefox(launch, options, { log = console.error, exitWait = EXIT_WAIT_MS, deadline = null, abortWait = ABORT_WAIT_MS } = {}) {
   const version = installedVersion(options.executablePath);
   const watch = watchLaunch(options.executablePath);
+  const controller = deadline === null ? null : new AbortController();
+  const launching = Promise.resolve().then(() => launch(controller ? { ...options, signal: controller.signal } : options));
+  let expired = null;
+  let timer;
   let browser;
   try {
-    browser = await launch(options);
+    browser = await (controller
+      ? Promise.race([
+        launching,
+        new Promise((resolve, reject) => {
+          timer = setTimeout(() => {
+            expired = new Error(`Firefox did not start (not done within ${deadline} ms)`);
+            expired.code = 'timeout';
+            reject(expired);
+          }, deadline);
+        })
+      ])
+      : launching);
   } catch (error) {
     watch.record.finishedAt = watch.elapsed();
-    // Taken before puppeteer kills the process, then wait to see how it ends.
+    // Taken before the process is killed, then wait to see how it ends.
     const snapshot = processSnapshot(watch.record.pid);
-    await watch.waitForExit(exitWait);
+    let abandoned = null;
+    if (error === expired) abandoned = await abandon(launching, controller, watch, error, abortWait);
+    else await watch.waitForExit(exitWait);
     watch.stop();
-    log(formatReport({ record: watch.record, outcome: 'failed', version, snapshot, error, exitWait }));
+    log(formatReport({ record: watch.record, outcome: 'failed', version, snapshot, error, exitWait: abandoned ? abortWait : exitWait, abandoned }));
     throw error;
+  } finally {
+    clearTimeout(timer);
   }
   watch.record.finishedAt = watch.elapsed();
   watch.stop();
-  const browserVersion = await Promise.resolve()
-    .then(() => browser.version())
-    .catch((error) => `unavailable (${error.message})`);
+  let browserVersion;
+  if (controller) {
+    // Given a deadline, asking for the version can't hold the start up either.
+    const answer = await within(Promise.resolve().then(() => browser.version()), abortWait);
+    browserVersion = answer === null ? `unavailable (no answer within ${abortWait} ms)` : answer.error ? `unavailable (${answer.error.message})` : answer.value;
+  } else {
+    browserVersion = await Promise.resolve()
+      .then(() => browser.version())
+      .catch((error) => `unavailable (${error.message})`);
+  }
   log(formatReport({ record: watch.record, outcome: 'succeeded', version, browserVersion }));
   return browser;
 }
 
-module.exports = { MAX_LINES, MAX_LINE_LENGTH, installedVersion, launchFirefox, lineReader };
+module.exports = { ABORT_WAIT_MS, MAX_LINES, MAX_LINE_LENGTH, installedVersion, launchFirefox, lineReader };

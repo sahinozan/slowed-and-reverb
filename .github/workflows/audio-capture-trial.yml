@@ -13,11 +13,14 @@ on:
       - '.github/workflows/audio-capture-trial.yml'
       - 'e2e/audio-capture/**'
       - 'e2e/extension-copy.js'
+      # Both suites start Firefox through it.
+      - 'e2e/firefox-launch.js'
       - 'extension/**'
       - 'package.json'
       - 'package-lock.json'
       # The suites' server reads its request targets with this.
       - 'scripts/request-target.js'
+      - 'scripts/ci-package-downloads.sh'
   workflow_dispatch:
 
 permissions:
@@ -32,28 +35,43 @@ jobs:
   linux-null-sink:
     name: Audio capture trial (Ubuntu, PulseAudio null sink)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Every step below has its own deadline. Together (24 minutes to set up,
+    # 5 for each browser, 1 to show the sound server and 5 to upload) they
+    # come to 40, leaving 5 for the runner's own work between them, so even
+    # a step that runs out of time leaves time to upload the evidence. A
+    # hosted run took under 1 minute to set up (tests/audio-workflow.test.js
+    # checks the sums).
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
+        timeout-minutes: 1
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Node.js
+        timeout-minutes: 2
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.19.0
           cache: npm
 
       - name: Install the pinned npm version
+        timeout-minutes: 2
         run: npm install --global npm@11.19.0
 
       - name: Install exact dependencies
+        timeout-minutes: 3
         run: npm ci
+
+      - name: Download Ubuntu packages from Ubuntu's archive
+        timeout-minutes: 1
+        run: bash scripts/ci-package-downloads.sh
 
       - name: Read the Playwright version
         id: playwright
+        timeout-minutes: 1
         shell: bash
         run: |
           version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
@@ -61,21 +79,27 @@ jobs:
 
       - name: Restore Playwright Chromium
         id: playwright-cache
+        timeout-minutes: 2
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
+      # One of these two runs.
       - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 7
         run: npx playwright install --with-deps --no-shell chromium
 
       - name: Install Chromium's system libraries
         if: steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 5
         run: npx playwright install-deps chromium
 
       # A virtual output device: both browsers play into it as into speakers.
       - name: Start a PulseAudio null sink
+        id: sink
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
@@ -87,26 +111,32 @@ jobs:
           pactl set-default-sink audio_trial
           pactl info
           pactl list short sinks
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       - name: Run the Chromium audio capture trial
+        timeout-minutes: 5
         run: npm run test:audio-trial:chromium
 
-      # Runs after a Chromium failure too, for its own evidence; either
-      # failure fails the job.
+      # Runs after a Chromium failure too, for its own evidence, once the
+      # sink is there; either failure fails the job.
       - name: Run the Firefox audio capture trial
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' }}
+        timeout-minutes: 5
         run: npm run test:audio-trial:firefox
 
       - name: Show the sound server's state
         if: ${{ !cancelled() }}
+        timeout-minutes: 1
         shell: bash
         run: |
           pactl info || true
           pactl list short sinks || true
           pactl list short sink-inputs || true
 
+      # Whatever happened before, even a cancelled run, keeps what it has.
       - name: Upload the trial's evidence
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
+        timeout-minutes: 5
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: audio-capture-trial-linux
@@ -118,29 +148,44 @@ jobs:
     name: Audio regression suite (Ubuntu, PulseAudio null sink)
     runs-on: ubuntu-latest
     # Both browsers' suites take about 10 minutes together; installing the
-    # sound server has taken up to 13 on its own.
-    timeout-minutes: 30
+    # sound server took up to 13 on its own from the Azure mirror, and well
+    # under one from Ubuntu's archive. Every step below has its own
+    # deadline. Together (24 minutes to set up, 10 for each browser, 1 to
+    # show the sound server and 5 to upload) they come to 50, leaving 5 for
+    # the runner's own work between them, so even a step that runs out of
+    # time leaves time to upload the evidence (tests/audio-workflow.test.js
+    # checks the sums).
+    timeout-minutes: 55
 
     steps:
       - name: Check out repository
+        timeout-minutes: 1
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Node.js
+        timeout-minutes: 2
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.19.0
           cache: npm
 
       - name: Install the pinned npm version
+        timeout-minutes: 2
         run: npm install --global npm@11.19.0
 
       - name: Install exact dependencies
+        timeout-minutes: 3
         run: npm ci
+
+      - name: Download Ubuntu packages from Ubuntu's archive
+        timeout-minutes: 1
+        run: bash scripts/ci-package-downloads.sh
 
       - name: Read the Playwright version
         id: playwright
+        timeout-minutes: 1
         shell: bash
         run: |
           version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
@@ -148,21 +193,27 @@ jobs:
 
       - name: Restore Playwright Chromium
         id: playwright-cache
+        timeout-minutes: 2
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
+      # One of these two runs.
       - name: Install Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 7
         run: npx playwright install --with-deps --no-shell chromium
 
       - name: Install Chromium's system libraries
         if: steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 5
         run: npx playwright install-deps chromium
 
       # A virtual output device: both browsers play into it as into speakers.
       - name: Start a PulseAudio null sink
+        id: sink
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
@@ -174,26 +225,32 @@ jobs:
           pactl set-default-sink audio_trial
           pactl info
           pactl list short sinks
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       - name: Run the Chromium audio regression suite
+        timeout-minutes: 10
         run: npm run test:audio:chromium
 
-      # Runs after a Chromium failure too, for its own evidence; either
-      # failure fails the job.
+      # Runs after a Chromium failure too, for its own evidence, once the
+      # sink is there; either failure fails the job.
       - name: Run the Firefox audio regression suite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' }}
+        timeout-minutes: 10
         run: npm run test:audio:firefox
 
       - name: Show the sound server's state
         if: ${{ !cancelled() }}
+        timeout-minutes: 1
         shell: bash
         run: |
           pactl info || true
           pactl list short sinks || true
           pactl list short sink-inputs || true
 
+      # Whatever happened before, even a cancelled run, keeps what it has.
       - name: Upload the suite's evidence
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
+        timeout-minutes: 5
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: audio-regression-linux

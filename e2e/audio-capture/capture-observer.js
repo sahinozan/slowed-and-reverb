@@ -31,6 +31,8 @@ function installAudioTrialObserver(options) {
   } = options;
   const Base = window.BaseAudioContext || window.AudioContext;
   const descriptor = Object.getOwnPropertyDescriptor(Base.prototype, 'destination');
+  // As in recorder-worklet.js.
+  const CLOCK_SPAN_SECONDS = 86_400;
   const nativeConnect = AudioNode.prototype.connect;
   const nativeDisconnect = AudioNode.prototype.disconnect;
   const contexts = [];
@@ -101,6 +103,12 @@ function installAudioTrialObserver(options) {
               channelInterpretation: 'speakers',
               processorOptions: { batchFrames, poolSize }
             });
+            // The recorder's native clock: one per second of context time,
+            // from now (recorder-worklet.js uses only how it changes).
+            const clock = recorder.parameters.get('contextClock');
+            const at = context.currentTime;
+            clock.setValueAtTime(0, at);
+            clock.linearRampToValueAtTime(CLOCK_SPAN_SECONDS, at + CLOCK_SPAN_SECONDS);
             recorder.port.onmessage = (event) => {
               const message = event.data;
               if (message.type === 'hello') {
@@ -129,6 +137,8 @@ function installAudioTrialObserver(options) {
 
   function counters(message) {
     return {
+      firstContextFrame: message.firstContextFrame,
+      initialFrameLabel: message.initialFrameLabel,
       overflowFrames: message.overflowFrames,
       overflowEvents: message.overflowEvents,
       contextFrameGaps: message.contextFrameGaps,
@@ -277,7 +287,8 @@ function installAudioTrialObserver(options) {
               ready: Boolean(entry.hello),
               error: entry.error,
               workletSampleRate: entry.hello ? entry.hello.sampleRate : null,
-              firstContextFrame: entry.hello ? entry.hello.currentFrame : null,
+              // Where recording began, once the first block has been seen.
+              firstContextFrame: entry.worklet.firstContextFrame ?? null,
               nextFrame: entry.nextFrame,
               batches: entry.batches,
               lostFrames: entry.lostFrames,

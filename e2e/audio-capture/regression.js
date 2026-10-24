@@ -60,6 +60,14 @@ const START_SETTLE_MS = 750;
 // After an action, before a steady stretch is measured, and how long that is.
 const SETTLE_MS = 400;
 const HOLD_MS = 600;
+// How long the engines' reverb rings (REVERB_DURATION in youtube-main.js
+// and spotify-main.js). Its convolver comes before the pan and keeps
+// hearing the song while the effect is off, so for 2 seconds after a
+// change of pitch, or after the effect turns back on, its tail still
+// carries the tones played before: the sound of any reverb, not a tone
+// the effect should have lost. A tone the stretch after such a change
+// shouldn't have is checked once the tail is over (ringingTones).
+const REVERB_TAIL_MS = 2000;
 const EXCERPT_BEFORE_MS = 50;
 const EXCERPT_AFTER_MS = 400;
 
@@ -138,6 +146,31 @@ function dryExpect(rate = 1, tones = TONE) {
   return { channels: [{ tones: [exact(left), absent(right)] }, { tones: [exact(right), absent(left)] }], media: { rate } };
 }
 
+// The tones `next` shouldn't have that the stretch before (`previous`) had,
+// in any channel, and `next` doesn't: with reverb on, the tail still rings
+// them for REVERB_TAIL_MS after the change.
+function ringingTones(previous, next, settings) {
+  if (!(settings.reverb > 0)) return [];
+  const tones = (expect, present) => expect.channels.flatMap((channel) => (channel.tones ?? []).filter((tone) => (tone.min > 0) === present).map((tone) => tone.hz));
+  const before = tones(previous, true);
+  const now = tones(next, true);
+  return [...new Set(tones(next, false).filter((hz) => before.includes(hz) && !now.includes(hz)))];
+}
+
+// `expect` with no limit on the tones in `ringing` that it says shouldn't be
+// there: they are still measured and kept with the stretch, marked as
+// ringing, but any level passes.
+function withoutRinging(expect, ringing) {
+  return {
+    ...expect,
+    channels: expect.channels.map((channel) =>
+      channel.tones
+        ? { ...channel, tones: channel.tones.map((tone) => (tone.min > 0 || !ringing.includes(tone.hz) ? tone : { hz: tone.hz, min: 0, ringing: true })) }
+        : channel
+    )
+  };
+}
+
 // For an action that should change nothing about the sound: no silence and
 // no clicks.
 const NOTHING = Object.freeze({});
@@ -174,6 +207,7 @@ function defineRegression(browser) {
         holdMs: HOLD_MS,
         clickThreshold: CLICK_THRESHOLD,
         dipMs: DIP_MS,
+        reverbTailMs: REVERB_TAIL_MS,
         firstRouteMs: FIRST_ROUTE_MS,
         firstEnableObserveMs: FIRST_ENABLE_OBSERVE_MS,
         restoreLimitMs: RESTORE_LIMIT_MS,
@@ -487,6 +521,7 @@ function defineRegression(browser) {
         sampleRate,
         frames: left.length,
         firstContextFrame: end.recorder.firstContextFrame,
+        initialFrameLabel: end.recorder.initialFrameLabel ?? null,
         frameOffset: end.recorder.frameOffset,
         contexts: end.contextCount,
         actions: span.actions.map((action) => ({
@@ -519,7 +554,8 @@ function defineRegression(browser) {
         restorations,
         maxClick: Math.max(0, ...analysis.clicks.map((click) => click.peak)),
         quietPeak: analysis.quietPeak,
-        firstContextFrame: end.recorder.firstContextFrame
+        firstContextFrame: end.recorder.firstContextFrame,
+        initialFrameLabel: end.recorder.initialFrameLabel ?? null
       });
       live.spans.delete(span);
       return problems;
@@ -631,10 +667,25 @@ function defineRegression(browser) {
       const page = await openSite(site);
       const span = await beginSpan(page, name);
       let current = EFFECT;
+      let heard = effectExpect(EFFECT);
+      // A steady stretch after a change from what was `heard`. Where the
+      // reverb still rings tones from before (ringingTones), the stretch is
+      // checked twice: from SETTLE_MS after the change for everything else,
+      // and from REVERB_TAIL_MS later for everything, those tones included.
+      const settle = async (label, expect, settings) => {
+        const ringing = ringingTones(heard, expect, settings);
+        if (ringing.length) {
+          await hold(span, label, withoutRinging(expect, ringing));
+          await hold(span, `${label}: after the reverb tail`, expect, { settleMs: REVERB_TAIL_MS - HOLD_MS });
+        } else {
+          await hold(span, label, expect);
+        }
+        heard = expect;
+      };
       const change = async (label, next) => {
         await act(span, label, settingsChange(target, current, next), () => applyThroughExtension(page, next, true));
         current = next;
-        await hold(span, label, effectExpect(next));
+        await settle(label, effectExpect(next), next);
       };
       await hold(span, 'on', effectExpect(EFFECT), { settleMs: 0 });
       await change('reverb 40', { ...current, reverb: 40 });
@@ -671,14 +722,14 @@ function defineRegression(browser) {
           message: `only ${overlapping} requests reached the engine ${OVERLAP_MS[0]} to ${OVERLAP_MS[1]} ms after the one before (${spacing.join(', ')} ms apart; wanted ${MIN_OVERLAPPING})`
         });
       }
-      await hold(span, 'after overlapping changes', effectExpect(current));
+      await settle('after overlapping changes', effectExpect(current), current);
 
       await change('keep the pitch', { ...current, keepPitch: true });
       await change('pitch following again', { ...current, keepPitch: false });
       await act(span, 'turn off', settingsChange(target, current, { ...current, speed: 1 }), () => applyThroughExtension(page, current, false));
-      await hold(span, 'off', dryExpect());
+      await settle('off', dryExpect(), { ...current, reverb: 0 });
       await act(span, 'turn on', settingsChange(target, { ...current, speed: 1 }, current), () => applyThroughExtension(page, current, true));
-      await hold(span, 'on again', effectExpect(current));
+      await settle('on again', effectExpect(current), current);
       const problems = await finishSpan(span);
       await closePage(page);
       return problems;
@@ -949,4 +1000,4 @@ function defineRegression(browser) {
   });
 }
 
-module.exports = { defineRegression };
+module.exports = { defineRegression, dryExpect, effectExpect, ringingTones, withoutRinging };
