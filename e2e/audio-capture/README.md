@@ -705,8 +705,8 @@ It doesn't cover either:
   recordings; why it is inserted is read from Firefox's source and agrees
   with every logged run, but no Firefox change has been built to confirm
   it. The engines turn the effect on exactly this way, and no change to
-  them was found that avoids it safely. `firefox-capture-click.js` reproduces it with
-  no extension.
+  them was found that avoids it safely. `firefox-capture-click.js`
+  reproduces it with no extension.
 
   While a player plays on its own, Firefox sends its sound to the output
   itself (its AudioSink). When a graph captures the player, Firefox stops
@@ -724,9 +724,11 @@ It doesn't cover either:
   later packet doesn't, the check finds a gap of one frame and fills it with
   one frame of silence. That happens in the first packet decoded after the
   routing, about 2 seconds of song past the end of what was queued then,
-  which at the effect's speed comes 2 to 4 seconds later. Afterwards the
-  count is a frame ahead, so by the same arithmetic it happens at most once
-  per player.
+  which at the effect's speed comes 2 to 4 seconds later. In the modeled
+  case, where the song keeps arriving in order after that one change, the
+  count is then a frame ahead and the check finds no further gap; this
+  doesn't show what happens after later seeks, track changes or other
+  changes between the two ways of playing.
 
   With Firefox's log on (`MOZ_LOG=timestamp,MediaDecoder:5,AudioSink:4`),
   every late click came with "Detect a gap in audio, insert silence=1" from
@@ -755,11 +757,14 @@ It doesn't cover either:
   a mute would have to last about a second for the sound handed back to
   pass; capturing every player while the effect is off would change what
   turning it off means; hiding the click would take 2 to 4 seconds of
-  silence or repairing the sound in a worklet. The fix belongs in Firefox:
+  silence or repairing the sound in a worklet. These are the reasons not to
+  change the extension now, not proof that no workaround exists. A fix in
+  Firefox looks likelier:
   its check could allow one frame of rounding, as Firefox's AudioSink
   already does (`AUDIO_FUZZ_FRAMES`), or compare the exact times. Neither
   has been built or tried in Firefox; only a model of the arithmetic
-  shows them removing the late frame. The code
+  shows them removing the late frame, and allowing one frame could also
+  hide a real gap of one frame. The code
   is the same on Firefox's main branch as of 2026-10-24, and no Bugzilla
   report of it was found by its summary; a report has been drafted but not
   sent. Until Firefox changes, turning the effect on during a song in
@@ -769,15 +774,17 @@ It doesn't cover either:
   `117b822`; see "Suite results"), and it stays a failure, not a looser
   threshold, until Firefox is fixed or a decision accepts it. The suite's
   other checks turn the effect on before the song starts.
-- **Two older clicks are probably the same.** In 2 of the last 23 Firefox
+- **Two older clicks may be the same.** In 2 of the last 23 Firefox
   runs of `b4ca3c6`, one Spotify check heard a single click (0.32 and 0.35):
   one sample at exactly 0 in both channels, and two samples at about a
   third of their level. Both came about 3 seconds after the Spotify engine
   routed its playing player into its graph, as it does when a song starts.
-  That is the frame of silence above, but those runs kept no Firefox log,
-  so it isn't shown. Routing a player as it starts to play, with no
-  extension (`playing`), didn't click in 8 tries; if the output hadn't taken
-  any of the song yet, whole packets were handed back, which can't click.
+  Their shape is consistent with the frame of silence above; their cause
+  remains unconfirmed, since those runs kept no Firefox log. Routing a
+  player as it starts to play, with no extension (`playing`), didn't click
+  in 8 tries; one possible reason, not checked, is that the output hadn't
+  taken any of the song yet, so whole packets were handed back, which by
+  the arithmetic can't click.
   Other late clicks of the browsers' own, which `02ef174` noted (Firefox
   about 0.7 s after a change to 1.25x, Chromium about 1.2 s after keeping
   the pitch), haven't appeared in any recorded span: every frame of a span
@@ -906,6 +913,6 @@ and fails in Firefox on it in most runs (see "Suite results").
 **Next:** decide what to do about Firefox's frame of silence after the
 effect turns on while a song plays (report it to Mozilla and wait for a
 fix, or accept it explicitly; see "Limits"), and run the suite on the
-hosted runner enough times to show it is steady there. Until then it stays out of the required
-check and the release, and the routine listen after an engine change stays,
-with the real-site listen before a store release.
+hosted runner enough times to show it is steady there. Until then it stays
+out of the required check and the release, and the routine listen after an
+engine change stays, with the real-site listen before a store release.

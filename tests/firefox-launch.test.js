@@ -136,9 +136,13 @@ test('lists the processes during a slow start, and the start still succeeds', as
     const [report] = reports;
     assert.match(report, /^Firefox start succeeded after /);
     assert.match(report, /WebDriver BiDi port announced at 0\.[4-9] s|WebDriver BiDi port announced at [1-9]/);
-    assert.match(report, /processes at 0\.\d s, before the port was announced \(pid ppid pgid stat elapsed cpu-time wchan args\):/);
+    // Windows has no process list to take (processSnapshot), so nothing is
+    // listed there.
     if (process.platform !== 'win32') {
+      assert.match(report, /processes at 0\.\d s, before the port was announced \(pid ppid pgid stat elapsed cpu-time wchan args\):/);
       assert.match(report, new RegExp(`before the port was announced[^\\n]*\\n\\s+${browser.child.pid}\\s`));
+    } else {
+      assert.doesNotMatch(report, /before the port was announced/);
     }
   } finally {
     browser.child.kill('SIGKILL');
