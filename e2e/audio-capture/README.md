@@ -631,17 +631,21 @@ These runs are enough to show the suite mostly steady on this Mac, not to
 give a flake rate below a few percent, and none of them ran on a hosted
 runner.
 
-With the native clock and the stretches after the reverb tail, one
-whole-suite Chromium run on this Mac (AirPods at 48 kHz, with
-`AUDIO_REGRESSION_MUTE=1`) passed 17 of 17, each control caught as listed,
-with nothing of the previous tone above 0.00004 after the tail. Five more
-runs of turning the effect on while a song plays, muted, passed; recording
-began at context frame 0 in all of them, so none needed the first-block
-correction. Firefox's suite wasn't run with these changes: its checks of
+When the native clock and the stretches after the reverb tail were added
+(`f1f253e`), one whole-suite Chromium run on this Mac (AirPods at 48 kHz,
+with `AUDIO_REGRESSION_MUTE=1`) passed 17 of 17, each control caught as
+listed, with nothing of the previous tone above 0.00004 after the tail.
+Five more runs of turning the effect on while a song plays, muted, passed;
+recording began at context frame 0 in all of them, so none needed the
+first-block correction. Firefox's suite wasn't run then: its checks of
 turning the effect on during a song play the tone aloud, and the Mac was
-in use. The evidence of every failed run is kept outside the repository by
-the run that made it; `chromium-stale-frame.js` and
-`firefox-capture-click.js` reproduce the browser behavior behind them.
+in use. It was run once afterwards, at `117b822` (see the table above),
+and passed 21 of 22: turning the effect on while a song plays failed on
+Spotify, on a click of 0.4354 at 2219.7 ms with valid recorder data. That
+failure stands, and its cause is not known. The evidence of every failed
+run is kept outside the repository by the run that made it;
+`chromium-stale-frame.js` and `firefox-capture-click.js` reproduce the
+browser behavior behind them.
 
 ### What it can replace, and what stays manual
 
