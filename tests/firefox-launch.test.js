@@ -127,7 +127,7 @@ test('reports a start that times out, with the processes and how the browser end
 
 test('lists the processes during a slow start, and the start still succeeds', async () => {
   const { result, reports } = await launch(
-    `setTimeout(() => console.error(${JSON.stringify(ENDPOINT)}), 400); setTimeout(() => {}, 5000);`,
+    "setTimeout(() => console.error('WebDriver BiDi listening on ws://127.0.0.1:9222'), 400); setTimeout(() => {}, 5000);",
     { timeout: 3_000 },
     { slowStartMs: 100 }
   );
@@ -152,7 +152,7 @@ test('lists the processes during a slow start, and the start still succeeds', as
 
 test('lists no processes for a start that announces the port in time', async () => {
   const { result, reports } = await launch(
-    `setTimeout(() => console.error(${JSON.stringify(ENDPOINT)}), 50); setTimeout(() => {}, 5000);`,
+    "setTimeout(() => console.error('WebDriver BiDi listening on ws://127.0.0.1:9222'), 50); setTimeout(() => {}, 5000);",
     {},
     { slowStartMs: 1_000 }
   );
