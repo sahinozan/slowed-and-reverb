@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const fs = require('fs');
-const { describe, test } = require('node:test');
+const { afterEach, describe, test } = require('node:test');
 const { JSDOM } = require('jsdom');
 
 const { FakeAudioContext } = require('./helpers/content-harness');
@@ -21,16 +21,32 @@ const SETTINGS = {
   eqHigh: 4
 };
 
+// What the engine of the current test still has to do; see setup().
+let engineWork = { timers: new Set(), rateReports: 0, delays: [] };
+// Closed after each test, including one that fails before closing its own:
+// the bridge in setup() keeps answering, so the engine's check would keep
+// running and the test process would never end.
+const openWindows = new Set();
+
 // A change of pitch mode reaches the player 40 ms after the change arrives,
-// once the output has faded out (see spotify-main.js). Then a second passes
-// on the audio clock, unless the test keeps it still, so the fades complete.
-function settle(advance = 1) {
-  return new Promise((resolve) =>
-    setTimeout(() => {
-      FakeAudioContext.advance(advance);
-      resolve();
-    }, 60)
+// once the output has faded out (see spotify-main.js). jsdom reports a change
+// of speed in a later task, like browsers, and the engine plans a waiting
+// change again when it sees one. A busy test process can run either late, so
+// this waits until neither is left rather than for a fixed time. Then a
+// second passes on the audio clock, unless the test keeps it still, so the
+// fades complete. Since this would wait out a longer delay too, it checks
+// that every change the engine planned, a replanned one too, waited 40 ms.
+async function settle(advance = 1) {
+  const deadline = Date.now() + 2000;
+  do {
+    if (Date.now() > deadline) throw new Error('The engine still had work waiting after 2 s');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  } while (engineWork.timers.size > 0 || engineWork.rateReports > 0);
+  assert.ok(
+    engineWork.delays.every((delay) => delay === 40),
+    `the engine asked for delays of ${engineWork.delays.join(', ')} ms`
   );
+  FakeAudioContext.advance(advance);
 }
 
 // Where each recorded change of a setting was heading, and when it got there.
@@ -56,8 +72,14 @@ function setup(options = {}) {
     runScripts: 'outside-only'
   });
   const { window } = dom;
+  openWindows.add(window);
   if (options.userAgent) {
     Object.defineProperty(window.navigator, 'userAgent', { value: options.userAgent });
+  }
+  // The extension's bridge answers the engine's check every 250 ms. Without
+  // an answer the engine turns itself off, so a slow test would see it stop.
+  if (options.bridge !== false) {
+    window.document.addEventListener('SLOWED_REVERB_SPOTIFY_CHECK', (event) => event.preventDefault());
   }
   const warnings = [];
   const statusMessages = [];
@@ -65,6 +87,37 @@ function setup(options = {}) {
   window.webkitAudioContext = FakeAudioContext;
   window.console.warn = (...args) => warnings.push(args);
   window.postMessage = (message) => statusMessages.push(message);
+
+  // Counted for settle(): the engine's timers still to run, and changes of
+  // speed jsdom has yet to report. The engine keeps the player's setter from
+  // when it loads, so it uses this one. Since settle() waits for any timer,
+  // the delays the engine asks for are kept for it and for tests to check.
+  const work = { timers: new Set(), rateReports: 0, delays: [] };
+  engineWork = work;
+  const { setTimeout: windowSetTimeout, clearTimeout: windowClearTimeout } = window;
+  window.setTimeout = (callback, delay, ...args) => {
+    const id = windowSetTimeout(() => {
+      work.timers.delete(id);
+      callback(...args);
+    }, delay);
+    work.timers.add(id);
+    work.delays.push(delay);
+    return id;
+  };
+  window.clearTimeout = (id) => {
+    work.timers.delete(id);
+    windowClearTimeout(id);
+  };
+  const playbackRate = Object.getOwnPropertyDescriptor(window.HTMLMediaElement.prototype, 'playbackRate');
+  Object.defineProperty(window.HTMLMediaElement.prototype, 'playbackRate', {
+    ...playbackRate,
+    set(value) {
+      const before = playbackRate.get.call(this);
+      playbackRate.set.call(this, value);
+      if (playbackRate.get.call(this) !== before) work.rateReports++;
+    }
+  });
+
   window.eval(fs.readFileSync(`${root}/extension/spotify-main.js`, 'utf8'));
 
   const media = window.document.createElement('audio');
@@ -72,6 +125,11 @@ function setup(options = {}) {
     duration: { configurable: true, value: 300 },
     mediaKeys: { configurable: true, value: options.mediaKeys ?? {} },
     readyState: { configurable: true, value: 2 }
+  });
+  // After the engine's own listener, so a change it plans again on hearing
+  // of one is already counted.
+  media.addEventListener('ratechange', () => {
+    work.rateReports = Math.max(0, work.rateReports - 1);
   });
   media.playbackRate = 1;
   // jsdom has no default; browsers keep the original pitch unless told not to.
@@ -86,7 +144,7 @@ function setup(options = {}) {
     );
   }
 
-  return { apply, dom, media, statusMessages, warnings, window };
+  return { apply, dom, media, statusMessages, timerDelays: work.delays, warnings, window };
 }
 
 const FIREFOX_USER_AGENT = 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0';
@@ -99,6 +157,11 @@ function outputGains(context) {
 }
 
 describe('Spotify main-world audio engine', () => {
+  afterEach(() => {
+    for (const window of openWindows) window.close();
+    openWindows.clear();
+  });
+
   test('captures dynamically created protected media and applies the full graph', async () => {
     const harness = setup();
     harness.apply(true);
@@ -154,8 +217,10 @@ describe('Spotify main-world audio engine', () => {
     );
 
     harness.apply(false);
-    // Until the output has faded out, the player keeps its pitch mode.
+    // Until the output has faded out, the player keeps its pitch mode, and
+    // the change waits 40 ms: long enough for the fade, and no longer.
     assert.equal(harness.media.preservesPitch, true);
+    assert.deepEqual(harness.timerDelays, [40]);
     await settle();
 
     assert.equal(harness.media.preservesPitch, false);
@@ -407,7 +472,7 @@ describe('Spotify main-world audio engine', () => {
   });
 
   test('turns itself off when the bridge stops answering and accepts a new one', async (t) => {
-    const harness = setup();
+    const harness = setup({ bridge: false });
     t.after(() => harness.dom.window.close());
     const wait = () => new Promise((resolve) => setTimeout(resolve, 300));
     let bridgeRunning = true;
