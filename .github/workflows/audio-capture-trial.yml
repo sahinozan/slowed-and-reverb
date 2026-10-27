@@ -114,10 +114,10 @@ jobs:
           echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       # On GitHub's Ubuntu runners Firefox has sometimes not started within
-      # 30 s, waiting the whole time for its own files to come off the disk
-      # (in disk sleep, using no CPU). Reading them once first puts them in
-      # memory, and the log shows how long the disk took. Only a head start,
-      # so its failure doesn't stop the tests.
+      # 30 s, its main process waiting on the disk (in disk sleep, using no
+      # CPU) when it was checked. Which file it waited for isn't known. As
+      # an experiment, this reads Firefox's install once first, so it is in
+      # memory, and logs how long the disk took. It can't stop the tests.
       - name: Read Firefox's files into memory
         continue-on-error: true
         timeout-minutes: 2
@@ -248,10 +248,10 @@ jobs:
           echo 'ready=true' >> "$GITHUB_OUTPUT"
 
       # On GitHub's Ubuntu runners Firefox has sometimes not started within
-      # 30 s, waiting the whole time for its own files to come off the disk
-      # (in disk sleep, using no CPU). Reading them once first puts them in
-      # memory, and the log shows how long the disk took. Only a head start,
-      # so its failure doesn't stop the tests.
+      # 30 s, its main process waiting on the disk (in disk sleep, using no
+      # CPU) when it was checked. Which file it waited for isn't known. As
+      # an experiment, this reads Firefox's install once first, so it is in
+      # memory, and logs how long the disk took. It can't stop the tests.
       - name: Read Firefox's files into memory
         continue-on-error: true
         timeout-minutes: 2
