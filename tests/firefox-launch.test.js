@@ -69,7 +69,7 @@ function ended(child) {
 
 test('reports a successful start with the time the endpoint appeared and the output', async () => {
   const { result, reports } = await launch(
-    `console.log('starting'); setTimeout(() => console.error(${JSON.stringify(ENDPOINT)}), 50); setTimeout(() => {}, 5000);`
+    "console.log('starting'); setTimeout(() => console.error('WebDriver BiDi listening on ws://127.0.0.1:9222'), 50); setTimeout(() => {}, 5000);"
   );
   const browser = await result;
   try {
