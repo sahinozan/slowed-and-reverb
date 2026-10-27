@@ -203,7 +203,8 @@ function firefoxBrowser({ addonManager = false } = {}) {
       const options = { browser: 'firefox', executablePath: firefoxPath(), headless: true };
       if (addonManager) {
         options.args = ['--remote-allow-system-access'];
-        // Firefox 159 and later also need this for the add-on manager.
+        // Firefox 159 removed the switch and takes only this; earlier
+        // versions take either.
         options.env = { ...process.env, MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' };
       }
       const { launchFirefox } = require('../firefox-launch');
