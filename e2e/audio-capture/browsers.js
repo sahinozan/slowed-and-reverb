@@ -201,7 +201,12 @@ function firefoxBrowser({ addonManager = false } = {}) {
     canRemove: true,
     async start({ extensionDir, artifacts }) {
       const options = { browser: 'firefox', executablePath: firefoxPath(), headless: true };
-      if (addonManager) options.args = ['--remote-allow-system-access'];
+      if (addonManager) {
+        options.args = ['--remote-allow-system-access'];
+        // Firefox 159 removed the switch and takes only this; earlier
+        // versions take either.
+        options.env = { ...process.env, MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' };
+      }
       const { launchFirefox } = require('../firefox-launch');
       const log = (report) => {
         console.error(report);

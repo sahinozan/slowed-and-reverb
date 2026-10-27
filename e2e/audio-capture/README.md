@@ -401,9 +401,11 @@ What the Ubuntu run shows, in both browsers:
 The suite records the engines as built, through the extension in a
 disposable copy, driven the trial's way (see "Driving the engines"), in
 Playwright's Chromium without `--mute-audio` and in the installed Firefox.
-Firefox also runs with `--remote-allow-system-access`, as
+Firefox also runs with both `--remote-allow-system-access` and
+`MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` in its environment, as
 `npm run test:firefox` does, so the suite can turn the extension off and on
-through Firefox's add-on manager.
+through Firefox's add-on manager. Firefox 159 needs the variable; the switch
+stays for earlier versions.
 
 ### What it checks
 
