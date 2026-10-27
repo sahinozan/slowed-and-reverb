@@ -102,8 +102,10 @@ before(async () => {
     browser: 'firefox',
     executablePath: firefoxPath(),
     headless: true,
-    // Lets the test use Firefox's add-on manager, as the about:addons switch does.
+    // Lets the test use Firefox's add-on manager, as the about:addons switch
+    // does. Firefox 159 and later also need the environment variable.
     args: ['--remote-allow-system-access'],
+    env: { ...process.env, MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' },
     extraPrefsFirefox: { 'media.autoplay.default': 0 }
   });
 });
