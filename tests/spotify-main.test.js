@@ -85,8 +85,10 @@ function setup(options = {}) {
 
   // Counted for settle(): the engine's timers still to run, and changes of
   // speed jsdom has yet to report. The engine keeps the player's setter from
-  // when it loads, so it uses this one.
+  // when it loads, so it uses this one. Since settle() waits for any timer,
+  // the delays the engine asks for are kept for tests to check.
   const work = { timers: new Set(), rateReports: 0 };
+  const timerDelays = [];
   engineWork = work;
   const { setTimeout: windowSetTimeout, clearTimeout: windowClearTimeout } = window;
   window.setTimeout = (callback, delay, ...args) => {
@@ -95,6 +97,7 @@ function setup(options = {}) {
       callback(...args);
     }, delay);
     work.timers.add(id);
+    timerDelays.push(delay);
     return id;
   };
   window.clearTimeout = (id) => {
@@ -137,7 +140,7 @@ function setup(options = {}) {
     );
   }
 
-  return { apply, dom, media, statusMessages, warnings, window };
+  return { apply, dom, media, statusMessages, timerDelays, warnings, window };
 }
 
 const FIREFOX_USER_AGENT = 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0';
@@ -210,8 +213,10 @@ describe('Spotify main-world audio engine', () => {
     );
 
     harness.apply(false);
-    // Until the output has faded out, the player keeps its pitch mode.
+    // Until the output has faded out, the player keeps its pitch mode, and
+    // the change waits 40 ms: long enough for the fade, and no longer.
     assert.equal(harness.media.preservesPitch, true);
+    assert.deepEqual(harness.timerDelays, [40]);
     await settle();
 
     assert.equal(harness.media.preservesPitch, false);
