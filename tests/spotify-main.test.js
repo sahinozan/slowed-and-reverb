@@ -22,7 +22,7 @@ const SETTINGS = {
 };
 
 // What the engine of the current test still has to do; see setup().
-let engineWork = { timers: new Set(), rateReports: 0 };
+let engineWork = { timers: new Set(), rateReports: 0, delays: [] };
 // Closed after each test, including one that fails before closing its own:
 // the bridge in setup() keeps answering, so the engine's check would keep
 // running and the test process would never end.
@@ -34,13 +34,18 @@ const openWindows = new Set();
 // change again when it sees one. A busy test process can run either late, so
 // this waits until neither is left rather than for a fixed time. Then a
 // second passes on the audio clock, unless the test keeps it still, so the
-// fades complete.
+// fades complete. Since this would wait out a longer delay too, it checks
+// that every change the engine planned, a replanned one too, waited 40 ms.
 async function settle(advance = 1) {
   const deadline = Date.now() + 2000;
   do {
     if (Date.now() > deadline) throw new Error('The engine still had work waiting after 2 s');
     await new Promise((resolve) => setTimeout(resolve, 10));
   } while (engineWork.timers.size > 0 || engineWork.rateReports > 0);
+  assert.ok(
+    engineWork.delays.every((delay) => delay === 40),
+    `the engine asked for delays of ${engineWork.delays.join(', ')} ms`
+  );
   FakeAudioContext.advance(advance);
 }
 
@@ -86,9 +91,8 @@ function setup(options = {}) {
   // Counted for settle(): the engine's timers still to run, and changes of
   // speed jsdom has yet to report. The engine keeps the player's setter from
   // when it loads, so it uses this one. Since settle() waits for any timer,
-  // the delays the engine asks for are kept for tests to check.
-  const work = { timers: new Set(), rateReports: 0 };
-  const timerDelays = [];
+  // the delays the engine asks for are kept for it and for tests to check.
+  const work = { timers: new Set(), rateReports: 0, delays: [] };
   engineWork = work;
   const { setTimeout: windowSetTimeout, clearTimeout: windowClearTimeout } = window;
   window.setTimeout = (callback, delay, ...args) => {
@@ -97,7 +101,7 @@ function setup(options = {}) {
       callback(...args);
     }, delay);
     work.timers.add(id);
-    timerDelays.push(delay);
+    work.delays.push(delay);
     return id;
   };
   window.clearTimeout = (id) => {
@@ -140,7 +144,7 @@ function setup(options = {}) {
     );
   }
 
-  return { apply, dom, media, statusMessages, timerDelays, warnings, window };
+  return { apply, dom, media, statusMessages, timerDelays: work.delays, warnings, window };
 }
 
 const FIREFOX_USER_AGENT = 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0';
