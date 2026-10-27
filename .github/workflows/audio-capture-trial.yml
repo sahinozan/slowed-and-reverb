@@ -36,12 +36,12 @@ jobs:
     name: Audio capture trial (Ubuntu, PulseAudio null sink)
     runs-on: ubuntu-latest
     # Every step below has its own deadline. Together (24 minutes to set up,
-    # 5 for each browser, 1 to show the sound server and 5 to upload) they
-    # come to 40, leaving 5 for the runner's own work between them, so even
-    # a step that runs out of time leaves time to upload the evidence. A
-    # hosted run took under 1 minute to set up (tests/audio-workflow.test.js
-    # checks the sums).
-    timeout-minutes: 45
+    # 2 to read Firefox's files, 5 for each browser, 1 to show the sound
+    # server and 5 to upload) they come to 42, leaving 5 for the runner's
+    # own work between them, so even a step that runs out of time leaves
+    # time to upload the evidence. A hosted run took under 1 minute to set
+    # up (tests/audio-workflow.test.js checks the sums).
+    timeout-minutes: 47
 
     steps:
       - name: Check out repository
@@ -112,6 +112,26 @@ jobs:
           pactl info
           pactl list short sinks
           echo 'ready=true' >> "$GITHUB_OUTPUT"
+
+      # On GitHub's Ubuntu runners Firefox has sometimes not started within
+      # 30 s, its main process waiting on the disk (in disk sleep, using no
+      # CPU) when it was checked. Which file it waited for isn't known. As
+      # an experiment, this reads Firefox's install once first, so it is in
+      # memory, and logs how long the disk took. It can't stop the tests.
+      - name: Read Firefox's files into memory
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$(dirname "$(readlink -f /usr/bin/firefox)")"
+          if [[ ! -f "$dir/application.ini" ]]; then
+            echo "::warning::No Firefox install beside /usr/bin/firefox ($dir), so nothing was read."
+            exit 0
+          fi
+          start=$(date +%s%N)
+          bytes=$(find "$dir" -type f -print0 | xargs -0 cat | wc -c)
+          echo "Read $bytes bytes of Firefox from $dir in $(( ($(date +%s%N) - start) / 1000000 )) ms."
 
       - name: Run the Chromium audio capture trial
         timeout-minutes: 5
@@ -150,12 +170,12 @@ jobs:
     # Both browsers' suites take about 10 minutes together; installing the
     # sound server took up to 13 on its own from the Azure mirror, and well
     # under one from Ubuntu's archive. Every step below has its own
-    # deadline. Together (24 minutes to set up, 10 for each browser, 1 to
-    # show the sound server and 5 to upload) they come to 50, leaving 5 for
-    # the runner's own work between them, so even a step that runs out of
-    # time leaves time to upload the evidence (tests/audio-workflow.test.js
-    # checks the sums).
-    timeout-minutes: 55
+    # deadline. Together (24 minutes to set up, 2 to read Firefox's files,
+    # 10 for each browser, 1 to show the sound server and 5 to upload) they
+    # come to 52, leaving 5 for the runner's own work between them, so even a
+    # step that runs out of time leaves time to upload the evidence
+    # (tests/audio-workflow.test.js checks the sums).
+    timeout-minutes: 57
 
     steps:
       - name: Check out repository
@@ -226,6 +246,26 @@ jobs:
           pactl info
           pactl list short sinks
           echo 'ready=true' >> "$GITHUB_OUTPUT"
+
+      # On GitHub's Ubuntu runners Firefox has sometimes not started within
+      # 30 s, its main process waiting on the disk (in disk sleep, using no
+      # CPU) when it was checked. Which file it waited for isn't known. As
+      # an experiment, this reads Firefox's install once first, so it is in
+      # memory, and logs how long the disk took. It can't stop the tests.
+      - name: Read Firefox's files into memory
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$(dirname "$(readlink -f /usr/bin/firefox)")"
+          if [[ ! -f "$dir/application.ini" ]]; then
+            echo "::warning::No Firefox install beside /usr/bin/firefox ($dir), so nothing was read."
+            exit 0
+          fi
+          start=$(date +%s%N)
+          bytes=$(find "$dir" -type f -print0 | xargs -0 cat | wc -c)
+          echo "Read $bytes bytes of Firefox from $dir in $(( ($(date +%s%N) - start) / 1000000 )) ms."
 
       - name: Run the Chromium audio regression suite
         timeout-minutes: 10

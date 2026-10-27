@@ -24,7 +24,8 @@ function jobText(name) {
   return match[0];
 }
 
-// Each step's name, condition, deadline, id and one-line run command.
+// Each step's name, condition, deadline, id, one-line run command and
+// whether its failure lets the job go on.
 function steps(job) {
   return job
     .split(/\n(?= {6}- name: )/)
@@ -34,16 +35,19 @@ function steps(job) {
       id: /^ {8}id: (\S+)$/m.exec(text)?.[1] ?? null,
       condition: /^ {8}if: (.*)$/m.exec(text)?.[1] ?? null,
       run: /^ {8}run: (.*)$/m.exec(text)?.[1] ?? null,
+      continueOnError: /^ {8}continue-on-error: true$/m.test(text),
       minutes: Number(/^ {8}timeout-minutes: (\d+)$/m.exec(text)?.[1] ?? NaN)
     }));
 }
 
 // Whether a step runs once an earlier step has failed, by GitHub's rules: a
 // step with no condition runs only if all before it succeeded; always() and
-// !cancelled() run after a failure. A step that needs the sink's output
+// !cancelled() run after a failure. A failed step with continue-on-error
+// counts as a success. A step that needs the sink's output
 // runs only if the sink step finished. Conditions on the Chromium cache
 // pick one of two steps and don't depend on a failure.
 function runsAfterFailure(step, failedIndex, index, all) {
+  if (all[failedIndex]?.continueOnError) return true;
   const condition = step.condition ?? '';
   if (/always\(\)/.test(condition)) return true;
   if (!/!cancelled\(\)/.test(condition)) return false;
@@ -100,8 +104,8 @@ function browserStepProblems(job, commands) {
 }
 
 const JOBS = [
-  ['linux-null-sink', 45, { chromium: 'npm run test:audio-trial:chromium', firefox: 'npm run test:audio-trial:firefox' }],
-  ['linux-regression', 55, { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' }]
+  ['linux-null-sink', 47, { chromium: 'npm run test:audio-trial:chromium', firefox: 'npm run test:audio-trial:firefox' }],
+  ['linux-regression', 57, { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' }]
 ];
 
 describe('the audio workflow', () => {
@@ -169,8 +173,8 @@ describe('the audio workflow', () => {
     // is the step that failed, which skips the rest of the setup.
     const longer = steps(jobText('linux-null-sink').replace(/(- name: Install exact dependencies\n {8}timeout-minutes: )3\n/, '$110\n'));
     assert.equal(longer.find(({ name }) => name === 'Install exact dependencies').minutes, 10);
-    const late = lateUploads(longer, 45);
-    assert.ok(late.includes('with nothing failing, the upload starts by minute 42'), late.join('\n'));
+    const late = lateUploads(longer, 47);
+    assert.ok(late.includes('with nothing failing, the upload starts by minute 44'), late.join('\n'));
     assert.ok(late.some((text) => text.includes('"Run the Firefox audio capture trial" out of time')));
     assert.ok(!late.some((text) => text.includes('"Install exact dependencies" out of time')));
     // And one with no deadline at all.

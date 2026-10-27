@@ -199,6 +199,27 @@ jobs:
       - name: Run extension browser smoke tests
         run: npm run test:e2e
 
+      # On GitHub's Ubuntu runners Firefox has sometimes not started within
+      # 30 s, its main process waiting on the disk (in disk sleep, using no
+      # CPU) when it was checked. Which file it waited for isn't known. As
+      # an experiment, this reads Firefox's install once first, so it is in
+      # memory, and logs how long the disk took. It can't stop the tests.
+      - name: Read Firefox's files into memory
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$(dirname "$(readlink -f /usr/bin/firefox)")"
+          if [[ ! -f "$dir/application.ini" ]]; then
+            echo "::warning::No Firefox install beside /usr/bin/firefox ($dir), so nothing was read."
+            exit 0
+          fi
+          start=$(date +%s%N)
+          bytes=$(find "$dir" -type f -print0 | xargs -0 cat | wc -c)
+          echo "Read $bytes bytes of Firefox from $dir in $(( ($(date +%s%N) - start) / 1000000 )) ms."
+
       # Uses the Firefox already installed on GitHub's runners.
       - name: Run the Firefox turn-off test
         run: npm run test:firefox
