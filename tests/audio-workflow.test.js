@@ -100,8 +100,8 @@ function browserStepProblems(job, commands) {
 }
 
 const JOBS = [
-  ['linux-null-sink', 45, { chromium: 'npm run test:audio-trial:chromium', firefox: 'npm run test:audio-trial:firefox' }],
-  ['linux-regression', 55, { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' }]
+  ['linux-null-sink', 47, { chromium: 'npm run test:audio-trial:chromium', firefox: 'npm run test:audio-trial:firefox' }],
+  ['linux-regression', 57, { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' }]
 ];
 
 describe('the audio workflow', () => {
@@ -169,8 +169,8 @@ describe('the audio workflow', () => {
     // is the step that failed, which skips the rest of the setup.
     const longer = steps(jobText('linux-null-sink').replace(/(- name: Install exact dependencies\n {8}timeout-minutes: )3\n/, '$110\n'));
     assert.equal(longer.find(({ name }) => name === 'Install exact dependencies').minutes, 10);
-    const late = lateUploads(longer, 45);
-    assert.ok(late.includes('with nothing failing, the upload starts by minute 42'), late.join('\n'));
+    const late = lateUploads(longer, 47);
+    assert.ok(late.includes('with nothing failing, the upload starts by minute 44'), late.join('\n'));
     assert.ok(late.some((text) => text.includes('"Run the Firefox audio capture trial" out of time')));
     assert.ok(!late.some((text) => text.includes('"Install exact dependencies" out of time')));
     // And one with no deadline at all.
