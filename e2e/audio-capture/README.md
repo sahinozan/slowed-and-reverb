@@ -62,7 +62,15 @@ starts), `quiet` (the player at volume 0 until it is routed, so nothing is
 heard; a different condition, see "Limits"), `seconds=<n>` (how long it
 records, default 6) and `rate=<speed>` (the speed set after routing,
 default 0.8; `rate=1` leaves it alone, and Firefox's frame of silence is
-then recorded as one frame of exactly 0 in both channels). Run it with
+then recorded as one frame of exactly 0 in both channels), `control` (the
+graph puts in one frame of silence of its own, 4 seconds after the routing,
+with the song a frame late after it, which is what Firefox's does at 1x;
+its run has to show it) and `save=<folder>` (each run's recording as a
+32-bit float WAV, with its results). Each run also lists `slips`: where
+the tone's phase moves by a quarter of a sample or more, whether or not it
+counts as a click. It needs 50 ms of the tone on each side of a move, so it
+doesn't see the first half second, the last 50 ms, or about 50 ms on either
+side of a gap, and it counts moves within 50 ms of each other as one. Run it with
 `MOZ_LOG=timestamp,MediaDecoder:5,AudioSink:4 MOZ_LOG_FILE=<path>` to get
 Firefox's own log of it. `recorder-first-block.js` takes `chromium` or
 `firefox`, the runs, the context's sample rate, and a control that has to
@@ -684,7 +692,10 @@ background script), all of this would have to be shown:
    done again.
 2. Firefox's late click (see "Limits") confirmed gone or present on the
    current Firefox, from saved samples, against a page known to click, or the
-   remaining doubt accepted in writing.
+   remaining doubt accepted in writing. Done for Firefox 159: it's present,
+   and the click detector can miss it. It still needs a fix in Firefox, or a
+   written decision to accept it, before the suite can stand in for the
+   listen in Firefox.
 3. The 415 ms dropout in a Spotify update check on Firefox 159 (see "Suite
    results") explained from a failing run with Firefox's media log on, or
    accepted in writing.
@@ -741,13 +752,17 @@ It doesn't cover either:
   them was found that avoids it safely. `firefox-capture-click.js`
   reproduces it with no extension.
 
-  In Firefox 159.0 on the same Mac (2026-10-27), no late click was detected
-  in 4 sessions: 3 runs of the reproducer page and the suite's check of
-  turning the effect on in both engines, which passed. Two of the reproducer
-  runs still logged "insert silence=1", and the page keeps no samples, so a
-  click the detector missed isn't ruled out. Firefox 159 didn't change the
-  gap check or the rounding in the files read for this. The click isn't
-  shown to be fixed.
+  Firefox 159.0 still does it, on the same Mac with AirPods (2026-10-28,
+  `firefox-capture-click.js` with saved recordings). At 0.8x, 7 of 10 runs
+  slipped by one frame of the song (1.25 samples) 3.4 to 3.9 seconds in,
+  and Firefox logged "insert silence=1" 7 times. At 1x, all 3 runs had a
+  frame of exactly 0 about 3.2 seconds in. The `control` runs' own frame of
+  silence was found every time, by the phase and as a click. But the click
+  detector missed one of the 7 at 0.8x: the slip was there with no click
+  over the threshold. So a run with no click isn't proof of no frame of
+  silence, and the earlier 159 runs that found none, while Firefox logged
+  one, don't show a fix. Firefox 159 didn't change the gap check or the
+  rounding in the files read for this.
 
   While a player plays on its own, Firefox sends its sound to the output
   itself (its AudioSink). When a graph captures the player, Firefox stops
@@ -953,13 +968,16 @@ unexplained clicks on Spotify; it didn't record long enough after turning
 the effect on during a song to hear Firefox's late click. `10665ea` does,
 and fails in Firefox on it in most runs (see "Suite results").
 
-On Firefox 159.0 on this Mac, no late click was detected in 4 sessions,
-which isn't shown to be a fix, and one update check had an unexplained
-415 ms dropout (see "Limits" and "Suite results").
+On Firefox 159.0 on this Mac, Firefox's late frame of silence is still
+there, and the click detector can miss it. One update check had an
+unexplained 415 ms dropout (see "Limits" and "Suite results").
 
 **Next:** meet the conditions still open in "What it can replace, and what
-stays manual": a baseline with a fixed plan, Firefox's late click settled,
-the 415 ms dropout explained or accepted, and a rule for each change. The
-Chromium gaps are covered. Until then the suite stays out of the required check and
+stays manual": a baseline with a fixed plan, Firefox's late click fixed in
+Firefox or accepted in writing (it's present on 159), the 415 ms dropout
+explained or accepted, and a rule for each change. The Chromium gaps are
+covered. Since the click detector can miss Firefox's frame of silence, the
+suite's checks could also look for slips of the tone's phase, as the
+reproducer does. Until then the suite stays out of the required check and
 the release, and the routine listen after an engine change stays, with the
 release checklist (`RELEASE-CHECKLIST.md`) before a store release.
