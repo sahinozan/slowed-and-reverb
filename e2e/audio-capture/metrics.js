@@ -461,13 +461,18 @@ function toneLists(expect) {
 // be told apart, so both are measurement failures. A run the recorder
 // hasn't seen catch up, or that can't be checked, is `stale-label-unverified`.
 // `settled` is a later snapshot, taken so a run near the end has caught up.
-function frameLabelProblems(before, after, channels, fromFrame, settled = after) {
+// `fromRecordingStart` says the span starts with the recording, so what
+// happened before `before` counts too; by default, a span whose first frame
+// was recorded before `before` does. With a recording delay
+// (capture-observer.js), a span that starts at the context's first frame
+// can begin after `before`, past the delay's silence, so it is said.
+function frameLabelProblems(before, after, channels, fromFrame, settled = after, { fromRecordingStart: told } = {}) {
   const problems = [];
   const fail = (code, message) => problems.push({ code, message });
   const start = before.recorder ?? {};
   const recorder = after.recorder ?? {};
   const later = settled?.recorder ?? recorder;
-  const fromRecordingStart = fromFrame < (start.nextFrame ?? 0);
+  const fromRecordingStart = told ?? fromFrame < (start.nextFrame ?? 0);
   const since = (key) => (recorder[key] ?? 0) - (fromRecordingStart ? 0 : start[key] ?? 0);
   const faults = since('frameLabelFaults');
   if (faults) {
@@ -554,6 +559,15 @@ function markProblems(marks, delayFrames = 0) {
   return problems;
 }
 
+// The wall-clock time (performance.now() in the page) at which the sound
+// recorded at `recorderFrame` was made, from a snapshot: its context time
+// and wall time, read together, and the recorder's mapping (frameOffset).
+function soundWallMs(snapshot, recorderFrame) {
+  const { context, recorder, wallMs } = snapshot;
+  const madeAt = (recorderFrame + recorder.frameOffset) / context.sampleRate;
+  return wallMs - (context.currentTime - madeAt) * 1000;
+}
+
 // Whether a span of recorded samples is valid data: what captureProblems
 // checks of a window's clock and recorder, between the page snapshots
 // `before` and `after`, plus that the frames recorded before `before` from
@@ -562,7 +576,9 @@ function markProblems(marks, delayFrames = 0) {
 // the recorder's own count (offsetChanges), and that its frame numbers can
 // be trusted (frameLabelProblems, with `settled`). `channels` are the
 // decoded samples from `fromFrame` to the after snapshot's next frame.
-function spanHealth(before, after, channels, fromFrame, settled = after) {
+// `fromRecordingStart` is as for frameLabelProblems.
+function spanHealth(before, after, channels, fromFrame, settled = after, { fromRecordingStart: told } = {}) {
+  const fromRecordingStart = told ?? fromFrame < (before.recorder?.nextFrame ?? 0);
   const problems = [];
   const fail = (code, message) => problems.push({ code, message });
   const recorder = after.recorder ?? {};
@@ -587,7 +603,7 @@ function spanHealth(before, after, channels, fromFrame, settled = after) {
   const counted = ['lostFrames', 'overflowFrames', 'contextFrameGaps', 'offsetChanges', 'nonStereoBlocks'];
   for (const key of counted) {
     const during = difference(recorder, start, key);
-    const earlier = fromFrame < (start.nextFrame ?? 0) ? start[key] ?? 0 : 0;
+    const earlier = fromRecordingStart ? start[key] ?? 0 : 0;
     if (during !== 0 || earlier !== 0) {
       const code = { lostFrames: 'frames-lost', overflowFrames: 'frames-lost', contextFrameGaps: 'context-gap', offsetChanges: 'context-gap', nonStereoBlocks: 'not-stereo' }[key];
       fail(code, `${key}: ${during} during the span${earlier ? `, ${earlier} before it` : ''}`);
@@ -603,7 +619,7 @@ function spanHealth(before, after, channels, fromFrame, settled = after) {
   }
   const nonFinite = channels.reduce((sum, samples) => sum + channelStats(samples).nonFinite, 0);
   if (nonFinite) fail('non-finite', `${nonFinite} samples are not finite`);
-  else if (channels[0].length === expected && channels[1].length === expected) problems.push(...frameLabelProblems(before, after, channels, fromFrame, settled));
+  else if (channels[0].length === expected && channels[1].length === expected) problems.push(...frameLabelProblems(before, after, channels, fromFrame, settled, { fromRecordingStart }));
   return problems;
 }
 
@@ -835,6 +851,7 @@ module.exports = {
   measureWindow,
   signalProblems,
   silentRuns,
+  soundWallMs,
   spanHealth,
   toneAmplitude,
   toneNear

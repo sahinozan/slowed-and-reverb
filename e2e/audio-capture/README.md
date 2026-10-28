@@ -187,7 +187,9 @@ parameter, so the delay moves every sample by whole frames and changes
 none, and the observer refuses a delay that isn't. The mapping takes the
 delay off, so a mark still maps to the recorded frame of the sound made at
 that moment, and a span waits for the recorder to reach a moment before
-it starts there or ends. The delay has a fixed channel count, as the bus
+it starts there or ends. A player's pause counts as an interruption
+(`interrupted`) if it came while the span's recorded sound was made, which
+the delay puts earlier than the page's snapshots around the recording. The delay has a fixed channel count, as the bus
 does: in the default mode, when everything leaves the bus (a page taking
 its player out), Chromium's delay changed its channel count and played the
 quarter-second it still held with the two channels averaged. A probe with
@@ -780,7 +782,9 @@ It doesn't cover either:
   [workflow run 40718039127](https://github.com/sahinozan/slowed-and-reverb/actions/runs/40718039127)),
   and in 10 passing hosted runs the sound began 9 to 20 ms after the
   recording. The suite's recording delay (see "How it records") now covers
-  a recorder up to 0.25 s late; one that takes longer still fails.
+  a recorder up to 0.25 s late. One that takes longer misses the context's
+  first frames, and the check then passes only if what it recorded begins
+  in silence.
 - **Firefox puts one frame of silence into the song** about 2 to 4
   seconds after a player that is already playing is routed into a graph,
   and that frame clicks (third difference 0.16 to 0.75). On this Mac, in

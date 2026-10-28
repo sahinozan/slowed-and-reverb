@@ -38,6 +38,7 @@ const {
   fitTone,
   markProblems,
   silentRuns,
+  soundWallMs,
   spanHealth
 } = require('../e2e/audio-capture/metrics');
 const { root } = require('./helpers/load-script');
@@ -817,7 +818,7 @@ describe('audio recorder frame numbers and the sound across them', () => {
   test('a span from the recording start counts the stale runs before its first frame', () => {
     // A recording delay (capture-observer.js) starts the recording with
     // silence, which a span from the recording start leaves out; a stale
-    // run there is counted and has no sound to check.
+    // run there is counted, and its sound isn't checked.
     const recording = record({ label: staleOnce });
     const from = FAULT + 4096;
     const later = recording.snapshots.get(from + 8192);
@@ -830,6 +831,21 @@ describe('audio recorder frame numbers and the sound across them', () => {
     const unlogged = { ...end, recorder: { ...end.recorder, staleLog: [] } };
     const problems = spanHealth(later, unlogged, recording.channels.map((samples) => samples.subarray(from)), from, unlogged);
     assert.deepEqual(codes(problems), ['stale-label-unverified']);
+  });
+
+  test('a span said to start with the recording counts the runs between the first snapshot and its first frame', () => {
+    // As when the effect turns on during a song: the first snapshot comes
+    // with the recorder's first batch, and the span starts later, where the
+    // delay's silence ends; a stale run comes between the two.
+    const recording = record({ label: staleOnce });
+    const from = FAULT + 4096;
+    const first = recording.snapshots.get(FROM);
+    const read = recording.channels.map((samples) => samples.subarray(from));
+    const end = recording.snapshots.get(TOTAL);
+    assert.ok(first.recorder.nextFrame < FAULT && FAULT < from);
+    assert.deepEqual(spanHealth(first, end, read, from, end, { fromRecordingStart: true }), []);
+    // Taken as an ordinary span, the run is the span's and isn't logged in it.
+    assert.deepEqual(codes(spanHealth(first, end, read, from, end)), ['stale-label-unverified']);
   });
 
   test("a counter that goes back or stops fails as the recorder's fault, not as sound", () => {
@@ -872,6 +888,15 @@ describe('audio recorder frame numbers and the sound across them', () => {
     assert.deepEqual(codes(health(TOTAL)), ['stale-label-unverified']);
     const earlier = record({ label: (frame) => (frame === TOTAL - 4096 ? frame - 128 : frame) });
     assert.deepEqual(earlier.health(), []);
+  });
+
+  test('the sound recorded at a frame is placed at the wall time it was made', () => {
+    // A snapshot at wall time 5000 ms with the context at 2 s; the recording
+    // runs 0.25 s behind the context (frameOffset -12000 at 48 kHz), so
+    // recorded frame 48000 was made at context time 0.75 s, 1.25 s earlier.
+    const snapshot = { wallMs: 5000, context: { currentTime: 2, sampleRate: RATE }, recorder: { frameOffset: -12_000 } };
+    assert.equal(soundWallMs(snapshot, 48_000), 3750);
+    assert.equal(soundWallMs({ ...snapshot, recorder: { frameOffset: 0 } }, 48_000), 4000);
   });
 
   test('marks out of order, or before what was recorded, are out of step', () => {
