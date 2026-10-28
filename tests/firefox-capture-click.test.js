@@ -44,6 +44,21 @@ describe('the reproducer finds slips of the phase', () => {
     }
   });
 
+  test('keeps two slips apart when a gap comes between them', () => {
+    // +1.25 at 960 ms and -1.25 at 1240 ms, with 200 ms of silence from
+    // 1000 ms between them.
+    const samples = new Float32Array(RATE * 4);
+    for (let n = 0; n < samples.length; n++) {
+      const late = (n >= 0.96 * RATE ? 1.25 : 0) - (n >= 1.24 * RATE ? 1.25 : 0);
+      samples[n] = 0.25 * Math.cos((2 * Math.PI * HZ * (n - late)) / RATE);
+    }
+    samples.fill(0, RATE, 1.2 * RATE);
+    assert.deepEqual(
+      slipsIn(samples, RATE, HZ).map(({ samples: moved }) => moved),
+      [1.25, -1.25]
+    );
+  });
+
   test('measures a slip in samples when the tone is off the expected frequency', () => {
     assert.deepEqual(slipsIn(tone({ hz: HZ + 10, at: 3 * RATE, slip: 1.25 }), RATE, HZ), [{ ms: 2990, samples: 1.25 }]);
   });

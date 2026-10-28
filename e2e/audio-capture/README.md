@@ -68,8 +68,9 @@ with the song a frame late after it, which is what Firefox's does at 1x;
 its run has to show it) and `save=<folder>` (each run's recording as a
 32-bit float WAV, with its results). Each run also lists `slips`: where
 the tone's phase moves by a quarter of a sample or more, whether or not it
-counts as a click. It looks from half a second in, leaves out windows in or
-at the edge of a gap, and counts moves closer than 50 ms as one. Run it with
+counts as a click. It needs 50 ms of the tone on each side of a move, so it
+doesn't see the first half second, the last 50 ms, or about 50 ms on either
+side of a gap, and it counts moves within 50 ms of each other as one. Run it with
 `MOZ_LOG=timestamp,MediaDecoder:5,AudioSink:4 MOZ_LOG_FILE=<path>` to get
 Firefox's own log of it. `recorder-first-block.js` takes `chromium` or
 `firefox`, the runs, the context's sample rate, and a control that has to

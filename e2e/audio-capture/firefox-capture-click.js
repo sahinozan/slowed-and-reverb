@@ -41,9 +41,11 @@
 // `slips` doesn't depend on a click being found: it follows the tone's phase
 // through the whole recording, 20 ms at a time from half a second in, and
 // lists every place it moves by a quarter of a sample or more, so a frame of
-// silence too quiet to count as a click still shows. `control` is the
-// check that this works: the graph gets one frame of silence 4 seconds after
-// the routing, with the song a frame late after it, as Firefox's own, and
+// silence too quiet to count as a click still shows (see slipsIn for where
+// it can't look). `control` is the check that this works: the graph gets one
+// frame of silence 4 seconds after the routing, with the song a frame late
+// after it, as Firefox's own at 1x (at another speed Firefox's is a frame of
+// the song, 1.25 samples at 0.8x, and the control's still one sample), and
 // `controlMs` says where it went. A run with `control` has to show it in
 // `slips`. `save=<folder>` writes each run's recording there, as a 32-bit
 // float WAV, with what was printed for it.
@@ -136,8 +138,9 @@ function hannPhaseOf(samples, from, length, omega) {
 // the whole span, and a
 // move is the median of the 5 windows after a point against the 5 before
 // it. A window with any quarter of it without the tone (in or at the edge
-// of a gap) is left out. Moves closer than 50 ms count as one, and the first
-// half second and the last 50 ms aren't looked at.
+// of a gap) is left out. A move needs 5 windows of the tone on each side, so
+// the first half second, the last 50 ms and about 50 ms on either side of a
+// gap aren't looked at; moves within 50 ms of each other count as one.
 function slipsIn(samples, sampleRate, hz, minSamples = 0.25) {
   const window = Math.round(sampleRate * 0.02);
   const hop = Math.round(sampleRate * 0.01);
@@ -176,15 +179,19 @@ function slipsIn(samples, sampleRate, hz, minSamples = 0.25) {
     const moved = -(after - before) / omega;
     if (Math.abs(moved) >= minSamples) moves.push({ k, frame: residual[k].from, samples: moved });
   }
-  // Neighboring windows see the same move; the largest of each run is kept.
+  // Neighboring windows see the same move: moves that follow each other
+  // within 50 ms of the song (not of the windows kept, which skip gaps) are
+  // one, and the largest of them is kept.
   const slips = [];
+  let previous = null;
   for (const move of moves) {
     const last = slips.at(-1);
-    if (last && move.k - last.k <= 5) {
+    if (last && move.frame - previous.frame <= 5 * hop) {
       if (Math.abs(move.samples) > Math.abs(last.samples)) Object.assign(last, move);
-      continue;
+    } else {
+      slips.push({ ...move });
     }
-    slips.push({ ...move });
+    previous = move;
   }
   return slips.map(({ frame, samples }) => ({
     ms: Math.round((frame / sampleRate) * 1000),
