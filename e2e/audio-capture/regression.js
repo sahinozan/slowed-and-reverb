@@ -45,6 +45,7 @@ const {
   dryRestoration,
   envelope,
   markProblems,
+  outsidePauses,
   soundWallMs,
   spanHealth
 } = require('./metrics');
@@ -65,8 +66,6 @@ const RECORD_DELAY_SECONDS = 0.25;
 // How long a span waits for the recorder to reach a moment on the
 // context's clock: the delay, a batch, and room for a slow page.
 const CATCH_UP_MS = 3_000;
-// How long after the player stops a page may hear its pause event.
-const PAUSE_EVENT_LATE_MS = 250;
 // Recorded before a span's first action.
 const PRE_ROLL_MS = 300;
 // From the song starting to a span that starts in it (the trial's settle).
@@ -527,22 +526,9 @@ function defineRegression(browser) {
       // not the extension's sound.
       const playerEvents = await ask(span.page, 'its player events', () => window.playerEvents ?? []);
       const ignoredMediaActions = await ask(span.page, 'its media actions', () => window.ignoredMediaActions ?? []);
-      // Bounded by when the span's recorded sound was made, which the
-      // recording delay puts before the snapshots that bound the recording,
-      // with PAUSE_EVENT_LATE_MS for a pause event that comes after the
-      // sound has stopped.
       const startMs = soundWallMs(span.start, span.fromFrame);
-      const endMs = soundWallMs(end, end.recorder.nextFrame) + PAUSE_EVENT_LATE_MS;
-      const byAction = (atMs) =>
-        span.actions.some((action) => {
-          const before = span.marks.find((mark) => mark.label === `${action.label}: before`);
-          const done = span.marks.find((mark) => mark.label === `${action.label}: after`);
-          return before && done ? atMs >= before.wallMs && atMs <= done.wallMs + 100 : false;
-        });
-      for (const event of playerEvents.filter((candidate) => candidate.type === 'pause' && candidate.atMs >= startMs && candidate.atMs <= endMs)) {
-        if (!byAction(event.atMs)) {
-          problems.push({ code: 'interrupted', message: `the player paused ${Math.round(event.atMs - startMs)} ms into the span, not by the check` });
-        }
+      for (const event of outsidePauses({ events: playerEvents, startMs, sampleRate, actions: span.actions, marks: span.marks })) {
+        problems.push({ code: 'interrupted', message: `the player paused ${Math.round(event.atMs - startMs)} ms into the span, not by the check` });
       }
       problems.push(...span.checks);
 

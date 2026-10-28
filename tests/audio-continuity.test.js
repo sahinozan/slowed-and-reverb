@@ -37,6 +37,7 @@ const {
   findClicks,
   fitTone,
   markProblems,
+  outsidePauses,
   silentRuns,
   soundWallMs,
   spanHealth
@@ -897,6 +898,22 @@ describe('audio recorder frame numbers and the sound across them', () => {
     const snapshot = { wallMs: 5000, context: { currentTime: 2, sampleRate: RATE }, recorder: { frameOffset: -12_000 } };
     assert.equal(soundWallMs(snapshot, 48_000), 3750);
     assert.equal(soundWallMs({ ...snapshot, recorder: { frameOffset: 0 } }, 48_000), 4000);
+  });
+
+  test("a pause from outside counts from the span's sound, with room for a late clock or event", () => {
+    // The span's sound was made from 1002.7 ms by a page clock 128 frames
+    // behind; a pause at 1001 ms touched it.
+    const at = (atMs, type = 'pause') => ({ type, atMs });
+    const counted = (events, options = {}) => outsidePauses({ events, startMs: 1002.6667, sampleRate: RATE, ...options }).map((event) => event.atMs);
+    assert.deepEqual(counted([at(1001), at(1101, 'play')]), [1001]);
+    // A batch early is the most a clock may lag before marks are out of step.
+    assert.deepEqual(counted([at(1002.6667 - 2048 / 48 - 1), at(1002.6667 - 2048 / 48 + 1)]), [1002.6667 - 2048 / 48 + 1]);
+    // An event heard long after the sound it stopped still counts.
+    assert.deepEqual(counted([at(2275), at(60_000)]), [2275, 60_000]);
+    // The check's own action, from its first mark to 100 ms after its last.
+    const actions = [{ label: 'a pause' }];
+    const marks = [{ label: 'a pause: before', wallMs: 1500 }, { label: 'a pause: after', wallMs: 1520 }];
+    assert.deepEqual(counted([at(1510), at(1619), at(1621)], { actions, marks }), [1621]);
   });
 
   test('marks out of order, or before what was recorded, are out of step', () => {
