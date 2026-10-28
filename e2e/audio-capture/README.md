@@ -704,7 +704,9 @@ background script), all of this would have to be shown:
 5. A rule for every such change: both suites and their controls pass on the
    exact commit to merge, here and in the hosted workflow, with no unexplained
    failure and no missing job. Either the audio workflow becomes required for
-   those files, or the rule is followed by hand.
+   those files, or the rule is followed by hand. Written: it's followed by
+   hand, as `AGENTS.md` ("Checks") says, and applies to changes to the
+   suite too. The audio workflow isn't required.
 
 How the effect sounds isn't part of this: listen after any change that can
 affect it (`AGENTS.md`).
@@ -974,10 +976,11 @@ unexplained 415 ms dropout (see "Limits" and "Suite results").
 
 **Next:** meet the conditions still open in "What it can replace, and what
 stays manual": a baseline with a fixed plan, Firefox's late click fixed in
-Firefox or accepted in writing (it's present on 159), the 415 ms dropout
-explained or accepted, and a rule for each change. The Chromium gaps are
-covered. Since the click detector can miss Firefox's frame of silence, the
-suite's checks could also look for slips of the tone's phase, as the
-reproducer does. Until then the suite stays out of the required check and
-the release, and the routine listen after an engine change stays, with the
-release checklist (`RELEASE-CHECKLIST.md`) before a store release.
+Firefox or accepted in writing (it's present on 159), and the 415 ms
+dropout explained or accepted. The Chromium gaps are covered, and the rule
+for each change is written (`AGENTS.md`). Since the click detector can miss
+Firefox's frame of silence, the suite's checks could also look for slips of
+the tone's phase, as the reproducer does. Until then the suite stays out of
+the required check and the release, and the routine listen after an engine
+change stays, with the release checklist (`RELEASE-CHECKLIST.md`) before a
+store release.
