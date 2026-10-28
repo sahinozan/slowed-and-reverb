@@ -46,6 +46,7 @@ const {
   envelope,
   markProblems,
   outsidePauses,
+  phaseSlips,
   soundWallMs,
   unreadEvents,
   spanHealth
@@ -122,6 +123,13 @@ const DRY_TONES = [
 // graph comes 2 to 4 s later (README.md in this folder), so a click then is
 // heard and fails the check.
 const FIRST_ENABLE_OBSERVE_MS = 6000;
+// Where in that recording Firefox's late frame may be (phaseSlips in
+// metrics.js): 2.1 to 3.5 s after the effect turned on on this Mac so far,
+// and 2 to 4 s in the reproducer, with room either side. A click within
+// CLICK_PLACE_MS of where the phase scan puts the frame is the frame's.
+const LATE_FRAME_MS = [1500, 5000];
+const CLICK_PLACE_MS = 5;
+const LATE_FRAME_LABEL = "Firefox's late frame";
 // How long cleaning up after a check that couldn't finish may wait for the
 // page.
 const CLEANUP_MS = 5_000;
@@ -494,8 +502,29 @@ function defineRegression(browser) {
       const [left, right] = decodeChannels(read);
       const { sampleRate } = read;
       const health = [...spanHealth(span.start, end, [left, right], span.fromFrame, settled, { fromRecordingStart: span.fromStart }), ...markProblems(span.marks, end.recorder.delayFrames ?? 0)];
+      // The slips of the tones' phase, for a span that asks (span.phase):
+      // Firefox's late frame is kept as an action of its own, which may
+      // click, and any other slip fails.
+      const slips = span.phase ? phaseSlips({ left, right, sampleRate, tones: span.phase.tones, lateFrame: span.phase.lateFrame?.(sampleRate) ?? null }) : [];
+      const lateFrame = slips.find((event) => event.lateFrame);
+      if (lateFrame) {
+        const frameAt = (ms) => span.fromFrame + Math.round((ms / 1000) * sampleRate);
+        span.actions.push({
+          label: LATE_FRAME_LABEL,
+          startFrame: frameAt(lateFrame.fromMs - CLICK_PLACE_MS),
+          endFrame: frameAt(lateFrame.toMs + CLICK_PLACE_MS),
+          allow: { clicks: true, silenceMs: 0, windowMs: 0 },
+          durationMs: 0,
+          result: { slips: lateFrame.slips }
+        });
+      }
       const analysis = analyzeSpan({ sampleRate, fromFrame: span.fromFrame, left, right, actions: span.actions, segments: span.segments });
       const problems = [...health, ...analysis.problems];
+      for (const event of slips.filter((candidate) => !candidate.lateFrame)) {
+        const moved = event.slips.map((slip) => `${slip.samples} at ${slip.hz} Hz`).join(', ');
+        problems.push({ code: 'phase-slip', message: `the tones' phase slipped between ${event.fromMs} and ${event.toMs} ms (samples: ${moved})` });
+      }
+      const phaseRecord = slips.map(({ fromMs, toMs, lateFrame: late, slips: found }) => ({ fromMs, toMs, lateFrame: late, slips: found }));
       for (const segment of span.segments) problems.push(...mediaProblems(segment));
 
       // The exact unchanged sound back after the extension is turned off,
@@ -587,6 +616,7 @@ function defineRegression(browser) {
         })),
         clicks: analysis.clicks,
         silences: analysis.silences,
+        phaseSlips: span.phase ? phaseRecord : null,
         segments: analysis.segments.map((segment, index) => ({ ...segment, mediaRate: span.segments[index].mediaRate ?? null })),
         restorations,
         excerpts,
@@ -607,6 +637,7 @@ function defineRegression(browser) {
         restorations,
         maxClick: Math.max(0, ...analysis.clicks.map((click) => click.peak)),
         quietPeak: analysis.quietPeak,
+        ...(span.phase ? { phaseSlips: phaseRecord } : {}),
         firstContextFrame: end.recorder.firstContextFrame,
         initialFrameLabel: end.recorder.initialFrameLabel ?? null
       });
@@ -682,15 +713,27 @@ function defineRegression(browser) {
     // playing player into a new graph, and the recording starts with that
     // graph, so the whole change is heard. The span goes on until
     // FIRST_ENABLE_OBSERVE_MS after the effect turned on, through the 2 to
-    // 4 s after it in which Firefox has clicked on its own (README.md in this
-    // folder), and every frame of it is checked, so such a click fails the
-    // check. The whole span's sound is kept.
+    // 4 s after it in which Firefox puts a frame of silence into the song
+    // (README.md in this folder), and every frame of it is checked. The
+    // tones' phase is followed too: Firefox's frame, a single slip of one
+    // frame of the song, is kept as an action of its own and may click
+    // without failing the check; any other slip fails it (`phase-slip`). The
+    // whole span's sound is kept.
     async function firstEnableCheck(site, name) {
       const page = await openSite(site, { playing: true });
       assert.equal(await ask(page, 'its contexts', () => window.__audioTrial.contextCount()), 0, 'an audio context existed before the effect turned on');
       const firstOn = Date.now();
       const applied = await applyThroughExtension(page, EFFECT, true);
       const span = await beginSpan(page, name, { fromStart: true });
+      // The recorded tones' phase, all through: in Firefox, its late frame
+      // is one slip later by a frame of the song at the effect's speed.
+      span.phase = {
+        tones: effectExpect(EFFECT).channels.map((channel) => (channel.tones ?? []).filter((tone) => tone.min > 0).map((tone) => tone.hz)),
+        lateFrame:
+          target === 'firefox' && !EFFECT.keepPitch
+            ? (sampleRate) => ({ samples: sampleRate / (TONE.sampleRate * EFFECT.speed), fromMs: LATE_FRAME_MS[0], toMs: LATE_FRAME_MS[1] })
+            : null
+      };
       const on = await mark(span, 'turn on while playing: after');
       span.actions.push({
         label: 'turn on while playing',

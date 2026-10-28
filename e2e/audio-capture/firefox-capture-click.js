@@ -60,7 +60,7 @@ const { withDeadline } = require('./actions');
 const { installAudioTrialObserver } = require('./capture-observer');
 const { TONE, startTrialServer } = require('./fixture');
 const { clickStart, sleep, snapshot } = require('./harness');
-const { decodeChannels, findClicks, spanHealth } = require('./metrics');
+const { decodeChannels, findClicks, slipsIn, spanHealth } = require('./metrics');
 
 // Every step in the page or the browser, and the browser's own start and
 // close, give up after these. A start that runs out of time is ended, and
@@ -118,86 +118,8 @@ function slipAt(samples, sampleRate, frame, hz) {
   };
 }
 
-// phaseOf with a Hann window, so a window that doesn't hold a whole number
-// of the tone's periods gives no ripple.
-function hannPhaseOf(samples, from, length, omega) {
-  let re = 0;
-  let im = 0;
-  for (let i = 0; i < length; i++) {
-    const n = from + i;
-    const weight = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (length - 1));
-    re += weight * samples[n] * Math.cos(omega * n);
-    im -= weight * samples[n] * Math.sin(omega * n);
-  }
-  return Math.atan2(im, re);
-}
-
-// Every place the tone's phase moves by `minSamples` or more, as
-// { ms, samples }, from half a second in: the phase of each 20 ms is taken
-// every 10 ms (with a Hann window) against the tone's frequency fitted over
-// the whole span, and a
-// move is the median of the 5 windows after a point against the 5 before
-// it. A window with any quarter of it without the tone (in or at the edge
-// of a gap) is left out. A move needs 5 windows of the tone on each side, so
-// the first half second, the last 50 ms and about 50 ms on either side of a
-// gap aren't looked at; moves within 50 ms of each other count as one.
-function slipsIn(samples, sampleRate, hz, minSamples = 0.25) {
-  const window = Math.round(sampleRate * 0.02);
-  const hop = Math.round(sampleRate * 0.01);
-  const omega0 = (2 * Math.PI * hz) / sampleRate;
-  const points = [];
-  for (let from = Math.round(sampleRate * 0.5); from + window <= samples.length; from += hop) {
-    const quarter = Math.floor(window / 4);
-    let quiet = false;
-    for (let part = 0; part < 4 && !quiet; part++) {
-      let energy = 0;
-      for (let n = from + part * quarter; n < from + (part + 1) * quarter; n++) energy += samples[n] * samples[n];
-      quiet = Math.sqrt(energy / quarter) < 0.05;
-    }
-    if (quiet) continue;
-    points.push({ from, phase: hannPhaseOf(samples, from, window, omega0) });
-  }
-  if (points.length < 12) return [];
-  // The drift of the phase from window to window is the tone's frequency
-  // above `hz`; the median ignores the windows across a move.
-  const slopes = [];
-  for (let k = 1; k < points.length; k++) {
-    slopes.push(wrap(points[k].phase - points[k - 1].phase) / (points[k].from - points[k - 1].from));
-  }
-  const slope = slopes.sort((a, b) => a - b)[Math.floor(slopes.length / 2)];
-  const omega = omega0 + slope;
-  let unwrapped = 0;
-  const residual = points.map((point, k) => {
-    if (k > 0) unwrapped += wrap(point.phase - points[k - 1].phase - slope * (point.from - points[k - 1].from));
-    return { from: point.from, value: unwrapped };
-  });
-  const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
-  const moves = [];
-  for (let k = 5; k + 5 <= residual.length; k++) {
-    const before = median(residual.slice(k - 5, k).map(({ value }) => value));
-    const after = median(residual.slice(k, k + 5).map(({ value }) => value));
-    const moved = -(after - before) / omega;
-    if (Math.abs(moved) >= minSamples) moves.push({ k, frame: residual[k].from, samples: moved });
-  }
-  // Neighboring windows see the same move: moves that follow each other
-  // within 50 ms of the song (not of the windows kept, which skip gaps) are
-  // one, and the largest of them is kept.
-  const slips = [];
-  let previous = null;
-  for (const move of moves) {
-    const last = slips.at(-1);
-    if (last && move.frame - previous.frame <= 5 * hop) {
-      if (Math.abs(move.samples) > Math.abs(last.samples)) Object.assign(last, move);
-    } else {
-      slips.push({ ...move });
-    }
-    previous = move;
-  }
-  return slips.map(({ frame, samples }) => ({
-    ms: Math.round((frame / sampleRate) * 1000),
-    samples: Math.round(samples * 100) / 100
-  }));
-}
+// slipsIn, the scan for slips of the tone's phase, is in metrics.js, where
+// the regression suite uses it too.
 
 // A stereo 32-bit float WAV, so the recording is kept exactly.
 function floatWav([left, right], sampleRate) {
