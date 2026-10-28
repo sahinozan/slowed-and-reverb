@@ -118,6 +118,9 @@ const MIN_OVERLAPPING = 3;
 const ENGINE_CHANNELS = ['SLOWED_REVERB_YOUTUBE', 'SLOWED_REVERB_SPOTIFY'];
 
 const EFFECT = Object.freeze({ ...ENGINE_SETTINGS });
+// The manifest's version, which every engine's VERSION equals
+// (tests/settings.test.js).
+const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'extension', 'manifest.json'), 'utf8')).version;
 
 // What a steady stretch should sound like. The engines' compressor raises
 // the level a little (0.287 for a tone of 0.25), and reverb mixes in copies
@@ -854,6 +857,35 @@ function defineRegression(browser) {
       return problems;
     }
 
+    // The version the page's engine reports, asked as its own scripts ask:
+    // YouTube's engine gives it with its state, Spotify's when it's ready.
+    // The second makes Spotify's bridge send its settings again, so this is
+    // asked only after a recording.
+    function reportedEngineVersion(page, site) {
+      const [channel, type, reply] =
+        site === 'spotify' ? ['SLOWED_REVERB_SPOTIFY', 'BRIDGE_READY', 'READY'] : ['SLOWED_REVERB_YOUTUBE', 'GET_STATE', 'STATE'];
+      return ask(
+        page,
+        "the engine's version",
+        ({ channel, type, reply }) =>
+          new Promise((resolve) => {
+            const done = (version) => {
+              clearTimeout(timer);
+              window.removeEventListener('message', listen);
+              resolve(version);
+            };
+            const listen = (event) => {
+              const data = event.data;
+              if (event.source === window && data?.channel === channel && data.type === reply) done(data.version ?? null);
+            };
+            const timer = setTimeout(() => done(undefined), 2000);
+            window.addEventListener('message', listen);
+            window.postMessage({ channel, type, requestId: 'audio-suite-version' }, '*');
+          }),
+        { channel, type, reply }
+      );
+    }
+
     // A reloaded page runs this version's engine, with the effect.
     async function afterReload(page, name, site) {
       await page.reload();
@@ -864,7 +896,12 @@ function defineRegression(browser) {
       const span = await beginSpan(page, name);
       if (applied?.success !== true) span.checks.push({ code: 'not-on', message: `the effect didn't turn on after a reload: ${JSON.stringify(applied)}` });
       await hold(span, 'reloaded', effectExpect(EFFECT), { settleMs: 0 });
-      return finishSpan(span);
+      const problems = await finishSpan(span);
+      const version = await reportedEngineVersion(page, site);
+      if (version !== VERSION) {
+        problems.push({ code: 'old-engine-ran', message: `reloaded: the page's engine reports version ${JSON.stringify(version)}, not ${VERSION}` });
+      }
+      return problems;
     }
 
     // An update leaves the previous version's engine in the page. It turns
