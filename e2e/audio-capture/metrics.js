@@ -568,23 +568,33 @@ function soundWallMs(snapshot, recorderFrame) {
   return wallMs - (context.currentTime - madeAt) * 1000;
 }
 
+// The events of a page's log (`events`, read from the document with time
+// origin `origin`) that weren't in the read before (`last`, the `read` this
+// returned then): the log only grows within a document, and a reload starts
+// it again. Counted, not timed, since two events can share a time.
+function unreadEvents(last, { events, origin }) {
+  const seen = last?.origin === origin ? last.count : 0;
+  return { unread: events.slice(seen), read: { origin, count: events.length } };
+}
+
 // The player's pauses that may have interrupted a span from outside the
-// check: every pause on the page since `sinceMs`, when the span before it
-// on the page read them (or since the page opened), except those during one
-// of the check's own `actions` (from its first mark to 100 ms after its
-// last). Neither end is worked out from the clocks, which can't bound where
-// the span's sound began closely enough (a page clock can lag the sound
-// further than the marks show): so a pause that touched the recording is
-// never missed, and one between two spans, or one whose event came late,
-// can make a recording invalid that it didn't touch.
-function outsidePauses({ events, sinceMs = -Infinity, actions = [], marks = [] }) {
+// check: every pause in `events`, the page's player events the span before
+// it on the page didn't read (all of them, since the page opened, if none
+// did), except those during one of the check's own `actions` (from its
+// first mark to 100 ms after its last). Neither end is worked out from the
+// clocks, which can't bound where the span's sound began closely enough (a
+// page clock can lag the sound further than the marks show, and two events
+// can share a time): so a pause that touched the recording is never missed,
+// and one between two spans, or one whose event came late, can make a
+// recording invalid that it didn't touch.
+function outsidePauses({ events, actions = [], marks = [] }) {
   const byAction = (atMs) =>
     actions.some((action) => {
       const before = marks.find((mark) => mark.label === `${action.label}: before`);
       const done = marks.find((mark) => mark.label === `${action.label}: after`);
       return before && done ? atMs >= before.wallMs && atMs <= done.wallMs + 100 : false;
     });
-  return events.filter((event) => event.type === 'pause' && event.atMs > sinceMs && !byAction(event.atMs));
+  return events.filter((event) => event.type === 'pause' && !byAction(event.atMs));
 }
 
 // Whether a span of recorded samples is valid data: what captureProblems
@@ -872,6 +882,7 @@ module.exports = {
   silentRuns,
   outsidePauses,
   soundWallMs,
+  unreadEvents,
   spanHealth,
   toneAmplitude,
   toneNear

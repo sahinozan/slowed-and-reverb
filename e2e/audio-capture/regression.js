@@ -47,6 +47,7 @@ const {
   markProblems,
   outsidePauses,
   soundWallMs,
+  unreadEvents,
   spanHealth
 } = require('./metrics');
 
@@ -261,7 +262,7 @@ function defineRegression(browser) {
     // The pages and spans of the check under way, so one that can't finish
     // still leaves its evidence and closes its pages (guarded).
     const live = { pages: new Set(), spans: new Set() };
-    // When each page's player events were last read by a finished span, and
+    // How many of each page's player events a finished span has read, and
     // in which document.
     const pauseReads = new WeakMap();
 
@@ -527,21 +528,19 @@ function defineRegression(browser) {
       // The player paused by anything but the check itself, such as another
       // app taking the system's media controls: an interrupted recording,
       // not the extension's sound.
-      // The page's player events, and its clock when they were read, from
-      // which the next span on this document looks for pauses
-      // (outsidePauses). A reload starts both again, so each read is kept
-      // with its document's time origin.
-      const { events: playerEvents, readMs, origin } = await ask(span.page, 'its player events', () => ({
+      // The page's player events. The log only grows within a document, so
+      // the next span on this document looks for pauses (outsidePauses) only
+      // in the events after those read here; a reload starts it again, so
+      // each read is kept with its document's time origin.
+      const { events: playerEvents, origin } = await ask(span.page, 'its player events', () => ({
         events: window.playerEvents ?? [],
-        readMs: performance.now(),
         origin: performance.timeOrigin
       }));
       const ignoredMediaActions = await ask(span.page, 'its media actions', () => window.ignoredMediaActions ?? []);
       const startMs = soundWallMs(span.start, span.fromFrame);
-      const lastRead = pauseReads.get(span.page);
-      const sinceMs = lastRead?.origin === origin ? lastRead.readMs : -Infinity;
-      pauseReads.set(span.page, { origin, readMs });
-      for (const event of outsidePauses({ events: playerEvents, sinceMs, actions: span.actions, marks: span.marks })) {
+      const { unread, read: pauseRead } = unreadEvents(pauseReads.get(span.page), { events: playerEvents, origin });
+      pauseReads.set(span.page, pauseRead);
+      for (const event of outsidePauses({ events: unread, actions: span.actions, marks: span.marks })) {
         problems.push({ code: 'interrupted', message: `the player paused ${Math.round(event.atMs - startMs)} ms into the span, not by the check` });
       }
       problems.push(...span.checks);

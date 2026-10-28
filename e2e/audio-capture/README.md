@@ -188,9 +188,9 @@ none, and the observer refuses a delay that isn't. The mapping takes the
 delay off, so a mark still maps to the recorded frame of the sound made at
 that moment, and a span waits for the recorder to reach a moment before
 it starts there or ends. A player's pause that isn't one of the check's own
-actions counts as an interruption (`interrupted`) from when the span before
-it on the page was measured, or the page opened, to whenever the page is
-asked. The delay puts the span's sound earlier than the page's snapshots
+actions counts as an interruption (`interrupted`) if the span before it on
+the page hadn't seen it when it was measured (or the page opened since),
+up to whenever the page is asked. The delay puts the span's sound earlier than the page's snapshots
 around it, by an amount the page's clock can't bound closely enough, so the
 suite doesn't try: a pause between two spans, or one whose event comes
 late, can make a span invalid that it didn't touch, but none that touched
