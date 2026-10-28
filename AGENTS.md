@@ -34,7 +34,12 @@ covers the features and development commands in full.
   removing and updating it, and put back each audible defect fixed so far
   to show it is caught. Run them after changing an engine, the content
   scripts or the background script, as well as listening: they don't
-  replace that yet (see "What it can replace" in the README below). `npm run test:audio-trial:chromium` and
+  replace that yet. "What it can replace" in the README below says what
+  would have to be shown first. Listen to how the effect sounds (reverb,
+  echo, EQ, width, saturation, with music) after any change that can affect
+  it, such as the audio graph's wiring, an effect's code, gains, fades,
+  presets or defaults, not only after a change of values: the suite keeps
+  echo, saturation and EQ neutral. `npm run test:audio-trial:chromium` and
   `npm run test:audio-trial:firefox` are the experiment the suite is built
   on. All four are described in `e2e/audio-capture/README.md`. They aren't
   part of `npm run check`, CI's required check or releases, and they need a
@@ -149,6 +154,11 @@ too (a test checks they match). A failed run leaves its logs in the scratch
 folder it names.
 `npm test` rebuilds `dist/packages/*.zip`, so keep the verified files in the
 version folder.
+
+The checks done by hand for a release are in `RELEASE-CHECKLIST.md`,
+including installing from both stores once they publish. Record them in the
+draft's "checked by hand" line. After changing the permission code, do its
+permission and revoking steps too.
 
 ## Git
 

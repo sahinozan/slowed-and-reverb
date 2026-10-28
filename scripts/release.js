@@ -281,7 +281,7 @@ function releaseRecord(release) {
     previous && changedLine(release),
     'Firefox build from the extracted source zip: byte-identical to the packaged add-on',
     'Tracked worktree remained clean after packaging and verification',
-    'TODO: what was checked by hand, in which browsers and on which sites'
+    'TODO: what was checked by hand (RELEASE-CHECKLIST.md): the browsers, sites and sound output, and each item'
   ].filter(Boolean);
 
   return [
