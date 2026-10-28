@@ -1,6 +1,7 @@
 # Privacy Policy for Slowed & Reverb
 
 Effective date: October 16, 2026
+Last updated: October 28, 2026
 
 This policy applies to versions `1.0.0`, `1.0.1`, `1.1.0`, and `1.1.1` of the
 Slowed & Reverb browser extension for Chromium-based browsers and Firefox. The
@@ -40,6 +41,11 @@ The browser's local extension storage holds only:
   the popup was opened with the effect on, the date of the last such day, and
   whether the reminder was answered. Private windows are never counted.
 
+The popup's own page storage also keeps the label its preset bar showed when it
+last closed, such as "Slowed + Reverb" or a saved preset's name, so the popup
+opens showing it without a flicker. It is removed when the popup closes with the
+effect off.
+
 The rating reminder and the popup's "Rate" link open the extension's page in
 the Chrome Web Store or on Firefox Add-ons only when the user clicks them.
 
@@ -52,6 +58,10 @@ remaining session data when the browser session ends.
 
 Optional site permissions are recorded and managed by the browser. The extension
 can check whether permission is present, but it does not transmit that status.
+
+On slowedreverbapp.com, the demo of the popup keeps the theme picked in it in the
+browser's session storage for the rest of the visit, and the same preset bar label
+in the site's local storage. Neither is sent anywhere.
 
 ## Permissions
 

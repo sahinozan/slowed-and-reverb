@@ -291,30 +291,35 @@ let processingPending = false;
 let tabReports = 0;
 let reloadReason = 'unsupported';
 
+// The supported sites are HTTPS only. Hosts are looked up as the table's own
+// keys, so a host named like a built-in property, such as "constructor",
+// isn't one.
 function isSpotifyUrl(url) {
   try {
-    return new URL(url).hostname === SPOTIFY_HOST;
+    const { protocol, hostname } = new URL(url);
+    return protocol === 'https:' && hostname === SPOTIFY_HOST;
   } catch {
     return false;
+  }
+}
+
+function youTubePermissionFor(url) {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return protocol === 'https:' && Object.hasOwn(FIREFOX_YOUTUBE_PERMISSIONS, hostname)
+      ? FIREFOX_YOUTUBE_PERMISSIONS[hostname]
+      : null;
+  } catch {
+    return null;
   }
 }
 
 function isYouTubeUrl(url) {
-  try {
-    const { hostname } = new URL(url);
-    return hostname in FIREFOX_YOUTUBE_PERMISSIONS;
-  } catch {
-    return false;
-  }
+  return youTubePermissionFor(url) !== null;
 }
 
 function getFirefoxYouTubePermission(url) {
-  if (!IS_FIREFOX) return null;
-  try {
-    return FIREFOX_YOUTUBE_PERMISSIONS[new URL(url).hostname] ?? null;
-  } catch {
-    return null;
-  }
+  return IS_FIREFOX ? youTubePermissionFor(url) : null;
 }
 
 function showProcessingStatus(state) {

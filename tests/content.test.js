@@ -493,7 +493,8 @@ describe('content script audio processing', () => {
       'https://music.apple.com/album/example',
       'https://open.spotify.com/track/1',
       'https://studio.youtube.com/',
-      'https://m.youtube.com/watch?v=example'
+      'https://m.youtube.com/watch?v=example',
+      'http://www.youtube.com/watch?v=example'
     ];
 
     for (const url of urls) {

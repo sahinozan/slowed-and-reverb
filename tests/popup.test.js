@@ -136,7 +136,9 @@ describe('popup behavior', () => {
   });
 
   test('does not inject outside the exact release support list', async (t) => {
-    for (const url of ['https://www.twitch.tv/example', 'https://studio.youtube.com/']) {
+    // Also a host named like an object's built-in property, and YouTube
+    // without HTTPS.
+    for (const url of ['https://www.twitch.tv/example', 'https://studio.youtube.com/', 'https://constructor/', 'http://www.youtube.com/watch?v=one']) {
       const harness = await createPopupHarness({ activeTab: { id: 9, url } });
       t.after(() => close(harness));
       const document = harness.window.document;
