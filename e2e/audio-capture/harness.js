@@ -136,8 +136,8 @@ function prepareTrialExtension(tempRoot, target, { breakYouTube = false, mutatio
   patchFile(
     extensionDir,
     'background.js',
-    "return new URL(url).hostname === 'open.spotify.com';",
-    "return new URL(url).hostname === 'localhost';"
+    "return protocol === 'https:' && hostname === 'open.spotify.com';",
+    "return hostname === 'localhost';"
   );
   patches.push('background.js: Spotify is localhost');
   fs.appendFileSync(
