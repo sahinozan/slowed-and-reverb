@@ -187,11 +187,14 @@ parameter, so the delay moves every sample by whole frames and changes
 none, and the observer refuses a delay that isn't. The mapping takes the
 delay off, so a mark still maps to the recorded frame of the sound made at
 that moment, and a span waits for the recorder to reach a moment before
-it starts there or ends. A player's pause counts as an interruption
-(`interrupted`) from when the span's recorded sound began, which the delay
-puts earlier than the page's snapshots around the recording, less a batch
-for a page clock running behind, to whenever the page is asked, so a pause
-event that comes late still counts. The delay has a fixed channel count, as the bus
+it starts there or ends. A player's pause that isn't one of the check's own
+actions counts as an interruption (`interrupted`) from when the span before
+it on the page was measured, or the page opened, to whenever the page is
+asked. The delay puts the span's sound earlier than the page's snapshots
+around it, by an amount the page's clock can't bound closely enough, so the
+suite doesn't try: a pause between two spans, or one whose event comes
+late, can make a span invalid that it didn't touch, but none that touched
+it is missed. The delay has a fixed channel count, as the bus
 does: in the default mode, when everything leaves the bus (a page taking
 its player out), Chromium's delay changed its channel count and played the
 quarter-second it still held with the two channels averaged. A probe with

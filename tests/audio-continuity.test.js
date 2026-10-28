@@ -900,20 +900,20 @@ describe('audio recorder frame numbers and the sound across them', () => {
     assert.equal(soundWallMs({ ...snapshot, recorder: { frameOffset: 0 } }, 48_000), 4000);
   });
 
-  test("a pause from outside counts from the span's sound, with room for a late clock or event", () => {
-    // The span's sound was made from 1002.7 ms by a page clock 128 frames
-    // behind; a pause at 1001 ms touched it.
+  test('a pause from outside counts from the span before it on the page, whatever the clocks say', () => {
     const at = (atMs, type = 'pause') => ({ type, atMs });
-    const counted = (events, options = {}) => outsidePauses({ events, startMs: 1002.6667, sampleRate: RATE, ...options }).map((event) => event.atMs);
-    assert.deepEqual(counted([at(1001), at(1101, 'play')]), [1001]);
-    // A batch early is the most a clock may lag before marks are out of step.
-    assert.deepEqual(counted([at(1002.6667 - 2048 / 48 - 1), at(1002.6667 - 2048 / 48 + 1)]), [1002.6667 - 2048 / 48 + 1]);
-    // An event heard long after the sound it stopped still counts.
-    assert.deepEqual(counted([at(2275), at(60_000)]), [2275, 60_000]);
+    const counted = (events, options = {}) => outsidePauses({ events, ...options }).map((event) => event.atMs);
+    // With no span before it on the page: every pause, however early, and an
+    // event heard long after the sound it stopped.
+    assert.deepEqual(counted([at(10), at(970), at(1070, 'play'), at(2275), at(60_000)]), [10, 970, 2275, 60_000]);
+    // After a span read the page at 900 ms, only what came after.
+    assert.deepEqual(counted([at(10), at(900), at(970)], { sinceMs: 900 }), [970]);
     // The check's own action, from its first mark to 100 ms after its last.
     const actions = [{ label: 'a pause' }];
     const marks = [{ label: 'a pause: before', wallMs: 1500 }, { label: 'a pause: after', wallMs: 1520 }];
     assert.deepEqual(counted([at(1510), at(1619), at(1621)], { actions, marks }), [1621]);
+    // An action without both marks excludes nothing.
+    assert.deepEqual(counted([at(1510)], { actions, marks: marks.slice(0, 1) }), [1510]);
   });
 
   test('marks out of order, or before what was recorded, are out of step', () => {

@@ -568,23 +568,23 @@ function soundWallMs(snapshot, recorderFrame) {
   return wallMs - (context.currentTime - madeAt) * 1000;
 }
 
-// The player's pauses that interrupted a span from outside the check: every
-// pause from when the span's recorded sound began (`startMs`, soundWallMs)
-// on, except those during one of the check's own `actions` (from its first
-// mark to 100 ms after its last). The start is taken MARK_SLACK_FRAMES
-// early, as far as a page's clock may run behind the sound before marks are
-// out of step, and nothing bounds the end: a pause whose event came late is
-// taken as in the span. So a pause near either end can make a recording
-// invalid that it didn't touch, but none that touched it is missed.
-function outsidePauses({ events, startMs, sampleRate, actions = [], marks = [] }) {
-  const from = startMs - (MARK_SLACK_FRAMES / sampleRate) * 1000;
+// The player's pauses that may have interrupted a span from outside the
+// check: every pause on the page since `sinceMs`, when the span before it
+// on the page read them (or since the page opened), except those during one
+// of the check's own `actions` (from its first mark to 100 ms after its
+// last). Neither end is worked out from the clocks, which can't bound where
+// the span's sound began closely enough (a page clock can lag the sound
+// further than the marks show): so a pause that touched the recording is
+// never missed, and one between two spans, or one whose event came late,
+// can make a recording invalid that it didn't touch.
+function outsidePauses({ events, sinceMs = -Infinity, actions = [], marks = [] }) {
   const byAction = (atMs) =>
     actions.some((action) => {
       const before = marks.find((mark) => mark.label === `${action.label}: before`);
       const done = marks.find((mark) => mark.label === `${action.label}: after`);
       return before && done ? atMs >= before.wallMs && atMs <= done.wallMs + 100 : false;
     });
-  return events.filter((event) => event.type === 'pause' && event.atMs >= from && !byAction(event.atMs));
+  return events.filter((event) => event.type === 'pause' && event.atMs > sinceMs && !byAction(event.atMs));
 }
 
 // Whether a span of recorded samples is valid data: what captureProblems

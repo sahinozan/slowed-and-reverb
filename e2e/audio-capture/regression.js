@@ -261,6 +261,9 @@ function defineRegression(browser) {
     // The pages and spans of the check under way, so one that can't finish
     // still leaves its evidence and closes its pages (guarded).
     const live = { pages: new Set(), spans: new Set() };
+    // When each page's player events were last read by a finished span, and
+    // in which document.
+    const pauseReads = new WeakMap();
 
     // A page's answer, or a measurement failure if it doesn't answer in time.
     function ask(page, what, fn, arg) {
@@ -524,10 +527,21 @@ function defineRegression(browser) {
       // The player paused by anything but the check itself, such as another
       // app taking the system's media controls: an interrupted recording,
       // not the extension's sound.
-      const playerEvents = await ask(span.page, 'its player events', () => window.playerEvents ?? []);
+      // The page's player events, and its clock when they were read, from
+      // which the next span on this document looks for pauses
+      // (outsidePauses). A reload starts both again, so each read is kept
+      // with its document's time origin.
+      const { events: playerEvents, readMs, origin } = await ask(span.page, 'its player events', () => ({
+        events: window.playerEvents ?? [],
+        readMs: performance.now(),
+        origin: performance.timeOrigin
+      }));
       const ignoredMediaActions = await ask(span.page, 'its media actions', () => window.ignoredMediaActions ?? []);
       const startMs = soundWallMs(span.start, span.fromFrame);
-      for (const event of outsidePauses({ events: playerEvents, startMs, sampleRate, actions: span.actions, marks: span.marks })) {
+      const lastRead = pauseReads.get(span.page);
+      const sinceMs = lastRead?.origin === origin ? lastRead.readMs : -Infinity;
+      pauseReads.set(span.page, { origin, readMs });
+      for (const event of outsidePauses({ events: playerEvents, sinceMs, actions: span.actions, marks: span.marks })) {
         problems.push({ code: 'interrupted', message: `the player paused ${Math.round(event.atMs - startMs)} ms into the span, not by the check` });
       }
       problems.push(...span.checks);
