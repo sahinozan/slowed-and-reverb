@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Package downloads for the audio workflow's disposable GitHub-hosted Ubuntu
-# runners (.github/workflows/audio-capture-trial.yml). Their Azure mirror,
-# azure.archive.ubuntu.com, sent the sound server's packages at 40 to
-# 100 kB/s, so installing them outlasted the job. This points only that
+# Package downloads for disposable GitHub-hosted Ubuntu runners: the audio
+# workflow's (.github/workflows/audio-capture-trial.yml) and CI's Browser
+# smoke job (.github/workflows/ci.yml). Their Azure mirror,
+# azure.archive.ubuntu.com, sent the sound server's packages at 26 to
+# 100 kB/s, so installing them outlasted the job or its step. This points only that
 # mirror at Ubuntu's own archive, over HTTPS; APT still checks the archive's
 # signed indexes and every package's hash against them, as before. It also
 # gives up on a stalled download after 30 seconds and tries it twice more:

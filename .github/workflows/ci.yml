@@ -173,6 +173,15 @@ jobs:
 
       # Unpacking Chromium takes minutes on Windows, so keep the download in
       # a cache keyed on the Playwright version; a bump downloads it again.
+      # GitHub's Azure mirror for Ubuntu sent the sound server's packages at
+      # 26 kB/s, so installing them ran out of the sink step's 15 minutes on
+      # main; this takes them from Ubuntu's own archive, as the audio
+      # workflow does.
+      - name: Download Ubuntu packages from Ubuntu's archive
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
+        run: bash scripts/ci-package-downloads.sh
+
       - name: Read the Playwright version
         id: playwright
         shell: bash

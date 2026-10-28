@@ -183,6 +183,25 @@ describe('CI workflow structure', () => {
     assert.equal(workflow.match(/SLOWED_REVERB_UI_FIREFOX_PLAYBACK/g).length, 1);
   });
 
+  // GitHub's Azure mirror sent the sound server's packages slowly enough to
+  // run out of the sink step's time; the job takes them from Ubuntu's own
+  // archive, set up before anything is installed with APT.
+  test("the browser job takes Ubuntu's packages from Ubuntu's archive before installing any", () => {
+    const steps = jobText('browser-smoke').split(/\n(?= {6}- name: )/);
+    const index = (pattern) => {
+      const found = steps.findIndex((step) => pattern.test(step));
+      assert.notEqual(found, -1, String(pattern));
+      return found;
+    };
+    const archive = index(/- name: Download Ubuntu packages from Ubuntu's archive/);
+    assert.match(steps[archive], /^ {8}if: runner\.os == 'Linux'$/m);
+    assert.match(steps[archive], /^ {8}timeout-minutes: \d+$/m);
+    assert.match(steps[archive], /^ {8}run: bash scripts\/ci-package-downloads\.sh$/m);
+    for (const pattern of [/run: npx playwright install --with-deps/, /run: npx playwright install-deps/, /apt-get install/]) {
+      assert.ok(archive < index(pattern), String(pattern));
+    }
+  });
+
   test('keeps read-only permissions and the scripts free of GitHub expressions', () => {
     assert.match(workflow, /^permissions:\n {2}contents: read\n\n/m);
     assert.doesNotMatch(workflow, /secrets\./);
