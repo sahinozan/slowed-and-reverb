@@ -420,8 +420,8 @@ both engines unless the table says otherwise:
 | Changes while the song plays | Reverb 40, pan to the middle, speed 0.9, eight pan changes paced to reach the engine 30 ms apart, as when a slider is dragged, keeping the pitch and letting it follow again, the effect off and on | No click; silence only where the engine fades out to hide a change of the player; the right tones, channels and speed after each change; the song itself, at its exact level, with the effect off |
 | Spotify's own speed changes (Spotify only) | Spotify sets the player back to normal speed three times, holds it at 0 for a seek, asks for normal speed 5 ms into a change that is waiting to fade out, and plays the next song on the same player, then asks for normal speed again | No click or silence during the resets, and the player's speed never changes; the effect's speed after the seek and on the next song; the song itself, playing, once the effect is off |
 | Turning the extension off and on in the browser | From the extensions page in Chromium, Firefox's add-on manager in Firefox; on YouTube, with the extension off, the page takes its player out, puts it back and plays it at 1.25x; then the extension and the effect come back on | The song itself, at its exact level, within a second, with no click; the page's own 1.25x afterwards; the effect again once it's turned back on, except Spotify in Chromium, which needs a reload (Chromium doesn't put Spotify's scripts back into an open tab), so it stays unchanged and the reloaded page has the effect |
-| Removing the extension (Firefox only) | Removed through WebDriver BiDi, as from the add-ons page | As when turned off |
-| An update keeps the previous engine off (YouTube in both, Spotify in Firefox) | An earlier version's copy (every script's `VERSION` and the manifest at 0.0.1) is updated to this one: in Chromium as a developer's reload from chrome://extensions, in Firefox as a second temporary install. On Spotify, the extension is then turned off and on, which puts the new bridge next to the old engine. Then the effect is asked for | The song itself within a second of the update, and still after asking for the effect, which is refused as `outdated`; the reloaded page has the effect |
+| Removing the extension | In Firefox, removed through WebDriver BiDi, as from the add-ons page; in Chromium, the extension removes itself (see "Limits") | As when turned off |
+| An update keeps the previous engine off | An earlier version's copy (every script's `VERSION` and the manifest at 0.0.1) is updated to this one: in Chromium as a developer's reload from chrome://extensions, in Firefox as a second temporary install. On Spotify in Firefox, the extension is then turned off and on, which puts the new bridge next to the old engine. Then the effect is asked for | The song itself within a second of the update, and still after asking for the effect, which is refused: as `outdated` by the new scripts, or on Spotify in Chromium, which puts no new scripts into an open tab, as `unsupported`; the reloaded page has the effect |
 
 Turning the effect off in the popup, turning the extension off in the
 browser and removing it are different actions here: the first is the
@@ -688,9 +688,8 @@ background script), all of this would have to be shown:
 3. The 415 ms dropout in a Spotify update check on Firefox 159 (see "Suite
    results") explained from a failing run with Firefox's media log on, or
    accepted in writing.
-4. Removing the extension and Spotify updates in Chromium, which the suite
-   doesn't check, added to the suite or added to the release checklist as
-   named items.
+4. Removing the extension and Spotify updates in Chromium in the suite.
+   Done: both are checked now (see "What it checks").
 5. A rule for every such change: both suites and their controls pass on the
    exact commit to merge, here and in the hosted workflow, with no unexplained
    failure and no missing job. Either the audio workflow becomes required for
@@ -831,11 +830,13 @@ It doesn't cover either:
   about 0.7 s after a change to 1.25x, Chromium about 1.2 s after keeping
   the pitch), haven't appeared in any recorded span: every frame of a span
   is checked, so they would fail it.
-- Chromium can't remove an extension without a confirmation dialog
+- Chromium asks before it removes an extension
   (`chrome.management.uninstall` and `developerPrivate.removeMultipleExtensions`
-  both wait for one), so removal is checked only in Firefox. Spotify after
-  an update is checked only in Firefox; in Chromium it needs a reload, as
-  after turning the extension back on, which is checked.
+  both wait for a confirmation dialog), and the suite can't answer it. So in
+  Chromium the extension removes itself, with
+  `chrome.management.uninstallSelf({ showConfirmDialog: false })` called in
+  its service worker. Chromium uninstalls it the same way, but the dialog and
+  the Remove button aren't tested.
 - Each page is in front while it is recorded. Firefox slows timers in
   background tabs, where the engines' 250 ms check may run later; that
   isn't measured.
@@ -956,9 +957,9 @@ On Firefox 159.0 on this Mac, no late click was detected in 4 sessions,
 which isn't shown to be a fix, and one update check had an unexplained
 415 ms dropout (see "Limits" and "Suite results").
 
-**Next:** meet the five conditions in "What it can replace, and what stays
-manual": a baseline with a fixed plan, Firefox's late click settled, the
-415 ms dropout explained or accepted, the Chromium gaps covered, and a rule
-for each change. Until then the suite stays out of the required check and
+**Next:** meet the conditions still open in "What it can replace, and what
+stays manual": a baseline with a fixed plan, Firefox's late click settled,
+the 415 ms dropout explained or accepted, and a rule for each change. The
+Chromium gaps are covered. Until then the suite stays out of the required check and
 the release, and the routine listen after an engine change stays, with the
 release checklist (`RELEASE-CHECKLIST.md`) before a store release.

@@ -118,6 +118,9 @@ const MIN_OVERLAPPING = 3;
 const ENGINE_CHANNELS = ['SLOWED_REVERB_YOUTUBE', 'SLOWED_REVERB_SPOTIFY'];
 
 const EFFECT = Object.freeze({ ...ENGINE_SETTINGS });
+// The manifest's version, which every engine's VERSION equals
+// (tests/settings.test.js).
+const VERSION = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'extension', 'manifest.json'), 'utf8')).version;
 
 // What a steady stretch should sound like. The engines' compressor raises
 // the level a little (0.287 for a tone of 0.25), and reverb mixes in copies
@@ -854,6 +857,35 @@ function defineRegression(browser) {
       return problems;
     }
 
+    // The version the page's engine reports, asked as its own scripts ask:
+    // YouTube's engine gives it with its state, Spotify's when it's ready.
+    // The second makes Spotify's bridge send its settings again, so this is
+    // asked only after a recording.
+    function reportedEngineVersion(page, site) {
+      const [channel, type, reply] =
+        site === 'spotify' ? ['SLOWED_REVERB_SPOTIFY', 'BRIDGE_READY', 'READY'] : ['SLOWED_REVERB_YOUTUBE', 'GET_STATE', 'STATE'];
+      return ask(
+        page,
+        "the engine's version",
+        ({ channel, type, reply }) =>
+          new Promise((resolve) => {
+            const done = (version) => {
+              clearTimeout(timer);
+              window.removeEventListener('message', listen);
+              resolve(version);
+            };
+            const listen = (event) => {
+              const data = event.data;
+              if (event.source === window && data?.channel === channel && data.type === reply) done(data.version ?? null);
+            };
+            const timer = setTimeout(() => done(undefined), 2000);
+            window.addEventListener('message', listen);
+            window.postMessage({ channel, type, requestId: 'audio-suite-version' }, '*');
+          }),
+        { channel, type, reply }
+      );
+    }
+
     // A reloaded page runs this version's engine, with the effect.
     async function afterReload(page, name, site) {
       await page.reload();
@@ -864,13 +896,21 @@ function defineRegression(browser) {
       const span = await beginSpan(page, name);
       if (applied?.success !== true) span.checks.push({ code: 'not-on', message: `the effect didn't turn on after a reload: ${JSON.stringify(applied)}` });
       await hold(span, 'reloaded', effectExpect(EFFECT), { settleMs: 0 });
-      return finishSpan(span);
+      const problems = await finishSpan(span);
+      const version = await reportedEngineVersion(page, site);
+      if (version !== VERSION) {
+        problems.push({ code: 'old-engine-ran', message: `reloaded: the page's engine reports version ${JSON.stringify(version)}, not ${VERSION}` });
+      }
+      return problems;
     }
 
     // An update leaves the previous version's engine in the page. It turns
     // itself off, and has to stay off until the page is reloaded: on Spotify
     // in Firefox also after the extension is turned off and on, which puts
-    // the new bridge next to it.
+    // the new bridge next to it. Chromium puts no new Spotify scripts into
+    // an open tab, so there the request finds nothing to answer it and is
+    // refused as unsupported; elsewhere the new scripts refuse it as
+    // outdated.
     async function updateCheck(site, name, newer) {
       await browser.useExtension(older.extensionDir);
       try {
@@ -880,7 +920,7 @@ function defineRegression(browser) {
         const off = { restores: true, silenceMs: settingsChange(target, EFFECT, { ...EFFECT, speed: 1 }).silenceMs ?? 0, windowMs: LIFECYCLE_WINDOW_MS };
         await act(span, 'update the extension', off, () => browser.update(newer.extensionDir));
         await hold(span, 'updated', dryExpect(), { settleMs: 1000 });
-        if (site === 'spotify') {
+        if (site === 'spotify' && target === 'firefox') {
           await act(span, 'turn the extension off and on', NOTHING, async () => {
             await browser.disable();
             await browser.enable();
@@ -894,7 +934,8 @@ function defineRegression(browser) {
           return reply;
         });
         await hold(span, 'kept off until a reload', dryExpect());
-        const blocked = reply?.success === false && reply.blockReason === 'outdated';
+        const refusal = site === 'spotify' && target === 'chromium' ? 'unsupported' : 'outdated';
+        const blocked = reply?.success === false && reply.blockReason === refusal;
         if (!blocked) {
           span.checks.push({ code: 'old-engine-ran', message: `the previous version's engine was used: ${JSON.stringify(reply)}` });
         }
@@ -950,7 +991,7 @@ function defineRegression(browser) {
         });
       }
     }
-    for (const site of target === 'firefox' ? sites : ['youtube']) {
+    for (const site of sites) {
       test(`an update keeps the previous engine off until a reload: ${site}`, async () => {
         const name = `update-${site}`;
         assertClean(name, await guarded(name, () => updateCheck(site, name, normal)));
