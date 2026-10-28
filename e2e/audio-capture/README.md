@@ -64,11 +64,12 @@ records, default 6) and `rate=<speed>` (the speed set after routing,
 default 0.8; `rate=1` leaves it alone, and Firefox's frame of silence is
 then recorded as one frame of exactly 0 in both channels), `control` (the
 graph puts in one frame of silence of its own, 4 seconds after the routing,
-with the song a frame late after it, as Firefox's; its run has to show it)
-and `save=<folder>` (each run's recording as a 32-bit float WAV, with its
-results). Each run also lists `slips`: every place in the whole recording
-where the tone's phase moves by a quarter of a sample or more, whether or
-not it counts as a click. Run it with
+with the song a frame late after it, which is what Firefox's does at 1x;
+its run has to show it) and `save=<folder>` (each run's recording as a
+32-bit float WAV, with its results). Each run also lists `slips`: where
+the tone's phase moves by a quarter of a sample or more, whether or not it
+counts as a click. It looks from half a second in, leaves out windows in or
+at the edge of a gap, and counts moves closer than 50 ms as one. Run it with
 `MOZ_LOG=timestamp,MediaDecoder:5,AudioSink:4 MOZ_LOG_FILE=<path>` to get
 Firefox's own log of it. `recorder-first-block.js` takes `chromium` or
 `firefox`, the runs, the context's sample rate, and a control that has to

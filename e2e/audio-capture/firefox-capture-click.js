@@ -135,27 +135,34 @@ function hannPhaseOf(samples, from, length, omega) {
 // every 10 ms (with a Hann window) against the tone's frequency fitted over
 // the whole span, and a
 // move is the median of the 5 windows after a point against the 5 before
-// it. Windows without the tone (a gap) are left out.
+// it. A window with any quarter of it without the tone (in or at the edge
+// of a gap) is left out. Moves closer than 50 ms count as one, and the first
+// half second and the last 50 ms aren't looked at.
 function slipsIn(samples, sampleRate, hz, minSamples = 0.25) {
   const window = Math.round(sampleRate * 0.02);
   const hop = Math.round(sampleRate * 0.01);
   const omega0 = (2 * Math.PI * hz) / sampleRate;
   const points = [];
   for (let from = Math.round(sampleRate * 0.5); from + window <= samples.length; from += hop) {
-    let energy = 0;
-    for (let n = from; n < from + window; n++) energy += samples[n] * samples[n];
-    if (Math.sqrt(energy / window) < 0.05) continue;
+    const quarter = Math.floor(window / 4);
+    let quiet = false;
+    for (let part = 0; part < 4 && !quiet; part++) {
+      let energy = 0;
+      for (let n = from + part * quarter; n < from + (part + 1) * quarter; n++) energy += samples[n] * samples[n];
+      quiet = Math.sqrt(energy / quarter) < 0.05;
+    }
+    if (quiet) continue;
     points.push({ from, phase: hannPhaseOf(samples, from, window, omega0) });
   }
   if (points.length < 12) return [];
-  // The drift of the phase from window to window gives the frequency's
-  // offset from `hz`; the median ignores the windows across a move.
+  // The drift of the phase from window to window is the tone's frequency
+  // above `hz`; the median ignores the windows across a move.
   const slopes = [];
   for (let k = 1; k < points.length; k++) {
     slopes.push(wrap(points[k].phase - points[k - 1].phase) / (points[k].from - points[k - 1].from));
   }
   const slope = slopes.sort((a, b) => a - b)[Math.floor(slopes.length / 2)];
-  const omega = omega0 - slope;
+  const omega = omega0 + slope;
   let unwrapped = 0;
   const residual = points.map((point, k) => {
     if (k > 0) unwrapped += wrap(point.phase - points[k - 1].phase - slope * (point.from - points[k - 1].from));
@@ -210,8 +217,10 @@ function floatWav([left, right], sampleRate) {
 }
 
 // The control's worklet: from context frame `at` on, the song comes one
-// frame late, with a frame of exactly 0 in its place, as Firefox's own
-// frame of silence.
+// frame late, with a frame of exactly 0 in its place. At 1x that is what
+// Firefox's own frame of silence does; at another speed Firefox's is a frame
+// of the song (1.25 samples at 0.8x), and this one is still one frame of
+// the output.
 const GAP_PROCESSOR = `registerProcessor('one-frame-gap', class extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -297,8 +306,10 @@ async function main(runs, { atStart, quiet, seconds, rate, control, save }) {
             page.evaluate(
               (source, quiet, rate, gap) => {
                 const route = new Function(`return (${source})`)();
-                window.__gapAt = null;
-                document.getElementById('player').addEventListener('playing', async () => (window.__gapAt = await route(quiet, rate, gap)), { once: true });
+                // Kept, so a routing that fails is reported below.
+                window.__routed = new Promise((resolve, reject) => {
+                  document.getElementById('player').addEventListener('playing', () => route(quiet, rate, gap).then(resolve, reject), { once: true });
+                });
               },
               route.toString(),
               quiet,
@@ -308,6 +319,7 @@ async function main(runs, { atStart, quiet, seconds, rate, control, save }) {
             'the routing was not set up'
           );
           await step(clickStart(page), 'the player did not start');
+          gapAt = await step(page.evaluate(() => window.__routed), 'the player was not routed');
         } else {
           await step(clickStart(page), 'the player did not start');
           await sleep(1000);
@@ -317,7 +329,6 @@ async function main(runs, { atStart, quiet, seconds, rate, control, save }) {
         const start = await step(snapshot(page), 'no first snapshot');
         await sleep(seconds * 1000);
         const end = await step(snapshot(page), 'no last snapshot');
-        if (atStart && control) gapAt = await step(page.evaluate(() => window.__gapAt), 'no gap frame');
         const read = await step(page.evaluate(({ from, to }) => window.__audioTrial.read(0, from, to), { from: 0, to: end.recorder.nextFrame }), 'the recording was not read');
         const channels = decodeChannels(read);
         const health = spanHealth(start, end, channels, 0).map(({ code }) => code);
