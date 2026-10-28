@@ -2,7 +2,8 @@
 
 The checks a person does for a store release, because no automated test can do
 them: the real sites, the browsers' own windows and prompts, and real sound
-from speakers or headphones. `npm run release` runs everything automated.
+from speakers or headphones. `npm run release` runs the release's automated
+checks; `npm run test:ui` and the audio suites run separately (`AGENTS.md`).
 Record what you did in the draft's "checked by hand" line in
 `RELEASE-<version>.txt`: the commit, each browser and its version, the
 operating system, the sound output, and each item below as passed, failed or
@@ -24,19 +25,18 @@ this profile, so neither borrows access the other gave it.
 - [ ] Assign a key to "Toggle Slowed + Reverb" (README, "Keyboard
       shortcuts"). On YouTube, without opening the popup, press it. You hear
       the song change.
-- [ ] On YouTube Music, open the popup from the toolbar. The effect turns on,
-      and you hear the song slow down. In Firefox, accept its prompt for
-      access to YouTube Music.
+- [ ] On YouTube Music, open the popup from the toolbar. In Chromium, the
+      effect turns on. In Firefox, the popup asks first: choose **Allow on
+      YouTube Music** and accept the browser's prompt, and the effect turns
+      on. Either way, you hear the song slow down.
 
 ### Permission prompts
 
 - [ ] On Spotify, choose **Allow on Spotify** and accept the browser's
       prompt. The page reloads once and the effect plays.
-- [ ] In Firefox, open the popup on YouTube and accept its prompt for access
-      to YouTube. Reload YouTube and YouTube Music: on each, the effect comes
-      back without asking again.
-- [ ] Revoke a site's access in the browser's extension settings. The effect
-      stops on that site and stays off after a reload.
+- [ ] In Firefox, open the popup on YouTube, choose **Allow on YouTube** and
+      accept the browser's prompt. Reload YouTube and YouTube Music: on each,
+      the effect comes back without asking again.
 
 ### The real sites
 
@@ -53,10 +53,19 @@ YouTube Music and Spotify:
       to 4 seconds after turning the effect on while a song plays
       (`e2e/audio-capture/README.md`, "Limits").
 
+### Last: revoking access
+
+- [ ] Revoke a site's access in the browser's extension settings. The effect
+      stops on that site and stays off after a reload. Allow it again if you
+      go on testing there.
+
 ## When it applies
 
 - [ ] **The popup's frame changed in CSS:** look at the real popup in
       Firefox, with its rounded panel corners.
+- [ ] **The permission code changed** (the manifest's permissions, or how
+      the extension asks for access or handles it): the permission prompts
+      and revoking access above, in each browser, also outside a release.
 - [ ] **A change can affect how the effect sounds** (the audio graph's
       wiring, an effect's code, gains, fades, presets or defaults, or a
       browser change to Web Audio): listen to reverb, echo, EQ, width and

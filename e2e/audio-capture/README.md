@@ -573,7 +573,7 @@ browser tests. The Mac was in use for some of them.
 | `10665ea` | Firefox | 1 | 0 | 1 | Turning the effect on while a song plays clicked on YouTube (0.50 at 2.13 s) and on Spotify (0.22 at 2.91 s) (see "Limits") |
 | `117b822` | Chromium | 1 | 1 | 0 | (AirPods Pro output at 48 kHz) |
 | `117b822` | Firefox | 1 | 0 | 1 | Turning the effect on while a song plays clicked on Spotify (0.44 at 2.22 s), with valid recorder data (AirPods Pro output at 48 kHz) |
-| `080a4be` | Firefox 159.0 | 1 | 0 | 1 | Seven checks couldn't turn the extension off: Firefox 159 needs `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` (fixed in #106; no sound result). Turning the effect on while a song plays passed in both engines (AirPods Pro) |
+| `1959850` | Firefox 159.0 | 1 | 0 | 1 | (main `080a4be` with a change to unit tests only) Seven checks couldn't turn the extension off: Firefox 159 needs `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` (fixed in #106; no sound result). Turning the effect on while a song plays passed in both engines (AirPods Pro) |
 | `437fc85` | Firefox 159.0 | 1 | 0 | 1 | After the update check reloaded Spotify, 415 ms of silence and the player at 0.651 times the wall clock (0.8 wanted); not seen in 7 reruns (5 of that check alone at `89bb5e5`, and the two runs below); its cause is unknown, and Firefox's media log wasn't on (AirPods Pro) |
 | `89bb5e5` | Firefox 159.0 | 2 | 2 | 0 | (AirPods Pro, Firefox's media log on: no gap logged) |
 
@@ -677,7 +677,8 @@ background script), all of this would have to be shown:
 1. A baseline with a fixed plan: full runs of both suites with their controls,
    at least 30 per browser on each setup (this Mac on its own speakers, this
    Mac on AirPods, and the hosted Ubuntu runner), over at least 5 separate
-   days, on Firefox's current and previous versions, with each run recorded.
+   days, on the current main and Firefox's current and previous versions,
+   with each run recorded.
    None may fail on sound without an explanation and a fix, or a written
    acceptance. A Firefox that doesn't start gives no result, and that run is
    done again.
@@ -688,7 +689,8 @@ background script), all of this would have to be shown:
    results") explained from a failing run with Firefox's media log on, or
    accepted in writing.
 4. Removing the extension and Spotify updates in Chromium, which the suite
-   doesn't check, either checked or kept on the release checklist.
+   doesn't check, added to the suite or added to the release checklist as
+   named items.
 5. A rule for every such change: both suites and their controls pass on the
    exact commit to merge, here and in the hosted workflow, with no unexplained
    failure and no missing job. Either the audio workflow becomes required for

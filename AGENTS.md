@@ -157,7 +157,8 @@ version folder.
 
 The checks done by hand for a release are in `RELEASE-CHECKLIST.md`,
 including installing from both stores once they publish. Record them in the
-draft's "checked by hand" line.
+draft's "checked by hand" line. After changing the permission code, do its
+permission and revoking steps too.
 
 ## Git
 
