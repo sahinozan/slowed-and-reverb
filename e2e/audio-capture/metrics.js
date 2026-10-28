@@ -477,7 +477,12 @@ function frameLabelProblems(before, after, channels, fromFrame, settled = after)
   if (!runs) return problems;
   const endFrame = recorder.nextFrame ?? 0;
   const logged = (later.staleLog ?? []).filter((run) => run.recorderFrame >= fromFrame && run.recorderFrame < endFrame);
-  if (logged.length !== runs) fail('stale-label-unverified', `${runs} stale runs in the span, but ${logged.length} still logged`);
+  // A span that starts with the recording counts the runs before its first
+  // frame too. Those can only be in the silence a recording delay starts
+  // with (capture-observer.js), which has no sound to check, and a run
+  // there that didn't catch up is a fault already.
+  const earlier = fromRecordingStart ? (later.staleLog ?? []).filter((run) => run.recorderFrame < fromFrame).length : 0;
+  if (logged.length + earlier !== runs) fail('stale-label-unverified', `${runs} stale runs in the span, but ${logged.length + earlier} still logged`);
   const [left, right] = channels;
   for (const run of logged) {
     const at = `stale run of ${run.blocks} at recorder frame ${run.recorderFrame} (raw ${run.contextFrame}, expected ${run.expected})`;
@@ -526,14 +531,20 @@ const MARK_SLACK_FRAMES = 2048;
 // should: each falls no earlier than MARK_SLACK_FRAMES before the frames the
 // page already had, and no mark before the one taken ahead of it. Otherwise
 // the context's clock and the recorder disagree about where an action
-// happened (`mark-out-of-step`), a measurement failure.
-function markProblems(marks) {
+// happened (`mark-out-of-step`), a measurement failure. With a recording
+// delay of `delayFrames` (capture-observer.js), the sound made at a mark is
+// recorded that many frames later, so a mark falls that much further on.
+function markProblems(marks, delayFrames = 0) {
   const problems = [];
   let previous = null;
   for (const mark of marks) {
     if (mark.recorderFrame === null || mark.recorderFrame === undefined) continue;
-    if (mark.recorderFrame < mark.nextFrame - MARK_SLACK_FRAMES) {
-      problems.push({ code: 'mark-out-of-step', message: `${mark.label}: at recorder frame ${mark.recorderFrame}, ${mark.nextFrame - mark.recorderFrame} frames before the ${mark.nextFrame} already recorded` });
+    const due = mark.nextFrame + delayFrames;
+    if (mark.recorderFrame < due - MARK_SLACK_FRAMES) {
+      problems.push({
+        code: 'mark-out-of-step',
+        message: `${mark.label}: at recorder frame ${mark.recorderFrame}, ${due - mark.recorderFrame} frames before the ${mark.nextFrame} already recorded` + (delayFrames ? ` and the ${delayFrames}-frame delay` : '')
+      });
     }
     if (previous && mark.recorderFrame < previous.recorderFrame) {
       problems.push({ code: 'mark-out-of-step', message: `${mark.label}: at recorder frame ${mark.recorderFrame}, before "${previous.label}" at ${previous.recorderFrame}` });

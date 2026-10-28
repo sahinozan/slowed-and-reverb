@@ -53,6 +53,17 @@ const ARTIFACT_ROOT = path.join(root, 'test-results', 'audio-regression');
 // for repeated runs.
 const COMPACT = process.env.AUDIO_REGRESSION_EVIDENCE === 'compact';
 const RETAIN_SECONDS = 20;
+// The recorder hears each context through a delay this long
+// (capture-observer.js), so a recorder that loads within it records the
+// context from its first frame: turning the effect on while a song plays
+// creates the context, and the engine's sound can start before the
+// recorder's worklet has loaded. A quarter of a second is a whole number of
+// frames at 44.1 and 48 kHz; the recorder has loaded within 60 ms in every
+// run so far.
+const RECORD_DELAY_SECONDS = 0.25;
+// How long a span waits for the recorder to reach a moment on the
+// context's clock: the delay, a batch, and room for a slow page.
+const CATCH_UP_MS = 3_000;
 // Recorded before a span's first action.
 const PRE_ROLL_MS = 300;
 // From the song starting to a span that starts in it (the trial's settle).
@@ -206,6 +217,7 @@ function defineRegression(browser) {
       const environment = { label: browser.label, ...provenance(target), extensionCopy: normal, olderCopy: older };
       environment.suite = {
         retainSeconds: RETAIN_SECONDS,
+        recordDelaySeconds: RECORD_DELAY_SECONDS,
         settleMs: SETTLE_MS,
         holdMs: HOLD_MS,
         clickThreshold: CLICK_THRESHOLD,
@@ -322,7 +334,7 @@ function defineRegression(browser) {
     // Opens a page with the effect on (`settings`) before the song starts,
     // or with `playing` set, the song already playing without it.
     async function openSite(site, { settings = EFFECT, playing = false } = {}) {
-      const page = await browser.newPage(urlFor(site), { workletUrl: server.workletPath, retainSeconds: RETAIN_SECONDS });
+      const page = await browser.newPage(urlFor(site), { workletUrl: server.workletPath, retainSeconds: RETAIN_SECONDS, delaySeconds: RECORD_DELAY_SECONDS });
       live.pages.add(page);
       await waitForEngine(page, site);
       if (playing) {
@@ -343,13 +355,38 @@ function defineRegression(browser) {
       return value;
     }
 
-    // Starts recording a span once the recorder is running. `fromStart`
-    // takes the span from the first recorded frame, for an action that
-    // created the audio context itself.
+    // A snapshot taken once the recorder has recorded up to `frame`, the
+    // recorded frame of a moment on the context's clock. The recorder hears
+    // the context RECORD_DELAY_SECONDS late, plus a batch.
+    async function caughtUp(page, frame) {
+      return waitFor(
+        async () => {
+          const now = await withDeadline(snapshot(page), PAGE_STEP_MS, "the page didn't answer a snapshot");
+          return now.recorder.nextFrame >= frame ? now : null;
+        },
+        CATCH_UP_MS,
+        `the recorder didn't reach frame ${frame} within ${CATCH_UP_MS} ms`
+      );
+    }
+
+    // Starts recording a span once the recorder is running, from the sound
+    // made when it was called. `fromStart` takes the span from the
+    // context's first frame instead, for an action that created the audio
+    // context itself: the frames recorded before it are the delay's own
+    // silence.
     async function beginSpan(page, name, { fromStart = false } = {}) {
       await ask(page, 'that the recorder is ready', (timeout) => window.__audioTrial.waitReady(0, timeout), READY_TIMEOUT_MS);
-      const start = await withDeadline(snapshot(page), PAGE_STEP_MS, "the page didn't answer a snapshot");
-      const span = { page, name, start, fromFrame: fromStart ? 0 : start.recorder.nextFrame, marks: [], actions: [], segments: [], checks: [] };
+      let start;
+      let fromFrame;
+      if (fromStart) {
+        start = await withDeadline(snapshot(page), PAGE_STEP_MS, "the page didn't answer a snapshot");
+        fromFrame = Math.max(0, -start.recorder.frameOffset);
+      } else {
+        const called = await ask(page, 'a mark (the span begins)', () => window.__audioTrial.mark(0, 'the span begins'));
+        start = await caughtUp(page, called.recorderFrame);
+        fromFrame = start.recorder.nextFrame;
+      }
+      const span = { page, name, start, fromFrame, marks: [], actions: [], segments: [], checks: [] };
       live.spans.add(span);
       if (!fromStart) await sleep(PRE_ROLL_MS);
       return span;
@@ -436,7 +473,8 @@ function defineRegression(browser) {
     // Ends a span, measures it and keeps its evidence. Returns its problems.
     // `wholeSpan` also keeps all of its sound, as a WAV.
     async function finishSpan(span, { wholeSpan = false } = {}) {
-      const end = await withDeadline(snapshot(span.page), PAGE_STEP_MS, "the page didn't answer a snapshot");
+      // Up to the sound made at the span's last mark.
+      const end = await caughtUp(span.page, Math.max(0, ...span.marks.map((mark) => mark.recorderFrame ?? 0)));
       const read = await ask(span.page, 'with its recording', ({ from, to }) => window.__audioTrial.read(0, from, to), {
         from: span.fromFrame,
         to: end.recorder.nextFrame
@@ -444,7 +482,7 @@ function defineRegression(browser) {
       const settled = await settledAfter(span.page, end);
       const [left, right] = decodeChannels(read);
       const { sampleRate } = read;
-      const health = [...spanHealth(span.start, end, [left, right], span.fromFrame, settled), ...markProblems(span.marks)];
+      const health = [...spanHealth(span.start, end, [left, right], span.fromFrame, settled), ...markProblems(span.marks, end.recorder.delayFrames ?? 0)];
       const analysis = analyzeSpan({ sampleRate, fromFrame: span.fromFrame, left, right, actions: span.actions, segments: span.segments });
       const problems = [...health, ...analysis.problems];
       for (const segment of span.segments) problems.push(...mediaProblems(segment));
@@ -644,7 +682,7 @@ function defineRegression(browser) {
       const on = await mark(span, 'turn on while playing: after');
       span.actions.push({
         label: 'turn on while playing',
-        startFrame: 0,
+        startFrame: span.fromFrame,
         endFrame: on.recorderFrame,
         allow: { fromRecordingStart: true, silenceMs: FIRST_ROUTE_MS[target], windowMs: ACTION_WINDOW_MS },
         durationMs: Date.now() - firstOn,
@@ -652,9 +690,8 @@ function defineRegression(browser) {
       });
       if (applied?.success !== true) span.checks.push({ code: 'setup', message: `the effect didn't turn on: ${JSON.stringify(applied)}` });
       await hold(span, 'on', effectExpect(EFFECT));
-      // Counted on the recording, which starts with the context the effect
-      // created.
-      const recordedMs = (span.segments[0].to.recorderFrame / span.start.context.sampleRate) * 1000;
+      // Counted on the clock of the context the effect created.
+      const recordedMs = (span.segments[0].to.contextFrame / span.start.context.sampleRate) * 1000;
       await hold(span, `on, ${FIRST_ENABLE_OBSERVE_MS / 1000} s after turning it on`, effectExpect(EFFECT), {
         settleMs: Math.max(0, FIRST_ENABLE_OBSERVE_MS - HOLD_MS - recordedMs)
       });

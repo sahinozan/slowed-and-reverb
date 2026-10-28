@@ -175,6 +175,31 @@ batch while every render block reaches the recorder; any change counts as a
 skipped block (`offsetChanges`). It also maps a moment on the context's
 clock (a mark) to the recorded frame played then.
 
+The suite's recorder hears the bus through a `DelayNode` of 0.25 seconds
+(`delaySeconds`), which the bus feeds from the moment the context is
+observed. The worklet takes tens of milliseconds to load, and turning the
+effect on while a song plays creates the context, whose sound can start
+before then. Through the delay, a recorder that loads within a quarter of a
+second still records the context's sound from its first frame; what it
+records before that is the delay's own silence. A quarter of a second is a
+whole number of frames at 44.1 and 48 kHz and exact in the node's 32-bit
+parameter, so the delay moves every sample by whole frames and changes
+none, and the observer refuses a delay that isn't. The mapping takes the
+delay off, so a mark still maps to the recorded frame of the sound made at
+that moment, and a span waits for the recorder to reach a moment before
+it starts there or ends. The delay has a fixed channel count, as the bus
+does: in the default mode, when everything leaves the bus (a page taking
+its player out), Chromium's delay changed its channel count and played the
+quarter-second it still held with the two channels averaged. A probe with
+known ramps, run outside the repository (Chromium 156 and Firefox 159 on
+this Mac, muted, 44.1 and 48 kHz, 20 runs), found every recorded sample
+exact, a ramp started with the context recorded from its first sample
+when the recorder started up to 512 frames after it, and marks mapped to
+the exact frame. Without the delay, the same probe lost the ramp's first
+256 to 512 frames. With the default channel mode, Chromium's ramps broke
+exactly 0.25 seconds before a disconnect, in 3 of 3 runs, and Firefox's
+didn't.
+
 Around a change of connections at the destination, Chromium sometimes gives
 the recorder a block with the previous block's frame number, once or twice
 in a row, and the next block then has exactly the number expected. A steady
@@ -444,14 +469,17 @@ played at that moment (see "How it records"). Nothing an action causes can
 be heard before its first mark. A span starts once the recorder is running
 and has recorded at least 100 ms before every action, so no transition is
 cropped. Turning the effect on while a song plays creates the context, so
-that span starts with the recording itself, which has to begin in silence
-(`onset-not-observed` otherwise). A span is valid data only if the
+that span starts with the context's first frame, which the recording
+delay keeps (see "How it records"), and has to begin in silence
+(`onset-not-observed` otherwise, if the recorder took longer than the
+delay to load). A span is valid data only if the
 context ran throughout, no frame was lost, dropped or skipped since it
 started (or since the recording started, for a span that starts with it),
 recorded frames equal the context frames they span, every sample is a
 number, the recorder's frame numbers can be trusted (see "How it
 records"), every mark falls in order and no more than one batch (2048
-frames) before the frames the page already had (`mark-out-of-step`
+frames) before the frames the page already had, plus the recording delay
+(`mark-out-of-step`
 otherwise; in over 10,000 marks so far, none fell more than 128 frames
 before) and nothing outside the check paused the player. Any of those
 fails the check as a measurement failure, and says so, never as a sound
@@ -738,12 +766,19 @@ It doesn't cover either:
 - The observer adds nodes to the graph. Its effect on timing hasn't been
   measured against an uninstrumented recording, such as OS loopback.
 - The recorder starts once its worklet has loaded, which can be after the
-  first frames (up to 46 ms in so far). `firstContextFrame` records where
+  first frames (up to 58 ms in so far). `firstContextFrame` records where
   recording began (before the native clock, it was the first block's raw
   number, which Chromium could give a block or more behind; see below).
   The suite's spans start after it, except for turning the effect on while
   a song plays, which fails unless the recording began before the sound
-  did.
+  did. Chromium's Spotify engine starts its sound 44 to 67 ms into the
+  context, so before the suite recorded through a delay, that check failed
+  as a measurement whenever the worklet was slow: on a hosted runner at
+  `fb11c86` (recording began at 58 ms, the sound at 58 ms or before, in
+  [workflow run 40718039127](https://github.com/sahinozan/slowed-and-reverb/actions/runs/40718039127)),
+  and in 10 passing hosted runs the sound began 9 to 20 ms after the
+  recording. The suite's recording delay (see "How it records") now covers
+  a recorder up to 0.25 s late; one that takes longer still fails.
 - **Firefox puts one frame of silence into the song** about 2 to 4
   seconds after a player that is already playing is routed into a graph,
   and that frame clicks (third difference 0.16 to 0.75). On this Mac, in

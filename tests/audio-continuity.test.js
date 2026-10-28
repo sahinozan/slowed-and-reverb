@@ -814,6 +814,24 @@ describe('audio recorder frame numbers and the sound across them', () => {
     }
   });
 
+  test('a span from the recording start counts the stale runs before its first frame', () => {
+    // A recording delay (capture-observer.js) starts the recording with
+    // silence, which a span from the recording start leaves out; a stale
+    // run there is counted and has no sound to check.
+    const recording = record({ label: staleOnce });
+    const from = FAULT + 4096;
+    const later = recording.snapshots.get(from + 8192);
+    const health = (fromFrame) =>
+      spanHealth(later, recording.snapshots.get(TOTAL), recording.channels.map((samples) => samples.subarray(fromFrame)), fromFrame);
+    assert.deepEqual(health(from), []);
+    assert.deepEqual(health(FROM), []);
+    // The same run left out of the log fails the count.
+    const end = recording.snapshots.get(TOTAL);
+    const unlogged = { ...end, recorder: { ...end.recorder, staleLog: [] } };
+    const problems = spanHealth(later, unlogged, recording.channels.map((samples) => samples.subarray(from)), from, unlogged);
+    assert.deepEqual(codes(problems), ['stale-label-unverified']);
+  });
+
   test("a counter that goes back or stops fails as the recorder's fault, not as sound", () => {
     const back = record({ label: (frame) => (frame >= FAULT ? frame - FAULT : frame) });
     assert.deepEqual(codes(back.health()), ['frame-label-fault']);
@@ -863,6 +881,12 @@ describe('audio recorder frame numbers and the sound across them', () => {
     assert.deepEqual(markProblems([mark('a', 3968, 4096)]), []);
     assert.deepEqual(codes(markProblems([mark('a', 1000, 8192)])), ['mark-out-of-step']);
     assert.deepEqual(codes(markProblems([mark('a', 9000, 8192), mark('b', 8500, 8192)])), ['mark-out-of-step']);
+    // With a recording delay, the sound made at a mark is recorded that much
+    // later, so a mark falls that much further on.
+    assert.deepEqual(markProblems([mark('a', 4096 + 12_000, 4096)], 12_000), []);
+    assert.deepEqual(markProblems([mark('a', 3968 + 12_000, 4096)], 12_000), []);
+    assert.deepEqual(codes(markProblems([mark('a', 4096 + 9000, 4096)], 12_000)), ['mark-out-of-step']);
+    assert.deepEqual(markProblems([mark('a', 4096 + 9000, 4096)]), []);
   });
 });
 
