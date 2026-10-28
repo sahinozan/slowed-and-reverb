@@ -456,7 +456,7 @@ both engines unless the table says otherwise:
 | Check | What happens while it records | What has to be heard |
 | --- | --- | --- |
 | Speed, pitch and reverb as heard | 0.8x with the pitch following, then kept; the song stopped with no reverb, then with reverb 60 | 352 and 528 Hz on the left (440 and 660 Hz with the pitch kept), nothing on the right, the player at 0.8x; silence after a song without reverb, a tail after one with it |
-| Turning the effect on while the song plays | The song plays without the effect, then the effect turns on, which creates the audio context; the span goes on for about 6 seconds | The recording starts in silence (so the change was heard from its start), only the engines' own silence before the sound comes in, then the effect, with no click anywhere in the 6 seconds |
+| Turning the effect on while the song plays | The song plays without the effect, then the effect turns on, which creates the audio context; the span goes on for about 6 seconds | The recording starts in silence (so the change was heard from its start), only the engines' own silence before the sound comes in, then the effect, with no click anywhere in the 6 seconds and no slip of the tones' phase, except Firefox's late frame (see "How it measures") |
 | Changes while the song plays | Reverb 40, pan to the middle, speed 0.9, eight pan changes paced to reach the engine 30 ms apart, as when a slider is dragged, keeping the pitch and letting it follow again, the effect off and on | No click; silence only where the engine fades out to hide a change of the player; the right tones, channels and speed after each change; the song itself, at its exact level, with the effect off |
 | Spotify's own speed changes (Spotify only) | Spotify sets the player back to normal speed three times, holds it at 0 for a seek, asks for normal speed 5 ms into a change that is waiting to fade out, and plays the next song on the same player, then asks for normal speed again | No click or silence during the resets, and the player's speed never changes; the effect's speed after the seek and on the next song; the song itself, playing, once the effect is off |
 | Turning the extension off and on in the browser | From the extensions page in Chromium, Firefox's add-on manager in Firefox; on YouTube, with the extension off, the page takes its player out, puts it back and plays it at 1.25x; then the extension and the effect come back on | The song itself, at its exact level, within a second, with no click; the page's own 1.25x afterwards; the effect again once it's turned back on, except Spotify in Chromium, which needs a reload (Chromium doesn't put Spotify's scripts back into an open tab), so it stays unchanged and the reloaded page has the effect |
@@ -469,6 +469,31 @@ extension's own message, the other two the browser's. The suite doesn't
 call the engines' internal shutdown directly in place of either.
 
 ### How it measures
+
+In the check of turning the effect on while a song plays, the suite also
+follows each tone's phase (`phaseSlips` in `metrics.js`, the reproducer's
+scan), from half a second in to 50 ms before the end, leaving out any
+quiet stretch: every 10 ms, the phase of 20 ms of the song, fitted to both
+of the left channel's tones at once so neither leaks into the other, and
+every place it moves by a quarter of a sample or more. That finds a frame
+of silence, or one added or lost, that leaves no click over the threshold.
+Firefox's late frame (see "Limits") delays the whole song by a frame of it
+at the effect's speed (1.25 samples at 0.8x for this song in a 48 kHz
+context, within 0.2), 1.5 to 5 seconds in. In Firefox, the first slip that
+moves both tones by that much is kept as an action of its own, "Firefox's
+late frame", and a click there doesn't fail the check. Each tone has to
+have slipped, and moved by that much across the whole slip too, from the
+200 ms before it to the 200 ms after, so two frames close enough to be
+found as one aren't taken for it. It is in the evidence (`phaseSlips` in
+the check's JSON and the summary). Any other slip fails the check
+(`phase-slip`), in either browser: one of a single tone, a second frame,
+or one of another size. So does a click anywhere else. The scan places a
+slip only roughly, in a stretch of 10 to 30 ms (from about 10 ms before
+the window it was found at to 20 ms after, narrowed by the other tone's),
+which can miss the change by a millisecond or so; a click within 5 ms
+either side of that stretch counts as the frame's. So a click from the
+extension that close to Firefox's frame would be taken as Firefox's; with
+these tones, 176 Hz apart, shorter windows can't place it closer.
 
 Every action is marked on the audio context's clock just before it starts
 and just after it is done, and each mark is mapped to the recorded frame
@@ -730,9 +755,10 @@ background script), all of this would have to be shown:
 2. Firefox's late click (see "Limits") confirmed gone or present on the
    current Firefox, from saved samples, against a page known to click, or the
    remaining doubt accepted in writing. Done for Firefox 159: it's present,
-   and the click detector can miss it. It still needs a fix in Firefox, or a
-   written decision to accept it, before the suite can stand in for the
-   listen in Firefox.
+   and the click detector can miss it. The suite now finds it by the tones'
+   phase, and reports it without failing (see "Limits"). It still needs a
+   fix in Firefox, or a written decision to accept it, before the suite can
+   stand in for the listen in Firefox.
 3. The 415 ms dropout in a Spotify update check on Firefox 159 (see "Suite
    results") explained from a failing run with Firefox's media log on, or
    accepted in writing.
@@ -853,6 +879,22 @@ It doesn't cover either:
   other outputs, sample rates, the real sites' formats and other Firefox
   versions weren't. The hosted Firefox runs (157.0, on a null sink)
   haven't heard it in 8 checks of turning the effect on; why isn't known.
+
+  The suite's check of turning the effect on now follows the tones' phase
+  (see "How it measures"), so it finds the frame whether it clicks or not,
+  and reports it in Firefox without failing. Run over the 138 recordings of
+  that check kept from earlier runs (2026-10-23 to 28: 70 in Chromium, 68
+  in Firefox, some kept twice), the scan found one slip in 15 Firefox
+  recordings, 8 of them different, all on this Mac at 48 kHz: 1.25 samples
+  on both tones, 2.1 to 3.5 seconds in. Each of the 6 different clicks
+  those runs had failed on was where it placed the slip. It found nothing
+  else, and no move of even 0.02 samples elsewhere, in either browser; none
+  of the hosted Linux recordings had the frame. Fitting each tone alone, as
+  the reproducer does, the other tone leaked into it and moved its phase by
+  a quarter of a sample every 250 ms in a made-up recording, so the suite
+  fits both. That the suite reports the frame without failing is the
+  owner's choice for the suite's results; it isn't a decision to accept the
+  frame in place of the listen (condition 2 under "What it can replace").
 
   No change to the extension was found that avoids it. Capturing a player
   before it plays would miss the effect being turned on during a song, and
@@ -1025,8 +1067,8 @@ stays manual": a baseline with a fixed plan, Firefox's late click fixed in
 Firefox or accepted in writing (it's present on 159), and the 415 ms
 dropout explained or accepted. The Chromium gaps are covered, and the rule
 for each change is written (`AGENTS.md`). Since the click detector can miss
-Firefox's frame of silence, the suite's checks could also look for slips of
-the tone's phase, as the reproducer does. Until then the suite stays out of
-the required check and the release, and the routine listen after an engine
-change stays, with the release checklist (`RELEASE-CHECKLIST.md`) before a
-store release.
+Firefox's frame of silence, the check of turning the effect on now follows
+the tones' phase too, and reports Firefox's frame. Until then the suite
+stays out of the required check and the release, and the routine listen
+after an engine change stays, with the release checklist
+(`RELEASE-CHECKLIST.md`) before a store release.

@@ -855,6 +855,232 @@ function assertHealthyCapture(m, expect) {
   }
 }
 
+// An angle brought into -pi to pi.
+const wrapAngle = (angle) => Math.atan2(Math.sin(angle), Math.cos(angle));
+
+// The phase of the tone at `omega` (radians per sample) in `length` samples
+// from `from`, with a Hann window, so a window that doesn't hold a whole
+// number of the tone's periods gives no ripple.
+function hannPhaseOf(samples, from, length, omega) {
+  let re = 0;
+  let im = 0;
+  for (let i = 0; i < length; i++) {
+    const n = from + i;
+    const weight = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (length - 1));
+    re += weight * samples[n] * Math.cos(omega * n);
+    im -= weight * samples[n] * Math.sin(omega * n);
+  }
+  return Math.atan2(im, re);
+}
+
+// The phase of the first of the tones at `omegas` in `length` samples from
+// `from`: a least-squares fit of all of them at once, each sample weighted
+// by a Hann window as in hannPhaseOf, so the others don't leak into it.
+function jointPhaseOf(samples, from, length, omegas) {
+  const size = omegas.length * 2;
+  const matrix = Array.from({ length: size }, () => new Float64Array(size + 1));
+  const basis = new Float64Array(size);
+  for (let i = 0; i < length; i++) {
+    const n = from + i;
+    const weight = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (length - 1));
+    omegas.forEach((omega, k) => {
+      basis[2 * k] = Math.cos(omega * n);
+      basis[2 * k + 1] = Math.sin(omega * n);
+    });
+    for (let row = 0; row < size; row++) {
+      for (let column = 0; column < size; column++) matrix[row][column] += weight * basis[row] * basis[column];
+      matrix[row][size] += weight * basis[row] * samples[n];
+    }
+  }
+  // Gaussian elimination with partial pivoting.
+  for (let column = 0; column < size; column++) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row++) if (Math.abs(matrix[row][column]) > Math.abs(matrix[pivot][column])) pivot = row;
+    [matrix[column], matrix[pivot]] = [matrix[pivot], matrix[column]];
+    for (let row = 0; row < size; row++) {
+      if (row === column) continue;
+      const factor = matrix[row][column] / matrix[column][column];
+      for (let k = column; k <= size; k++) matrix[row][k] -= factor * matrix[column][k];
+    }
+  }
+  const cosine = matrix[0][size] / matrix[0][0];
+  const sine = matrix[1][size] / matrix[1][1];
+  // The tone is A cos(omega n + phase) = A cos(phase) cos(omega n) - A sin(phase) sin(omega n).
+  return Math.atan2(-sine, cosine);
+}
+
+// Every place the tone's phase moves by `minSamples` or more, as
+// { ms, samples }, from half a second in: the phase of each 20 ms is taken
+// every 10 ms (with a Hann window) against the tone's frequency fitted over
+// the whole span, and a
+// move is the median of the 5 windows after a point against the 5 before
+// it. A window with any quarter of it without the tone (in or at the edge
+// of a gap) is left out. A move needs 5 windows of the tone on each side, so
+// the first half second, the last 50 ms and about 50 ms on either side of a
+// gap aren't looked at; moves within 50 ms of each other count as one.
+// `others` are the other tones the samples hold: each window's phase is
+// then fitted to all of them at once, so a tone near `hz` doesn't leak into
+// it (with two tones 176 Hz apart, that leak alone moved the phase by a
+// quarter of a sample every 250 ms).
+function slipsIn(samples, sampleRate, hz, minSamples = 0.25, { others = [] } = {}) {
+  return slipsOnTrack(phaseTrack(samples, sampleRate, hz, others), sampleRate, minSamples);
+}
+
+// The tone's phase every 10 ms from half a second in, as slipsIn reads it:
+// `residual`, each window's phase less the tone's steady drift, in radians,
+// unwrapped, and `omega`, the tone's frequency in radians per sample. Null
+// with fewer than 12 windows of the tone.
+function phaseTrack(samples, sampleRate, hz, others = []) {
+  const window = Math.round(sampleRate * 0.02);
+  const hop = Math.round(sampleRate * 0.01);
+  const omega0 = (2 * Math.PI * hz) / sampleRate;
+  const points = [];
+  for (let from = Math.round(sampleRate * 0.5); from + window <= samples.length; from += hop) {
+    const quarter = Math.floor(window / 4);
+    let quiet = false;
+    for (let part = 0; part < 4 && !quiet; part++) {
+      let energy = 0;
+      for (let n = from + part * quarter; n < from + (part + 1) * quarter; n++) energy += samples[n] * samples[n];
+      quiet = Math.sqrt(energy / quarter) < 0.05;
+    }
+    if (quiet) continue;
+    const phase = others.length
+      ? jointPhaseOf(samples, from, window, [omega0, ...others.map((other) => (2 * Math.PI * other) / sampleRate)])
+      : hannPhaseOf(samples, from, window, omega0);
+    points.push({ from, phase });
+  }
+  if (points.length < 12) return null;
+  // The drift of the phase from window to window is the tone's frequency
+  // above `hz`; the median ignores the windows across a move.
+  const slopes = [];
+  for (let k = 1; k < points.length; k++) {
+    slopes.push(wrapAngle(points[k].phase - points[k - 1].phase) / (points[k].from - points[k - 1].from));
+  }
+  const slope = slopes.sort((a, b) => a - b)[Math.floor(slopes.length / 2)];
+  const omega = omega0 + slope;
+  let unwrapped = 0;
+  const residual = points.map((point, k) => {
+    if (k > 0) unwrapped += wrapAngle(point.phase - points[k - 1].phase - slope * (point.from - points[k - 1].from));
+    return { from: point.from, value: unwrapped };
+  });
+  return { residual, omega, window, hop };
+}
+
+const medianOf = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+
+// slipsIn's moves on a phaseTrack.
+function slipsOnTrack(track, sampleRate, minSamples) {
+  if (!track) return [];
+  const { residual, omega, hop } = track;
+  const median = medianOf;
+  const moves = [];
+  for (let k = 5; k + 5 <= residual.length; k++) {
+    const before = median(residual.slice(k - 5, k).map(({ value }) => value));
+    const after = median(residual.slice(k, k + 5).map(({ value }) => value));
+    const moved = -(after - before) / omega;
+    if (Math.abs(moved) >= minSamples) moves.push({ k, frame: residual[k].from, samples: moved });
+  }
+  // Neighboring windows see the same move: moves that follow each other
+  // within 50 ms of the song (not of the windows kept, which skip gaps) are
+  // one, and the largest of them is kept.
+  const slips = [];
+  let previous = null;
+  for (const move of moves) {
+    const last = slips.at(-1);
+    if (last && move.frame - previous.frame <= 5 * hop) {
+      if (Math.abs(move.samples) > Math.abs(last.samples)) Object.assign(last, move);
+    } else {
+      slips.push({ ...move });
+    }
+    previous = move;
+  }
+  return slips.map(({ frame, samples }) => ({
+    ms: Math.round((frame / sampleRate) * 1000),
+    samples: Math.round(samples * 100) / 100
+  }));
+}
+
+// Firefox's late frame (README.md in this folder, "Limits"): 2 to 4 seconds
+// after a player that is already playing is routed into a graph, Firefox
+// puts a frame of silence into the song, and the song goes on a frame late.
+// In the recording that is one slip of the tones' phase, later by one frame
+// of the song at the player's speed: 1.25 samples at 0.8x, for a 48 kHz song
+// in a 48 kHz context. Each slip has been within LATE_FRAME_TOLERANCE of
+// that so far (1.13 to 1.30 samples).
+const LATE_FRAME_TOLERANCE = 0.2;
+// slipsIn reports a slip at the start of the window it was found at, which
+// puts the change from about 10 ms before that to 20 ms after. That isn't
+// exact: a window across the change can measure slightly past it, and an
+// earlier window then wins by a hair (by 1 ms, in a made-up recording).
+const SLIP_PLACE_MS = [-10, 20];
+// The whole move across an event is measured between the windows up to this
+// long before it and after it, clear of it by NET_CLEAR_MS, so two slips
+// close enough to be found as one are measured as both.
+const NET_REACH_MS = 200;
+const NET_CLEAR_MS = 10;
+
+// How far the tone's phase moved, in samples, from the windows before
+// `fromMs` to those after `toMs` (NET_REACH_MS each side), or null without
+// five windows on each side.
+function netMove(track, sampleRate, fromMs, toMs) {
+  if (!track) return null;
+  const at = (ms) => (ms / 1000) * sampleRate;
+  const before = track.residual.filter(
+    (point) => point.from + track.window <= at(fromMs - NET_CLEAR_MS) && point.from >= at(fromMs - NET_CLEAR_MS - NET_REACH_MS)
+  );
+  const after = track.residual.filter((point) => point.from >= at(toMs + NET_CLEAR_MS) && point.from <= at(toMs + NET_CLEAR_MS + NET_REACH_MS));
+  if (before.length < 5 || after.length < 5) return null;
+  const moved = medianOf(after.map((point) => point.value)) - medianOf(before.map((point) => point.value));
+  return Math.round((-moved / track.omega) * 100) / 100;
+}
+
+// The slips of a recording's tones, as events: the slips of every tone of
+// `tones` (a list of frequencies for each channel) within 50 ms of each
+// other are one, placed where every tone's slip puts it (fromMs to toMs).
+// With `lateFrame` ({ samples, fromMs, toMs }), the first event that is
+// Firefox's late frame is marked `lateFrame`: every tone of `tones` slipped,
+// each later by about `samples`, both as found and across the whole event
+// (`net`, so two slips found as one don't pass), placed within fromMs to
+// toMs.
+function phaseSlips({ left, right, sampleRate, tones, lateFrame = null }) {
+  const found = [];
+  const tracks = [];
+  [left, right].forEach((samples, channel) => {
+    const list = tones[channel] ?? [];
+    for (const hz of list) {
+      const others = list.filter((other) => other !== hz);
+      const track = phaseTrack(samples, sampleRate, hz, others);
+      tracks.push({ channel, hz, track });
+      for (const slip of slipsOnTrack(track, sampleRate, 0.25)) found.push({ channel, hz, ...slip });
+    }
+  });
+  found.sort((a, b) => a.ms - b.ms);
+  const events = [];
+  for (const slip of found) {
+    const last = events.at(-1);
+    if (last && slip.ms - last.slips.at(-1).ms <= 50) last.slips.push(slip);
+    else events.push({ slips: [slip] });
+  }
+  let seen = false;
+  for (const event of events) {
+    event.fromMs = Math.max(...event.slips.map((slip) => slip.ms + SLIP_PLACE_MS[0]));
+    event.toMs = Math.min(...event.slips.map((slip) => slip.ms + SLIP_PLACE_MS[1]));
+    event.net = tracks.map(({ channel, hz, track }) => ({ channel, hz, samples: netMove(track, sampleRate, event.fromMs, event.toMs) }));
+    const near = (value) => value !== null && Math.abs(value - lateFrame.samples) <= LATE_FRAME_TOLERANCE;
+    event.lateFrame =
+      Boolean(lateFrame) &&
+      !seen &&
+      event.fromMs <= event.toMs &&
+      event.fromMs >= lateFrame.fromMs &&
+      event.toMs <= lateFrame.toMs &&
+      tracks.every(({ channel, hz }) => event.slips.some((slip) => slip.channel === channel && slip.hz === hz)) &&
+      event.slips.every((slip) => near(slip.samples)) &&
+      event.net.every((move) => near(move.samples));
+    if (event.lateFrame) seen = true;
+  }
+  return events;
+}
+
 module.exports = {
   CLICK_THRESHOLD,
   DRY_LEVEL_TOLERANCE,
@@ -878,9 +1104,11 @@ module.exports = {
   maxSilentRunMs,
   measureChannels,
   measureWindow,
+  phaseSlips,
   signalProblems,
   silentRuns,
   outsidePauses,
+  slipsIn,
   soundWallMs,
   unreadEvents,
   spanHealth,
