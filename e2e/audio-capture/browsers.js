@@ -96,7 +96,7 @@ function chromiumBrowser({ muteAudio = false, label } = {}) {
   return {
     label: label ?? (muteAudio ? 'chromium-mute-audio' : 'chromium'),
     target: 'chromium',
-    canRemove: false,
+    canRemove: true,
     async start({ extensionDir, artifacts: folder }) {
       artifacts = folder;
       await launch(extensionDir);
@@ -142,6 +142,24 @@ function chromiumBrowser({ muteAudio = false, label } = {}) {
       const started = context.waitForEvent('serviceworker', { timeout: 10_000 });
       await page.evaluate((id) => chrome.developerPrivate.reload(id, { failQuietly: true }), extensionId);
       await started;
+    },
+    // Chromium asks before chrome.management.uninstall or the extensions
+    // page removes an extension, and a test can't answer that dialog, so the
+    // extension removes itself without one. Chromium uninstalls it the same
+    // way. Its service worker ends during the call, so the call's own error
+    // is expected; the extensions page then has to show it gone.
+    async remove() {
+      const id = extensionId;
+      await worker()
+        .evaluate(() => chrome.management.uninstallSelf({ showConfirmDialog: false }))
+        .catch(() => {});
+      const page = await management();
+      const deadline = Date.now() + 5000;
+      while (await page.evaluate((id) => new Promise((resolve) => chrome.management.get(id, () => resolve(!chrome.runtime.lastError))), id)) {
+        if (Date.now() > deadline) throw new Error('the extension was still installed 5 s after removing itself');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      extensionId = null;
     },
     async reinjectDriver(page) {
       const url = page.url();

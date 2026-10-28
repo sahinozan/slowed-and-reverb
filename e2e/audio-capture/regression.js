@@ -870,7 +870,10 @@ function defineRegression(browser) {
     // An update leaves the previous version's engine in the page. It turns
     // itself off, and has to stay off until the page is reloaded: on Spotify
     // in Firefox also after the extension is turned off and on, which puts
-    // the new bridge next to it.
+    // the new bridge next to it. Chromium puts no new Spotify scripts into
+    // an open tab, so there the request finds nothing to answer it and is
+    // refused as unsupported; elsewhere the new scripts refuse it as
+    // outdated.
     async function updateCheck(site, name, newer) {
       await browser.useExtension(older.extensionDir);
       try {
@@ -880,7 +883,7 @@ function defineRegression(browser) {
         const off = { restores: true, silenceMs: settingsChange(target, EFFECT, { ...EFFECT, speed: 1 }).silenceMs ?? 0, windowMs: LIFECYCLE_WINDOW_MS };
         await act(span, 'update the extension', off, () => browser.update(newer.extensionDir));
         await hold(span, 'updated', dryExpect(), { settleMs: 1000 });
-        if (site === 'spotify') {
+        if (site === 'spotify' && target === 'firefox') {
           await act(span, 'turn the extension off and on', NOTHING, async () => {
             await browser.disable();
             await browser.enable();
@@ -894,7 +897,8 @@ function defineRegression(browser) {
           return reply;
         });
         await hold(span, 'kept off until a reload', dryExpect());
-        const blocked = reply?.success === false && reply.blockReason === 'outdated';
+        const refusal = site === 'spotify' && target === 'chromium' ? 'unsupported' : 'outdated';
+        const blocked = reply?.success === false && reply.blockReason === refusal;
         if (!blocked) {
           span.checks.push({ code: 'old-engine-ran', message: `the previous version's engine was used: ${JSON.stringify(reply)}` });
         }
@@ -950,7 +954,7 @@ function defineRegression(browser) {
         });
       }
     }
-    for (const site of target === 'firefox' ? sites : ['youtube']) {
+    for (const site of sites) {
       test(`an update keeps the previous engine off until a reload: ${site}`, async () => {
         const name = `update-${site}`;
         assertClean(name, await guarded(name, () => updateCheck(site, name, normal)));
