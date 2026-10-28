@@ -187,19 +187,38 @@ describe('CI workflow structure', () => {
   // run out of the sink step's time; the job takes them from Ubuntu's own
   // archive, set up before anything is installed with APT.
   test("the browser job takes Ubuntu's packages from Ubuntu's archive before installing any", () => {
-    const steps = jobText('browser-smoke').split(/\n(?= {6}- name: )/);
-    const index = (pattern) => {
-      const found = steps.findIndex((step) => pattern.test(step));
-      assert.notEqual(found, -1, String(pattern));
-      return found;
+    // The first step that uses APT, read from its lines that aren't comments:
+    // apt-get itself, or Playwright installing the browser's libraries.
+    const steps = (job) => job.split(/\n(?= {6}- name: )/);
+    const usesApt = (step) =>
+      step
+        .split('\n')
+        .filter((line) => !/^\s*#/.test(line))
+        .some((line) => /\bapt-get\b|playwright install(?:-deps| [^\n]*--with-deps)/.test(line));
+    const order = (job) => {
+      const all = steps(job);
+      return {
+        archive: all.findIndex((step) => /^ {8}run: bash scripts\/ci-package-downloads\.sh$/m.test(step)),
+        apt: all.findIndex(usesApt),
+        all
+      };
     };
-    const archive = index(/- name: Download Ubuntu packages from Ubuntu's archive/);
-    assert.match(steps[archive], /^ {8}if: runner\.os == 'Linux'$/m);
-    assert.match(steps[archive], /^ {8}timeout-minutes: \d+$/m);
-    assert.match(steps[archive], /^ {8}run: bash scripts\/ci-package-downloads\.sh$/m);
-    for (const pattern of [/run: npx playwright install --with-deps/, /run: npx playwright install-deps/, /apt-get install/]) {
-      assert.ok(archive < index(pattern), String(pattern));
-    }
+
+    const { archive, apt, all } = order(jobText('browser-smoke'));
+    assert.notEqual(archive, -1, 'no step runs scripts/ci-package-downloads.sh');
+    assert.notEqual(apt, -1, 'no step uses APT');
+    assert.ok(archive < apt, `step ${apt} uses APT before the archive is set up in step ${archive}`);
+    assert.match(all[archive], /^ {6}- name: Download Ubuntu packages from Ubuntu's archive$/m);
+    assert.match(all[archive], /^ {8}if: runner\.os == 'Linux'$/m);
+    assert.match(all[archive], /^ {8}timeout-minutes: \d+$/m);
+
+    // An APT step put first is found, and a commented-out command isn't.
+    const early = jobText('browser-smoke').replace(
+      /(\n {6}- name: Download Ubuntu packages)/,
+      "\n      - name: Install something\n        run: sudo apt-get -q install jq\n$1"
+    );
+    assert.ok(order(early).apt < order(early).archive);
+    assert.equal(usesApt("      - name: A note\n        # sudo apt-get install jq\n        run: echo hi"), false);
   });
 
   test('keeps read-only permissions and the scripts free of GitHub expressions', () => {
