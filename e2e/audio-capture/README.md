@@ -510,7 +510,9 @@ Within a span:
   stays silent until 80 ms after that, about 90 ms of silence. 150 ms is
   allowed, the 60 ms extra for a late page timer. The effect's first
   routing may be silent for 335 ms in Firefox (the engines' 250 ms and
-  25 ms fade, plus 60) and 150 ms in Chromium. Only the page's own actions
+  25 ms fade, plus 60) and 205 ms in Chromium (until 80 ms after the change
+  of pitch mode 40 ms in, and the 25 ms fade, plus 60), from the context's
+  first frame. Only the page's own actions
   that stop the song (pausing it, a seek, taking the player out, the next
   song) may click, and be silent for as long as the action took plus
   150 ms. Clicks and silence count as an action's if they start between

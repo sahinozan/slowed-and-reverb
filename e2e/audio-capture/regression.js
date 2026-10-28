@@ -89,11 +89,16 @@ const EXCERPT_AFTER_MS = 400;
 // after the request and keeps the output silent until 80 ms after that:
 // about 90 ms of silence. 60 ms more allows for a page timer running late.
 const DIP_MS = 150;
-// A player routed into the graph for the first time: Firefox's engines keep
+// A player routed into the graph for the first time, counted from the
+// context's first frame, which the recording keeps: Firefox's engines keep
 // the output silent for 250 ms (Firefox itself goes silent and clicks then)
-// and fade in over 25 ms; in Chromium only a change of pitch mode's silence
-// applies. 60 ms more allows for a late timer, as above.
-const FIRST_ROUTE_MS = { chromium: DIP_MS, firefox: 250 + 25 + 60 };
+// and fade in over 25 ms. In Chromium the output stays silent until a
+// change of pitch mode has passed, 40 ms after the routing and 80 ms more,
+// and fades in over 25 ms. 60 ms more allows for a late timer, as above.
+// (Counted from where the recorder started, as before the recording delay,
+// Chromium had the dip's 150 ms on top of the 35 to 70 ms the recorder
+// took to start.)
+const FIRST_ROUTE_MS = { chromium: 40 + 80 + 25 + 60, firefox: 250 + 25 + 60 };
 // How long after an action its silence or clicks may start: the request's
 // own round trip and the engine's timers, with room for a busy machine.
 const ACTION_WINDOW_MS = 300;
