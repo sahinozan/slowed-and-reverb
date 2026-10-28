@@ -45,8 +45,9 @@ covers the features and development commands in full.
   its own. A failure is kept with its evidence and explained before
   anything is run again, then fixed, or accepted in writing in the pull
   request; a run that passes later doesn't cancel it, and an accepted
-  failure still needs a passing run before the merge. The audio workflow
-  isn't a required check, so this is followed by hand. Listen to how the effect sounds (reverb,
+  failure still needs a passing run before the merge. A change only to
+  documentation, such as the suite's README, doesn't need the runs. The
+  audio workflow isn't a required check, so this is followed by hand. Listen to how the effect sounds (reverb,
   echo, EQ, width, saturation, with music) after any change that can affect
   it, such as the audio graph's wiring, an effect's code, gains, fades,
   presets or defaults, not only after a change of values: the suite keeps
