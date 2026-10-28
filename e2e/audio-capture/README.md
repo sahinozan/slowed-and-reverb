@@ -471,24 +471,29 @@ call the engines' internal shutdown directly in place of either.
 ### How it measures
 
 In the check of turning the effect on while a song plays, the suite also
-follows each tone's phase through the whole recording (`phaseSlips` in
-`metrics.js`, the reproducer's scan): every 10 ms, the phase of 20 ms of
-the song, fitted to both of the left channel's tones at once so neither
-leaks into the other, and every place it moves by a quarter of a sample or
-more. That finds a frame of silence, or one added or lost, that leaves no
-click over the threshold. Firefox's late frame (see "Limits") is one slip
-later by a frame of the song at the effect's speed (1.25 samples at 0.8x
-for this song in a 48 kHz context, within 0.2), 1.5 to 5 seconds in. In
-Firefox, the first such slip is kept as an action of its own, "Firefox's
-late frame", from 5 ms before to 5 ms after where the scan places it, and
-a click there doesn't fail the check. It is in the evidence (`phaseSlips`
-in the check's JSON and the summary). Any other slip fails the check
-(`phase-slip`), in either browser, as do a click anywhere else and a
-second frame. The scan places a slip only to within 10 to 30 ms (from 10
-ms before the window it was found at to 20 ms after, narrowed by the other
-tone's), so a click from the extension that close to Firefox's frame
-would be taken as Firefox's; with these tones, 176 Hz apart, shorter
-windows can't place it closer.
+follows each tone's phase (`phaseSlips` in `metrics.js`, the reproducer's
+scan), from half a second in to 50 ms before the end, leaving out any
+quiet stretch: every 10 ms, the phase of 20 ms of the song, fitted to both
+of the left channel's tones at once so neither leaks into the other, and
+every place it moves by a quarter of a sample or more. That finds a frame
+of silence, or one added or lost, that leaves no click over the threshold.
+Firefox's late frame (see "Limits") delays the whole song by a frame of it
+at the effect's speed (1.25 samples at 0.8x for this song in a 48 kHz
+context, within 0.2), 1.5 to 5 seconds in. In Firefox, the first slip that
+moves both tones by that much is kept as an action of its own, "Firefox's
+late frame", and a click there doesn't fail the check. Each tone has to
+have slipped, and moved by that much across the whole slip too, from the
+200 ms before it to the 200 ms after, so two frames close enough to be
+found as one aren't taken for it. It is in the evidence (`phaseSlips` in
+the check's JSON and the summary). Any other slip fails the check
+(`phase-slip`), in either browser: one of a single tone, a second frame,
+or one of another size. So does a click anywhere else. The scan places a
+slip only roughly, in a stretch of 10 to 30 ms (from about 10 ms before
+the window it was found at to 20 ms after, narrowed by the other tone's),
+which can miss the change by a millisecond or so; a click within 5 ms
+either side of that stretch counts as the frame's. So a click from the
+extension that close to Firefox's frame would be taken as Firefox's; with
+these tones, 176 Hz apart, shorter windows can't place it closer.
 
 Every action is marked on the audio context's clock just before it starts
 and just after it is done, and each mark is mapped to the recorded frame

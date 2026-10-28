@@ -923,6 +923,14 @@ function jointPhaseOf(samples, from, length, omegas) {
 // it (with two tones 176 Hz apart, that leak alone moved the phase by a
 // quarter of a sample every 250 ms).
 function slipsIn(samples, sampleRate, hz, minSamples = 0.25, { others = [] } = {}) {
+  return slipsOnTrack(phaseTrack(samples, sampleRate, hz, others), sampleRate, minSamples);
+}
+
+// The tone's phase every 10 ms from half a second in, as slipsIn reads it:
+// `residual`, each window's phase less the tone's steady drift, in radians,
+// unwrapped, and `omega`, the tone's frequency in radians per sample. Null
+// with fewer than 12 windows of the tone.
+function phaseTrack(samples, sampleRate, hz, others = []) {
   const window = Math.round(sampleRate * 0.02);
   const hop = Math.round(sampleRate * 0.01);
   const omega0 = (2 * Math.PI * hz) / sampleRate;
@@ -941,7 +949,7 @@ function slipsIn(samples, sampleRate, hz, minSamples = 0.25, { others = [] } = {
       : hannPhaseOf(samples, from, window, omega0);
     points.push({ from, phase });
   }
-  if (points.length < 12) return [];
+  if (points.length < 12) return null;
   // The drift of the phase from window to window is the tone's frequency
   // above `hz`; the median ignores the windows across a move.
   const slopes = [];
@@ -955,7 +963,16 @@ function slipsIn(samples, sampleRate, hz, minSamples = 0.25, { others = [] } = {
     if (k > 0) unwrapped += wrapAngle(point.phase - points[k - 1].phase - slope * (point.from - points[k - 1].from));
     return { from: point.from, value: unwrapped };
   });
-  const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+  return { residual, omega, window, hop };
+}
+
+const medianOf = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+
+// slipsIn's moves on a phaseTrack.
+function slipsOnTrack(track, sampleRate, minSamples) {
+  if (!track) return [];
+  const { residual, omega, hop } = track;
+  const median = medianOf;
   const moves = [];
   for (let k = 5; k + 5 <= residual.length; k++) {
     const before = median(residual.slice(k - 5, k).map(({ value }) => value));
@@ -992,22 +1009,49 @@ function slipsIn(samples, sampleRate, hz, minSamples = 0.25, { others = [] } = {
 // that so far (1.13 to 1.30 samples).
 const LATE_FRAME_TOLERANCE = 0.2;
 // slipsIn reports a slip at the start of the window it was found at, which
-// puts the change from 10 ms before that to 20 ms after.
+// puts the change from about 10 ms before that to 20 ms after. That isn't
+// exact: a window across the change can measure slightly past it, and an
+// earlier window then wins by a hair (by 1 ms, in a made-up recording).
 const SLIP_PLACE_MS = [-10, 20];
+// The whole move across an event is measured between the windows up to this
+// long before it and after it, clear of it by NET_CLEAR_MS, so two slips
+// close enough to be found as one are measured as both.
+const NET_REACH_MS = 200;
+const NET_CLEAR_MS = 10;
+
+// How far the tone's phase moved, in samples, from the windows before
+// `fromMs` to those after `toMs` (NET_REACH_MS each side), or null without
+// five windows on each side.
+function netMove(track, sampleRate, fromMs, toMs) {
+  if (!track) return null;
+  const at = (ms) => (ms / 1000) * sampleRate;
+  const before = track.residual.filter(
+    (point) => point.from + track.window <= at(fromMs - NET_CLEAR_MS) && point.from >= at(fromMs - NET_CLEAR_MS - NET_REACH_MS)
+  );
+  const after = track.residual.filter((point) => point.from >= at(toMs + NET_CLEAR_MS) && point.from <= at(toMs + NET_CLEAR_MS + NET_REACH_MS));
+  if (before.length < 5 || after.length < 5) return null;
+  const moved = medianOf(after.map((point) => point.value)) - medianOf(before.map((point) => point.value));
+  return Math.round((-moved / track.omega) * 100) / 100;
+}
 
 // The slips of a recording's tones, as events: the slips of every tone of
 // `tones` (a list of frequencies for each channel) within 50 ms of each
 // other are one, placed where every tone's slip puts it (fromMs to toMs).
 // With `lateFrame` ({ samples, fromMs, toMs }), the first event that is
-// Firefox's late frame is marked `lateFrame`: every tone later by about
-// `samples`, placed within fromMs to toMs.
+// Firefox's late frame is marked `lateFrame`: every tone of `tones` slipped,
+// each later by about `samples`, both as found and across the whole event
+// (`net`, so two slips found as one don't pass), placed within fromMs to
+// toMs.
 function phaseSlips({ left, right, sampleRate, tones, lateFrame = null }) {
   const found = [];
+  const tracks = [];
   [left, right].forEach((samples, channel) => {
     const list = tones[channel] ?? [];
     for (const hz of list) {
       const others = list.filter((other) => other !== hz);
-      for (const slip of slipsIn(samples, sampleRate, hz, 0.25, { others })) found.push({ channel, hz, ...slip });
+      const track = phaseTrack(samples, sampleRate, hz, others);
+      tracks.push({ channel, hz, track });
+      for (const slip of slipsOnTrack(track, sampleRate, 0.25)) found.push({ channel, hz, ...slip });
     }
   });
   found.sort((a, b) => a.ms - b.ms);
@@ -1021,13 +1065,17 @@ function phaseSlips({ left, right, sampleRate, tones, lateFrame = null }) {
   for (const event of events) {
     event.fromMs = Math.max(...event.slips.map((slip) => slip.ms + SLIP_PLACE_MS[0]));
     event.toMs = Math.min(...event.slips.map((slip) => slip.ms + SLIP_PLACE_MS[1]));
+    event.net = tracks.map(({ channel, hz, track }) => ({ channel, hz, samples: netMove(track, sampleRate, event.fromMs, event.toMs) }));
+    const near = (value) => value !== null && Math.abs(value - lateFrame.samples) <= LATE_FRAME_TOLERANCE;
     event.lateFrame =
       Boolean(lateFrame) &&
       !seen &&
       event.fromMs <= event.toMs &&
       event.fromMs >= lateFrame.fromMs &&
       event.toMs <= lateFrame.toMs &&
-      event.slips.every((slip) => Math.abs(slip.samples - lateFrame.samples) <= LATE_FRAME_TOLERANCE);
+      tracks.every(({ channel, hz }) => event.slips.some((slip) => slip.channel === channel && slip.hz === hz)) &&
+      event.slips.every((slip) => near(slip.samples)) &&
+      event.net.every((move) => near(move.samples));
     if (event.lateFrame) seen = true;
   }
   return events;
