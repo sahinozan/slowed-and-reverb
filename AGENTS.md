@@ -35,7 +35,19 @@ covers the features and development commands in full.
   to show it is caught. Run them after changing an engine, the content
   scripts or the background script, as well as listening: they don't
   replace that yet. "What it can replace" in the README below says what
-  would have to be shown first. Listen to how the effect sounds (reverb,
+  would have to be shown first. Such a change, or one to the suite itself
+  (`e2e/audio-capture/`), merges only once both suites have passed on the
+  exact commit being merged, with the branch up to date with `main` (the
+  workflow tests the branch merged into `main`): in the pull request's
+  audio workflow, both jobs, none skipped or cancelled, and on this Mac,
+  Chromium muted (`AUDIO_REGRESSION_MUTE=1`) and Firefox, which plays the
+  tone aloud, so ask first. A commit pushed after the runs needs runs of
+  its own. A failure is kept with its evidence and explained before
+  anything is run again, then fixed, or accepted in writing in the pull
+  request; a run that passes later doesn't cancel it, and an accepted
+  failure still needs a passing run before the merge. A change only to
+  documentation, such as the suite's README, doesn't need the runs. The
+  audio workflow isn't a required check, so this is followed by hand. Listen to how the effect sounds (reverb,
   echo, EQ, width, saturation, with music) after any change that can affect
   it, such as the audio graph's wiring, an effect's code, gains, fades,
   presets or defaults, not only after a change of values: the suite keeps
