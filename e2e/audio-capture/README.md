@@ -952,9 +952,13 @@ unexplained clicks on Spotify; it didn't record long enough after turning
 the effect on during a song to hear Firefox's late click. `10665ea` does,
 and fails in Firefox on it in most runs (see "Suite results").
 
-**Next:** decide what to do about Firefox's frame of silence after the
-effect turns on while a song plays (report it to Mozilla and wait for a
-fix, or accept it explicitly; see "Limits"), and run the suite on the
-hosted runner enough times to show it is steady there. Until then it stays
-out of the required check and the release, and the routine listen after an
-engine change stays, with the real-site listen before a store release.
+On Firefox 159.0 on this Mac, no late click was detected in 4 sessions,
+which isn't shown to be a fix, and one update check had an unexplained
+415 ms dropout (see "Limits" and "Suite results").
+
+**Next:** meet the five conditions in "What it can replace, and what stays
+manual": a baseline with a fixed plan, Firefox's late click settled, the
+415 ms dropout explained or accepted, the Chromium gaps covered, and a rule
+for each change. Until then the suite stays out of the required check and
+the release, and the routine listen after an engine change stays, with the
+release checklist (`RELEASE-CHECKLIST.md`) before a store release.

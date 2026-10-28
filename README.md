@@ -242,9 +242,9 @@ pull request's base commit decides that with its copy of
 `scripts/classify-ci-changes.js`, and changes to the workflows or the
 classifier always run them. A separate Dependency audit workflow runs the
 audit every week and for dependency changes; it isn't one of the checks a pull
-request needs. What no automated test can check, the real sites, the
-browsers' own windows and prompts, and real sound, is done by hand before each
-store release, from [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md).
+request needs. What the automated tests don't check today, the real sites,
+the browsers' own windows and prompts, and real sound, is done by hand before
+each store release, from [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md).
 
 ## Privacy
 

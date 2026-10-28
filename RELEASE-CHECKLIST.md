@@ -1,8 +1,8 @@
 # Release checklist
 
-The checks a person does for a store release, because no automated test can do
-them: the real sites, the browsers' own windows and prompts, and real sound
-from speakers or headphones. `npm run release` runs the release's automated
+The checks a person does for a store release, for what the automated tests
+don't check today: the real sites, the browsers' own windows and prompts, and
+real sound from speakers or headphones. `npm run release` runs the release's automated
 checks; `npm run test:ui` and the audio suites run separately (`AGENTS.md`).
 Record what you did in the draft's "checked by hand" line in
 `RELEASE-<version>.txt`: the commit, each browser and its version, the
@@ -64,8 +64,10 @@ YouTube Music and Spotify:
 - [ ] **The popup's frame changed in CSS:** look at the real popup in
       Firefox, with its rounded panel corners.
 - [ ] **The permission code changed** (the manifest's permissions, or how
-      the extension asks for access or handles it): the permission prompts
-      and revoking access above, in each browser, also outside a release.
+      the extension asks for access or handles it): in each browser, also
+      outside a release, the YouTube Music step under "The entry points"
+      (Firefox's YouTube Music prompt), "Permission prompts", a reload of each
+      site with the effect on, and revoking access.
 - [ ] **A change can affect how the effect sounds** (the audio graph's
       wiring, an effect's code, gains, fades, presets or defaults, or a
       browser change to Web Audio): listen to reverb, echo, EQ, width and
