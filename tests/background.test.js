@@ -169,7 +169,16 @@ describe('background service worker', () => {
   });
 
   test('does not inject into sites outside the release support list', async () => {
-    for (const url of ['https://www.twitch.tv/example', 'https://studio.youtube.com/']) {
+    // Also hosts named like an object's built-in properties, and the
+    // supported hosts without HTTPS.
+    for (const url of [
+      'https://www.twitch.tv/example',
+      'https://studio.youtube.com/',
+      'https://constructor/',
+      'https://tostring/',
+      'http://www.youtube.com/watch?v=one',
+      'http://music.youtube.com/'
+    ]) {
       const harness = setup({ activeTab: { id: 7, url } });
 
       await harness.events.command.emit('toggle-slowed-reverb');

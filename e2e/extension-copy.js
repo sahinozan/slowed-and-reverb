@@ -100,18 +100,18 @@ function prepareTestExtension(tempRoot, builtExtensionDir, target) {
     [
       'content.js',
       [
-        "location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com'",
-        "location.hostname === '127.0.0.1' ||\n      location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com'"
+        "location.protocol === 'https:' &&\n    (location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com');",
+        "location.hostname === '127.0.0.1' ||\n    (location.protocol === 'https:' &&\n      (location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com'));"
       ]
     ],
     ...[
-      ['background.js', 'YOUTUBE_PERMISSION_ORIGINS'],
-      ['popup.js', 'FIREFOX_YOUTUBE_PERMISSIONS']
-    ].map(([file, permissionsName]) => [
+      ['background.js', 'getYouTubePermissionOrigin'],
+      ['popup.js', 'youTubePermissionFor']
+    ].map(([file, lookup]) => [
       file,
       [
-        `return hostname in ${permissionsName};`,
-        `return hostname === '127.0.0.1' || hostname in ${permissionsName};`
+        `  return ${lookup}(url) !== null;`,
+        `  try {\n    if (new URL(url).hostname === '127.0.0.1') return true;\n  } catch {}\n  return ${lookup}(url) !== null;`
       ]
     ])
   ]);

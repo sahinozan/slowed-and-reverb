@@ -46,18 +46,13 @@ function isExtensionPageSender(sender) {
   }
 }
 
+// The supported sites are HTTPS only. Hosts are looked up as the table's own
+// keys, so a host named like a built-in property, such as "constructor",
+// isn't one.
 function isSpotifyUrl(url) {
   try {
-    return new URL(url).hostname === 'open.spotify.com';
-  } catch {
-    return false;
-  }
-}
-
-function isYouTubeUrl(url) {
-  try {
-    const { hostname } = new URL(url);
-    return hostname in YOUTUBE_PERMISSION_ORIGINS;
+    const { protocol, hostname } = new URL(url);
+    return protocol === 'https:' && hostname === 'open.spotify.com';
   } catch {
     return false;
   }
@@ -65,10 +60,17 @@ function isYouTubeUrl(url) {
 
 function getYouTubePermissionOrigin(url) {
   try {
-    return YOUTUBE_PERMISSION_ORIGINS[new URL(url).hostname] ?? null;
+    const { protocol, hostname } = new URL(url);
+    return protocol === 'https:' && Object.hasOwn(YOUTUBE_PERMISSION_ORIGINS, hostname)
+      ? YOUTUBE_PERMISSION_ORIGINS[hostname]
+      : null;
   } catch {
     return null;
   }
+}
+
+function isYouTubeUrl(url) {
+  return getYouTubePermissionOrigin(url) !== null;
 }
 
 async function hasSpotifyPermission() {

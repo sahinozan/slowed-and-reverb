@@ -36,9 +36,15 @@
   paintIcon();
   new window.MutationObserver(paintIcon).observe(root, { attributeFilter: ['data-theme'] });
 
+  // The demo panel, a frame of this page from this site, reports the theme
+  // picked in it, for the next page of the visit. Nothing else is listened
+  // to, and only a theme this site has is kept.
+  const THEMES = ['glow', 'pink', 'midnight', 'paper', 'frost'];
   window.addEventListener('message', (event) => {
+    if (event.origin !== location.origin) return;
+    if (![...document.querySelectorAll('iframe')].some((frame) => frame.contentWindow === event.source)) return;
     const message = event.data;
-    if (!message || message.source !== 'sr-popup' || message.type !== 'theme') return;
+    if (!message || message.source !== 'sr-popup' || message.type !== 'theme' || !THEMES.includes(message.theme)) return;
     try { sessionStorage.setItem('sr-demo-theme', message.theme); } catch { /* ignore */ }
   });
 }());

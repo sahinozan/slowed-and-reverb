@@ -23,7 +23,8 @@
   const NEUTRAL_SETTINGS = SlowedReverbSettings.DEFAULTS;
 
   const isSupportedHost =
-    location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com';
+    location.protocol === 'https:' &&
+    (location.hostname === 'www.youtube.com' || location.hostname === 'music.youtube.com');
 
   let currentSettings = { ...NEUTRAL_SETTINGS };
   let effectEnabled = false;
