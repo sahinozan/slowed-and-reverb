@@ -37,7 +37,10 @@ const {
   findClicks,
   fitTone,
   markProblems,
+  outsidePauses,
   silentRuns,
+  soundWallMs,
+  unreadEvents,
   spanHealth
 } = require('../e2e/audio-capture/metrics');
 const { root } = require('./helpers/load-script');
@@ -814,6 +817,39 @@ describe('audio recorder frame numbers and the sound across them', () => {
     }
   });
 
+  test('a span from the recording start counts the stale runs before its first frame', () => {
+    // A recording delay (capture-observer.js) starts the recording with
+    // silence, which a span from the recording start leaves out; a stale
+    // run there is counted, and its sound isn't checked.
+    const recording = record({ label: staleOnce });
+    const from = FAULT + 4096;
+    const later = recording.snapshots.get(from + 8192);
+    const health = (fromFrame) =>
+      spanHealth(later, recording.snapshots.get(TOTAL), recording.channels.map((samples) => samples.subarray(fromFrame)), fromFrame);
+    assert.deepEqual(health(from), []);
+    assert.deepEqual(health(FROM), []);
+    // The same run left out of the log fails the count.
+    const end = recording.snapshots.get(TOTAL);
+    const unlogged = { ...end, recorder: { ...end.recorder, staleLog: [] } };
+    const problems = spanHealth(later, unlogged, recording.channels.map((samples) => samples.subarray(from)), from, unlogged);
+    assert.deepEqual(codes(problems), ['stale-label-unverified']);
+  });
+
+  test('a span said to start with the recording counts the runs between the first snapshot and its first frame', () => {
+    // As when the effect turns on during a song: the first snapshot comes
+    // with the recorder's first batch, and the span starts later, where the
+    // delay's silence ends; a stale run comes between the two.
+    const recording = record({ label: staleOnce });
+    const from = FAULT + 4096;
+    const first = recording.snapshots.get(FROM);
+    const read = recording.channels.map((samples) => samples.subarray(from));
+    const end = recording.snapshots.get(TOTAL);
+    assert.ok(first.recorder.nextFrame < FAULT && FAULT < from);
+    assert.deepEqual(spanHealth(first, end, read, from, end, { fromRecordingStart: true }), []);
+    // Taken as an ordinary span, the run is the span's and isn't logged in it.
+    assert.deepEqual(codes(spanHealth(first, end, read, from, end)), ['stale-label-unverified']);
+  });
+
   test("a counter that goes back or stops fails as the recorder's fault, not as sound", () => {
     const back = record({ label: (frame) => (frame >= FAULT ? frame - FAULT : frame) });
     assert.deepEqual(codes(back.health()), ['frame-label-fault']);
@@ -856,6 +892,43 @@ describe('audio recorder frame numbers and the sound across them', () => {
     assert.deepEqual(earlier.health(), []);
   });
 
+  test('the sound recorded at a frame is placed at the wall time it was made', () => {
+    // A snapshot at wall time 5000 ms with the context at 2 s; the recording
+    // runs 0.25 s behind the context (frameOffset -12000 at 48 kHz), so
+    // recorded frame 48000 was made at context time 0.75 s, 1.25 s earlier.
+    const snapshot = { wallMs: 5000, context: { currentTime: 2, sampleRate: RATE }, recorder: { frameOffset: -12_000 } };
+    assert.equal(soundWallMs(snapshot, 48_000), 3750);
+    assert.equal(soundWallMs({ ...snapshot, recorder: { frameOffset: 0 } }, 48_000), 4000);
+  });
+
+  test('a pause from outside counts if the span before it on the page did not see it, whatever the clocks say', () => {
+    const at = (atMs, type = 'pause') => ({ type, atMs });
+    const counted = (events, options = {}) => outsidePauses({ events, ...options }).map((event) => event.atMs);
+    // With no span before it on the page: every pause, however early, and an
+    // event heard long after the sound it stopped.
+    assert.deepEqual(counted([at(10), at(970), at(1070, 'play'), at(2275), at(60_000)]), [10, 970, 2275, 60_000]);
+    // The check's own action, from its first mark to 100 ms after its last.
+    const actions = [{ label: 'a pause' }];
+    const marks = [{ label: 'a pause: before', wallMs: 1500 }, { label: 'a pause: after', wallMs: 1520 }];
+    assert.deepEqual(counted([at(1510), at(1619), at(1621)], { actions, marks }), [1621]);
+    // An action without both marks excludes nothing.
+    assert.deepEqual(counted([at(1510)], { actions, marks: marks.slice(0, 1) }), [1510]);
+  });
+
+  test("a span looks only at the page's events the span before it didn't read, by count, not time", () => {
+    const log = [{ type: 'play', atMs: 4000 }];
+    const first = unreadEvents(undefined, { events: log.slice(), origin: 1 });
+    assert.deepEqual(first.unread, log);
+    // A pause logged right after that read, at the very same time it was read.
+    log.push({ type: 'pause', atMs: 5000 }, { type: 'play', atMs: 5120 });
+    const second = unreadEvents({ ...first.read }, { events: log.slice(), origin: 1 });
+    assert.deepEqual(second.unread, log.slice(1));
+    assert.deepEqual(outsidePauses({ events: second.unread }).map((event) => event.atMs), [5000]);
+    // After a reload the document's log starts again, and all of it is new.
+    const reloaded = unreadEvents(second.read, { events: [{ type: 'pause', atMs: 10 }], origin: 2 });
+    assert.deepEqual(reloaded.unread, [{ type: 'pause', atMs: 10 }]);
+  });
+
   test('marks out of order, or before what was recorded, are out of step', () => {
     const mark = (label, recorderFrame, nextFrame) => ({ label, recorderFrame, nextFrame });
     assert.deepEqual(markProblems([mark('a', 4096, 4096), mark('b', 6000, 4096), mark('c', 6100, 6144)]), []);
@@ -863,6 +936,12 @@ describe('audio recorder frame numbers and the sound across them', () => {
     assert.deepEqual(markProblems([mark('a', 3968, 4096)]), []);
     assert.deepEqual(codes(markProblems([mark('a', 1000, 8192)])), ['mark-out-of-step']);
     assert.deepEqual(codes(markProblems([mark('a', 9000, 8192), mark('b', 8500, 8192)])), ['mark-out-of-step']);
+    // With a recording delay, the sound made at a mark is recorded that much
+    // later, so a mark falls that much further on.
+    assert.deepEqual(markProblems([mark('a', 4096 + 12_000, 4096)], 12_000), []);
+    assert.deepEqual(markProblems([mark('a', 3968 + 12_000, 4096)], 12_000), []);
+    assert.deepEqual(codes(markProblems([mark('a', 4096 + 9000, 4096)], 12_000)), ['mark-out-of-step']);
+    assert.deepEqual(markProblems([mark('a', 4096 + 9000, 4096)]), []);
   });
 });
 

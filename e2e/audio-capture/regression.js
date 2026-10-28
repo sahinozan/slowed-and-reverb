@@ -45,6 +45,10 @@ const {
   dryRestoration,
   envelope,
   markProblems,
+  outsidePauses,
+  phaseSlips,
+  soundWallMs,
+  unreadEvents,
   spanHealth
 } = require('./metrics');
 
@@ -53,6 +57,17 @@ const ARTIFACT_ROOT = path.join(root, 'test-results', 'audio-regression');
 // for repeated runs.
 const COMPACT = process.env.AUDIO_REGRESSION_EVIDENCE === 'compact';
 const RETAIN_SECONDS = 20;
+// The recorder hears each context through a delay this long
+// (capture-observer.js), so a recorder that loads within it records the
+// context from its first frame: turning the effect on while a song plays
+// creates the context, and the engine's sound can start before the
+// recorder's worklet has loaded. A quarter of a second is a whole number of
+// frames at 44.1 and 48 kHz; the recorder has loaded within 60 ms in every
+// run so far.
+const RECORD_DELAY_SECONDS = 0.25;
+// How long a span waits for the recorder to reach a moment on the
+// context's clock: the delay, a batch, and room for a slow page.
+const CATCH_UP_MS = 3_000;
 // Recorded before a span's first action.
 const PRE_ROLL_MS = 300;
 // From the song starting to a span that starts in it (the trial's settle).
@@ -78,11 +93,16 @@ const EXCERPT_AFTER_MS = 400;
 // after the request and keeps the output silent until 80 ms after that:
 // about 90 ms of silence. 60 ms more allows for a page timer running late.
 const DIP_MS = 150;
-// A player routed into the graph for the first time: Firefox's engines keep
+// A player routed into the graph for the first time, counted from the
+// context's first frame, which the recording keeps: Firefox's engines keep
 // the output silent for 250 ms (Firefox itself goes silent and clicks then)
-// and fade in over 25 ms; in Chromium only a change of pitch mode's silence
-// applies. 60 ms more allows for a late timer, as above.
-const FIRST_ROUTE_MS = { chromium: DIP_MS, firefox: 250 + 25 + 60 };
+// and fade in over 25 ms. In Chromium the output stays silent until a
+// change of pitch mode has passed, 40 ms after the routing and 80 ms more,
+// and fades in over 25 ms. 60 ms more allows for a late timer, as above.
+// (Counted from where the recorder started, as before the recording delay,
+// Chromium had the dip's 150 ms on top of the 35 to 70 ms the recorder
+// took to start.)
+const FIRST_ROUTE_MS = { chromium: 40 + 80 + 25 + 60, firefox: 250 + 25 + 60 };
 // How long after an action its silence or clicks may start: the request's
 // own round trip and the engine's timers, with room for a busy machine.
 const ACTION_WINDOW_MS = 300;
@@ -103,6 +123,13 @@ const DRY_TONES = [
 // graph comes 2 to 4 s later (README.md in this folder), so a click then is
 // heard and fails the check.
 const FIRST_ENABLE_OBSERVE_MS = 6000;
+// Where in that recording Firefox's late frame may be (phaseSlips in
+// metrics.js): 2.1 to 3.5 s after the effect turned on on this Mac so far,
+// and 2 to 4 s in the reproducer, with room either side. A click within
+// CLICK_PLACE_MS of where the phase scan puts the frame is the frame's.
+const LATE_FRAME_MS = [1500, 5000];
+const CLICK_PLACE_MS = 5;
+const LATE_FRAME_LABEL = "Firefox's late frame";
 // How long cleaning up after a check that couldn't finish may wait for the
 // page.
 const CLEANUP_MS = 5_000;
@@ -206,6 +233,7 @@ function defineRegression(browser) {
       const environment = { label: browser.label, ...provenance(target), extensionCopy: normal, olderCopy: older };
       environment.suite = {
         retainSeconds: RETAIN_SECONDS,
+        recordDelaySeconds: RECORD_DELAY_SECONDS,
         settleMs: SETTLE_MS,
         holdMs: HOLD_MS,
         clickThreshold: CLICK_THRESHOLD,
@@ -242,6 +270,9 @@ function defineRegression(browser) {
     // The pages and spans of the check under way, so one that can't finish
     // still leaves its evidence and closes its pages (guarded).
     const live = { pages: new Set(), spans: new Set() };
+    // How many of each page's player events a finished span has read, and
+    // in which document.
+    const pauseReads = new WeakMap();
 
     // A page's answer, or a measurement failure if it doesn't answer in time.
     function ask(page, what, fn, arg) {
@@ -322,7 +353,7 @@ function defineRegression(browser) {
     // Opens a page with the effect on (`settings`) before the song starts,
     // or with `playing` set, the song already playing without it.
     async function openSite(site, { settings = EFFECT, playing = false } = {}) {
-      const page = await browser.newPage(urlFor(site), { workletUrl: server.workletPath, retainSeconds: RETAIN_SECONDS });
+      const page = await browser.newPage(urlFor(site), { workletUrl: server.workletPath, retainSeconds: RETAIN_SECONDS, delaySeconds: RECORD_DELAY_SECONDS });
       live.pages.add(page);
       await waitForEngine(page, site);
       if (playing) {
@@ -343,13 +374,38 @@ function defineRegression(browser) {
       return value;
     }
 
-    // Starts recording a span once the recorder is running. `fromStart`
-    // takes the span from the first recorded frame, for an action that
-    // created the audio context itself.
+    // A snapshot taken once the recorder has recorded up to `frame`, the
+    // recorded frame of a moment on the context's clock. The recorder hears
+    // the context RECORD_DELAY_SECONDS late, plus a batch.
+    async function caughtUp(page, frame) {
+      return waitFor(
+        async () => {
+          const now = await withDeadline(snapshot(page), PAGE_STEP_MS, "the page didn't answer a snapshot");
+          return now.recorder.nextFrame >= frame ? now : null;
+        },
+        CATCH_UP_MS,
+        `the recorder didn't reach frame ${frame} within ${CATCH_UP_MS} ms`
+      );
+    }
+
+    // Starts recording a span once the recorder is running, from the sound
+    // made when it was called. `fromStart` takes the span from the
+    // context's first frame instead, for an action that created the audio
+    // context itself: the frames recorded before it are the delay's own
+    // silence.
     async function beginSpan(page, name, { fromStart = false } = {}) {
       await ask(page, 'that the recorder is ready', (timeout) => window.__audioTrial.waitReady(0, timeout), READY_TIMEOUT_MS);
-      const start = await withDeadline(snapshot(page), PAGE_STEP_MS, "the page didn't answer a snapshot");
-      const span = { page, name, start, fromFrame: fromStart ? 0 : start.recorder.nextFrame, marks: [], actions: [], segments: [], checks: [] };
+      let start;
+      let fromFrame;
+      if (fromStart) {
+        start = await withDeadline(snapshot(page), PAGE_STEP_MS, "the page didn't answer a snapshot");
+        fromFrame = Math.max(0, -start.recorder.frameOffset);
+      } else {
+        const called = await ask(page, 'a mark (the span begins)', () => window.__audioTrial.mark(0, 'the span begins'));
+        start = await caughtUp(page, called.recorderFrame);
+        fromFrame = start.recorder.nextFrame;
+      }
+      const span = { page, name, start, fromFrame, fromStart, marks: [], actions: [], segments: [], checks: [] };
       live.spans.add(span);
       if (!fromStart) await sleep(PRE_ROLL_MS);
       return span;
@@ -436,7 +492,8 @@ function defineRegression(browser) {
     // Ends a span, measures it and keeps its evidence. Returns its problems.
     // `wholeSpan` also keeps all of its sound, as a WAV.
     async function finishSpan(span, { wholeSpan = false } = {}) {
-      const end = await withDeadline(snapshot(span.page), PAGE_STEP_MS, "the page didn't answer a snapshot");
+      // Up to the sound made at the span's last mark.
+      const end = await caughtUp(span.page, Math.max(0, ...span.marks.map((mark) => mark.recorderFrame ?? 0)));
       const read = await ask(span.page, 'with its recording', ({ from, to }) => window.__audioTrial.read(0, from, to), {
         from: span.fromFrame,
         to: end.recorder.nextFrame
@@ -444,9 +501,30 @@ function defineRegression(browser) {
       const settled = await settledAfter(span.page, end);
       const [left, right] = decodeChannels(read);
       const { sampleRate } = read;
-      const health = [...spanHealth(span.start, end, [left, right], span.fromFrame, settled), ...markProblems(span.marks)];
+      const health = [...spanHealth(span.start, end, [left, right], span.fromFrame, settled, { fromRecordingStart: span.fromStart }), ...markProblems(span.marks, end.recorder.delayFrames ?? 0)];
+      // The slips of the tones' phase, for a span that asks (span.phase):
+      // Firefox's late frame is kept as an action of its own, which may
+      // click, and any other slip fails.
+      const slips = span.phase ? phaseSlips({ left, right, sampleRate, tones: span.phase.tones, lateFrame: span.phase.lateFrame?.(sampleRate) ?? null }) : [];
+      const lateFrame = slips.find((event) => event.lateFrame);
+      if (lateFrame) {
+        const frameAt = (ms) => span.fromFrame + Math.round((ms / 1000) * sampleRate);
+        span.actions.push({
+          label: LATE_FRAME_LABEL,
+          startFrame: frameAt(lateFrame.fromMs - CLICK_PLACE_MS),
+          endFrame: frameAt(lateFrame.toMs + CLICK_PLACE_MS),
+          allow: { clicks: true, silenceMs: 0, windowMs: 0 },
+          durationMs: 0,
+          result: { slips: lateFrame.slips }
+        });
+      }
       const analysis = analyzeSpan({ sampleRate, fromFrame: span.fromFrame, left, right, actions: span.actions, segments: span.segments });
       const problems = [...health, ...analysis.problems];
+      for (const event of slips.filter((candidate) => !candidate.lateFrame)) {
+        const moved = event.slips.map((slip) => `${slip.samples} at ${slip.hz} Hz`).join(', ');
+        problems.push({ code: 'phase-slip', message: `the tones' phase slipped between ${event.fromMs} and ${event.toMs} ms (samples: ${moved})` });
+      }
+      const phaseRecord = slips.map(({ fromMs, toMs, lateFrame: late, slips: found }) => ({ fromMs, toMs, lateFrame: late, slips: found }));
       for (const segment of span.segments) problems.push(...mediaProblems(segment));
 
       // The exact unchanged sound back after the extension is turned off,
@@ -479,19 +557,20 @@ function defineRegression(browser) {
       // The player paused by anything but the check itself, such as another
       // app taking the system's media controls: an interrupted recording,
       // not the extension's sound.
-      const playerEvents = await ask(span.page, 'its player events', () => window.playerEvents ?? []);
+      // The page's player events. The log only grows within a document, so
+      // the next span on this document looks for pauses (outsidePauses) only
+      // in the events after those read here; a reload starts it again, so
+      // each read is kept with its document's time origin.
+      const { events: playerEvents, origin } = await ask(span.page, 'its player events', () => ({
+        events: window.playerEvents ?? [],
+        origin: performance.timeOrigin
+      }));
       const ignoredMediaActions = await ask(span.page, 'its media actions', () => window.ignoredMediaActions ?? []);
-      const startMs = span.start.wallMs;
-      const byAction = (atMs) =>
-        span.actions.some((action) => {
-          const before = span.marks.find((mark) => mark.label === `${action.label}: before`);
-          const done = span.marks.find((mark) => mark.label === `${action.label}: after`);
-          return before && done ? atMs >= before.wallMs && atMs <= done.wallMs + 100 : false;
-        });
-      for (const event of playerEvents.filter((candidate) => candidate.type === 'pause' && candidate.atMs >= startMs)) {
-        if (!byAction(event.atMs)) {
-          problems.push({ code: 'interrupted', message: `the player paused ${Math.round(event.atMs - startMs)} ms into the span, not by the check` });
-        }
+      const startMs = soundWallMs(span.start, span.fromFrame);
+      const { unread, read: pauseRead } = unreadEvents(pauseReads.get(span.page), { events: playerEvents, origin });
+      pauseReads.set(span.page, pauseRead);
+      for (const event of outsidePauses({ events: unread, actions: span.actions, marks: span.marks })) {
+        problems.push({ code: 'interrupted', message: `the player paused ${Math.round(event.atMs - startMs)} ms into the span, not by the check` });
       }
       problems.push(...span.checks);
 
@@ -537,6 +616,7 @@ function defineRegression(browser) {
         })),
         clicks: analysis.clicks,
         silences: analysis.silences,
+        phaseSlips: span.phase ? phaseRecord : null,
         segments: analysis.segments.map((segment, index) => ({ ...segment, mediaRate: span.segments[index].mediaRate ?? null })),
         restorations,
         excerpts,
@@ -557,6 +637,7 @@ function defineRegression(browser) {
         restorations,
         maxClick: Math.max(0, ...analysis.clicks.map((click) => click.peak)),
         quietPeak: analysis.quietPeak,
+        ...(span.phase ? { phaseSlips: phaseRecord } : {}),
         firstContextFrame: end.recorder.firstContextFrame,
         initialFrameLabel: end.recorder.initialFrameLabel ?? null
       });
@@ -632,19 +713,31 @@ function defineRegression(browser) {
     // playing player into a new graph, and the recording starts with that
     // graph, so the whole change is heard. The span goes on until
     // FIRST_ENABLE_OBSERVE_MS after the effect turned on, through the 2 to
-    // 4 s after it in which Firefox has clicked on its own (README.md in this
-    // folder), and every frame of it is checked, so such a click fails the
-    // check. The whole span's sound is kept.
+    // 4 s after it in which Firefox puts a frame of silence into the song
+    // (README.md in this folder), and every frame of it is checked. The
+    // tones' phase is followed too: Firefox's frame, a single slip of one
+    // frame of the song, is kept as an action of its own and may click
+    // without failing the check; any other slip fails it (`phase-slip`). The
+    // whole span's sound is kept.
     async function firstEnableCheck(site, name) {
       const page = await openSite(site, { playing: true });
       assert.equal(await ask(page, 'its contexts', () => window.__audioTrial.contextCount()), 0, 'an audio context existed before the effect turned on');
       const firstOn = Date.now();
       const applied = await applyThroughExtension(page, EFFECT, true);
       const span = await beginSpan(page, name, { fromStart: true });
+      // The recorded tones' phase, all through: in Firefox, its late frame
+      // is one slip later by a frame of the song at the effect's speed.
+      span.phase = {
+        tones: effectExpect(EFFECT).channels.map((channel) => (channel.tones ?? []).filter((tone) => tone.min > 0).map((tone) => tone.hz)),
+        lateFrame:
+          target === 'firefox' && !EFFECT.keepPitch
+            ? (sampleRate) => ({ samples: sampleRate / (TONE.sampleRate * EFFECT.speed), fromMs: LATE_FRAME_MS[0], toMs: LATE_FRAME_MS[1] })
+            : null
+      };
       const on = await mark(span, 'turn on while playing: after');
       span.actions.push({
         label: 'turn on while playing',
-        startFrame: 0,
+        startFrame: span.fromFrame,
         endFrame: on.recorderFrame,
         allow: { fromRecordingStart: true, silenceMs: FIRST_ROUTE_MS[target], windowMs: ACTION_WINDOW_MS },
         durationMs: Date.now() - firstOn,
@@ -652,9 +745,8 @@ function defineRegression(browser) {
       });
       if (applied?.success !== true) span.checks.push({ code: 'setup', message: `the effect didn't turn on: ${JSON.stringify(applied)}` });
       await hold(span, 'on', effectExpect(EFFECT));
-      // Counted on the recording, which starts with the context the effect
-      // created.
-      const recordedMs = (span.segments[0].to.recorderFrame / span.start.context.sampleRate) * 1000;
+      // Counted on the clock of the context the effect created.
+      const recordedMs = (span.segments[0].to.contextFrame / span.start.context.sampleRate) * 1000;
       await hold(span, `on, ${FIRST_ENABLE_OBSERVE_MS / 1000} s after turning it on`, effectExpect(EFFECT), {
         settleMs: Math.max(0, FIRST_ENABLE_OBSERVE_MS - HOLD_MS - recordedMs)
       });

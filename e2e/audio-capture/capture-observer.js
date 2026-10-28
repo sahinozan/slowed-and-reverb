@@ -16,7 +16,14 @@
 // recorder keep running, and nothing recorded is heard.
 //
 // The recorder worklet loads asynchronously; until it is ready, the bus goes
-// straight to the gain of 0. Measurements wait for it (waitReady).
+// straight to the gain of 0. Measurements wait for it (waitReady). With
+// `delaySeconds`, the recorder hears the bus through a DelayNode of exactly
+// that many seconds, a whole number of frames, which the bus feeds from
+// the start: a recorder that loads within the delay records the context's
+// sound from its first frame on, and frames recorded before that hold the
+// delay's own silence. Batches are then mapped to the context frame their
+// sound was made at (frameOffset), which is the delay's length earlier than
+// the frame the recorder was rendering (contextFrame, firstContextFrame).
 
 function installAudioTrialObserver(options) {
   if (window.__audioTrial) return;
@@ -27,6 +34,7 @@ function installAudioTrialObserver(options) {
     poolSize = 16,
     retainSeconds = 4,
     monitorGain = 0,
+    delaySeconds = 0,
     mediaSelector = '#player'
   } = options;
   const Base = window.BaseAudioContext || window.AudioContext;
@@ -43,11 +51,19 @@ function installAudioTrialObserver(options) {
   function enroll(context, destination) {
     const sampleRate = context.sampleRate;
     const retainFrames = Math.ceil(retainSeconds * sampleRate);
+    // Exact, so the delay moves the sound by whole frames and changes no
+    // sample: a whole number of frames, from a delay the node's 32-bit
+    // parameter holds exactly.
+    const delayFrames = delaySeconds * sampleRate;
+    if (!Number.isInteger(delayFrames) || delayFrames < 0 || Math.fround(delaySeconds) !== delaySeconds) {
+      throw new Error(`a delay of ${delaySeconds} s isn't a whole number of frames at ${sampleRate} Hz`);
+    }
     const entry = {
       id: contexts.length,
       context,
       createdAtMs: performance.now(),
       sampleRate,
+      delayFrames,
       destination: {
         channelCount: destination.channelCount,
         channelCountMode: destination.channelCountMode,
@@ -72,10 +88,10 @@ function installAudioTrialObserver(options) {
       firstArrivalMs: null,
       lastArrivalMs: null,
       maxArrivalGapMs: 0,
-      // Context frame minus recorder frame, from the latest batch. It stays
-      // the same from batch to batch while every render block reaches the
-      // recorder (each change is counted), and maps a context time (a mark)
-      // to the recorded frame played then.
+      // Context frame minus recorder frame, from the latest batch, less the
+      // delay. It stays the same from batch to batch while every render
+      // block reaches the recorder (each change is counted), and maps a
+      // context time (a mark) to the recorded frame of the sound made then.
       frameOffset: null,
       offsetChanges: 0
     };
@@ -85,7 +101,23 @@ function installAudioTrialObserver(options) {
       channelInterpretation: destination.channelInterpretation
     });
     entry.sink = new GainNode(context, { gain: monitorGain });
-    nativeConnect.call(entry.bus, entry.sink);
+    // What the recorder hears: the bus, or the bus through the delay.
+    entry.tap = entry.bus;
+    if (delayFrames > 0) {
+      // A fixed channel count: in the default mode the delay takes its
+      // input's, and when everything leaves the bus (a page taking its
+      // player out) Chromium's delay changes count and remixes the sound it
+      // still holds.
+      entry.tap = new DelayNode(context, {
+        maxDelayTime: delaySeconds,
+        delayTime: delaySeconds,
+        channelCount: destination.channelCount,
+        channelCountMode: 'explicit',
+        channelInterpretation: destination.channelInterpretation
+      });
+      nativeConnect.call(entry.bus, entry.tap);
+    }
+    nativeConnect.call(entry.tap, entry.sink);
     nativeConnect.call(entry.sink, destination);
     contexts.push(entry);
 
@@ -123,9 +155,9 @@ function installAudioTrialObserver(options) {
             recorder.onprocessorerror = () => {
               entry.error = 'the recorder worklet stopped with an error';
             };
-            nativeConnect.call(entry.bus, recorder);
+            nativeConnect.call(entry.tap, recorder);
             nativeConnect.call(recorder, entry.sink);
-            nativeDisconnect.call(entry.bus, entry.sink);
+            nativeDisconnect.call(entry.tap, entry.sink);
             entry.recorder = recorder;
           })
       )
@@ -167,7 +199,7 @@ function installAudioTrialObserver(options) {
     // A batch that starts after the frame the page expected means frames
     // were dropped in between (the worklet counts them as overflow).
     if (message.startFrame !== entry.nextFrame) entry.lostFrames += message.startFrame - entry.nextFrame;
-    const offset = message.contextFrame - message.startFrame;
+    const offset = message.contextFrame - entry.delayFrames - message.startFrame;
     if (entry.frameOffset !== null && offset !== entry.frameOffset) entry.offsetChanges++;
     entry.frameOffset = offset;
     const samples = new Float32Array(message.buffer);
@@ -237,7 +269,7 @@ function installAudioTrialObserver(options) {
   }
 
   window.__audioTrial = {
-    options: { batchFrames, poolSize, retainSeconds, monitorGain },
+    options: { batchFrames, poolSize, retainSeconds, monitorGain, delaySeconds },
     errors,
     contextCount: () => contexts.length,
     setRecycle(value) {
@@ -287,6 +319,7 @@ function installAudioTrialObserver(options) {
               ready: Boolean(entry.hello),
               error: entry.error,
               workletSampleRate: entry.hello ? entry.hello.sampleRate : null,
+              delayFrames: entry.delayFrames,
               // Where recording began, once the first block has been seen.
               firstContextFrame: entry.worklet.firstContextFrame ?? null,
               nextFrame: entry.nextFrame,
