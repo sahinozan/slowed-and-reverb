@@ -51,11 +51,15 @@ function send(port, target, { method = 'GET', host = '127.0.0.1' } = {}) {
 }
 
 // Writes `text` to a new connection and resolves with everything the server
-// sends back before it closes the connection or `waitMs` passes.
-function sendRaw(port, text, waitMs = 2_000) {
+// sends back before it closes the connection or `waitMs` passes. The
+// connection's own port is added to `ports`, if given.
+function sendRaw(port, text, { waitMs = 2_000, ports } = {}) {
   return new Promise((resolve) => {
     const chunks = [];
-    const socket = net.connect(port, '127.0.0.1', () => socket.write(text));
+    const socket = net.connect(port, '127.0.0.1', () => {
+      ports?.push(socket.localPort);
+      socket.write(text);
+    });
     const timer = setTimeout(() => socket.destroy(), waitMs);
     socket.on('data', (chunk) => chunks.push(chunk));
     socket.on('error', () => {});
@@ -159,7 +163,7 @@ describe('the site preview (scripts/serve-site.js)', () => {
 
   before(async () => {
     server = createSiteServer();
-    server.on('request', (request) => requests.push(request.url));
+    server.on('request', (request) => requests.push({ url: request.url, from: request.socket.remotePort }));
     await new Promise((resolve, reject) => {
       server.once('error', reject);
       server.listen(0, '127.0.0.1', resolve);
@@ -187,16 +191,24 @@ describe('the site preview (scripts/serve-site.js)', () => {
   });
 
   test("leaves to Node the targets its HTTP parser refuses, and CONNECT, which isn't a request here", async () => {
-    requests.length = 0;
+    // Only requests from this test's own connections count: other programs
+    // on a developer's computer may send their own requests to any local
+    // port (T3 Code sends GET / to each one every 15 seconds or so).
+    const ours = [];
+    const reached = () => requests.filter((request) => ours.includes(request.from)).map((request) => request.url);
     for (const target of ['\\\\[', '\\/[']) {
-      const text = await sendRaw(port, `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`);
+      const text = await sendRaw(port, `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`, { ports: ours });
       assert.match(text, /^HTTP\/1\.1 400 Bad Request\r\n/, target);
     }
     // With no 'connect' listener, Node closes a CONNECT's connection itself.
-    const connect = await sendRaw(port, 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n');
+    const connect = await sendRaw(port, 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n', { ports: ours });
     assert.equal(connect, '');
-    assert.deepEqual(requests, [], 'none of them reaches the request listener');
-    assert.equal((await send(port, '/guide')).status, 200);
+    assert.equal(ours.length, 3);
+    assert.deepEqual(reached(), [], 'none of them reaches the request listener');
+    // A request that reaches it is counted, and the server is still serving.
+    const control = await sendRaw(port, 'GET /guide HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n', { ports: ours });
+    assert.match(control, /^HTTP\/1\.1 200 /);
+    assert.deepEqual(reached(), ['/guide']);
   });
 
   test('serves pages at clean addresses, ignoring the query, and redirects .html addresses', async () => {
