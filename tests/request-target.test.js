@@ -51,13 +51,13 @@ function send(port, target, { method = 'GET', host = '127.0.0.1' } = {}) {
 }
 
 // Writes `text` to a new connection and resolves with everything the server
-// sends back before it closes the connection or `waitMs` passes. The
-// connection's own port is added to `ports`, if given.
-function sendRaw(port, text, { waitMs = 2_000, ports } = {}) {
+// sends back before it closes the connection or `waitMs` passes. Once
+// connected, it waits for `beforeWrite(socket)`, if given, before writing.
+function sendRaw(port, text, { waitMs = 2_000, beforeWrite } = {}) {
   return new Promise((resolve) => {
     const chunks = [];
-    const socket = net.connect(port, '127.0.0.1', () => {
-      ports?.push(socket.localPort);
+    const socket = net.connect(port, '127.0.0.1', async () => {
+      await beforeWrite?.(socket);
       socket.write(text);
     });
     const timer = setTimeout(() => socket.destroy(), waitMs);
@@ -160,10 +160,30 @@ describe('the site preview (scripts/serve-site.js)', () => {
   let server;
   let port;
   const requests = [];
+  const openSockets = new Set();
+
+  // Resolves with the server's end of `client`'s connection. While `client`
+  // is connected, no other open connection can have its port.
+  function accepted(client) {
+    return new Promise((resolve) => {
+      const find = () => {
+        const socket = [...openSockets].find((open) => open.remotePort === client.localPort);
+        if (!socket) return false;
+        server.off('connection', find);
+        resolve(socket);
+        return true;
+      };
+      if (!find()) server.on('connection', find);
+    });
+  }
 
   before(async () => {
     server = createSiteServer();
-    server.on('request', (request) => requests.push({ url: request.url, from: request.socket.remotePort }));
+    server.on('connection', (socket) => {
+      openSockets.add(socket);
+      socket.on('close', () => openSockets.delete(socket));
+    });
+    server.on('request', (request) => requests.push({ url: request.url, socket: request.socket }));
     await new Promise((resolve, reject) => {
       server.once('error', reject);
       server.listen(0, '127.0.0.1', resolve);
@@ -193,20 +213,23 @@ describe('the site preview (scripts/serve-site.js)', () => {
   test("leaves to Node the targets its HTTP parser refuses, and CONNECT, which isn't a request here", async () => {
     // Only requests from this test's own connections count: other programs
     // on a developer's computer may send their own requests to any local
-    // port (T3 Code sends GET / to each one every 15 seconds or so).
-    const ours = [];
-    const reached = () => requests.filter((request) => ours.includes(request.from)).map((request) => request.url);
+    // port (T3 Code sends GET / to each one every 15 seconds or so). They
+    // are told apart by the server's socket, not the port, which a later
+    // connection can reuse.
+    const ours = new Set();
+    const ourConnection = async (client) => ours.add(await accepted(client));
+    const reached = () => requests.filter((request) => ours.has(request.socket)).map((request) => request.url);
     for (const target of ['\\\\[', '\\/[']) {
-      const text = await sendRaw(port, `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`, { ports: ours });
+      const text = await sendRaw(port, `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`, { beforeWrite: ourConnection });
       assert.match(text, /^HTTP\/1\.1 400 Bad Request\r\n/, target);
     }
     // With no 'connect' listener, Node closes a CONNECT's connection itself.
-    const connect = await sendRaw(port, 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n', { ports: ours });
+    const connect = await sendRaw(port, 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n', { beforeWrite: ourConnection });
     assert.equal(connect, '');
-    assert.equal(ours.length, 3);
+    assert.equal(ours.size, 3);
     assert.deepEqual(reached(), [], 'none of them reaches the request listener');
     // A request that reaches it is counted, and the server is still serving.
-    const control = await sendRaw(port, 'GET /guide HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n', { ports: ours });
+    const control = await sendRaw(port, 'GET /guide HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n', { beforeWrite: ourConnection });
     assert.match(control, /^HTTP\/1\.1 200 /);
     assert.deepEqual(reached(), ['/guide']);
   });
