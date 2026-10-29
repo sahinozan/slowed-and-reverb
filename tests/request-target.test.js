@@ -197,7 +197,10 @@ describe('the site preview (scripts/serve-site.js)', () => {
     if (process.platform === 'win32') {
       where = `\\\\.\\pipe\\request-target-${process.pid}-${Date.now()}`;
     } else {
-      const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'request-target-'));
+      // A socket's path can be about 104 bytes at most, so a long TMPDIR
+      // gives way to /tmp.
+      const fits = Buffer.byteLength(path.join(os.tmpdir(), 'request-target-XXXXXX', 'site.sock')) <= 103;
+      const temp = fs.mkdtempSync(path.join(fits ? os.tmpdir() : '/tmp', 'request-target-'));
       t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
       where = path.join(temp, 'site.sock');
     }
