@@ -36,9 +36,11 @@ const UNPARSABLE = [
 ];
 
 // Sends one request with `target` as written and resolves with the answer.
-function send(port, target, { method = 'GET', host = '127.0.0.1' } = {}) {
+// `where` is a port on 127.0.0.1, or the path of a local socket.
+function send(where, target, { method = 'GET', host = '127.0.0.1' } = {}) {
   return new Promise((resolve, reject) => {
-    const request = http.request({ host: '127.0.0.1', port, method, path: target, agent: false, headers: { host } });
+    const to = typeof where === 'string' ? { socketPath: where } : { host: '127.0.0.1', port: where };
+    const request = http.request({ ...to, method, path: target, agent: false, headers: { host } });
     request.setTimeout(5_000, () => request.destroy(new Error(`no answer to ${method} ${target}`)));
     request.on('error', reject);
     request.on('response', (response) => {
@@ -51,11 +53,13 @@ function send(port, target, { method = 'GET', host = '127.0.0.1' } = {}) {
 }
 
 // Writes `text` to a new connection and resolves with everything the server
-// sends back before it closes the connection or `waitMs` passes.
-function sendRaw(port, text, waitMs = 2_000) {
+// sends back before it closes the connection or `waitMs` passes. `where` is
+// as for send().
+function sendRaw(where, text, waitMs = 2_000) {
   return new Promise((resolve) => {
     const chunks = [];
-    const socket = net.connect(port, '127.0.0.1', () => socket.write(text));
+    const to = typeof where === 'string' ? { path: where } : { host: '127.0.0.1', port: where };
+    const socket = net.connect(to, () => socket.write(text));
     const timer = setTimeout(() => socket.destroy(), waitMs);
     socket.on('data', (chunk) => chunks.push(chunk));
     socket.on('error', () => {});
@@ -155,11 +159,9 @@ describe('requestPathname', () => {
 describe('the site preview (scripts/serve-site.js)', () => {
   let server;
   let port;
-  const requests = [];
 
   before(async () => {
     server = createSiteServer();
-    server.on('request', (request) => requests.push(request.url));
     await new Promise((resolve, reject) => {
       server.once('error', reject);
       server.listen(0, '127.0.0.1', resolve);
@@ -186,17 +188,44 @@ describe('the site preview (scripts/serve-site.js)', () => {
     assert.deepEqual(statuses, ['HTTP/1.1 400', 'HTTP/1.1 400', 'HTTP/1.1 200']);
   });
 
-  test("leaves to Node the targets its HTTP parser refuses, and CONNECT, which isn't a request here", async () => {
-    requests.length = 0;
+  test("leaves to Node the targets its HTTP parser refuses, and CONNECT, which isn't a request here", async (t) => {
+    // Every request this server gets must be the test's own, so it listens
+    // on a local socket rather than a port: other programs on a developer's
+    // computer may send requests to any port on 127.0.0.1 (T3 Code sends
+    // GET / to each one every 15 seconds or so).
+    let where;
+    if (process.platform === 'win32') {
+      where = `\\\\.\\pipe\\request-target-${process.pid}-${Date.now()}`;
+    } else {
+      // A socket's path can be about 104 bytes at most, so a long TMPDIR
+      // gives way to /tmp.
+      const fits = Buffer.byteLength(path.join(os.tmpdir(), 'request-target-XXXXXX', 'site.sock')) <= 103;
+      const temp = fs.mkdtempSync(path.join(fits ? os.tmpdir() : '/tmp', 'request-target-'));
+      t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+      where = path.join(temp, 'site.sock');
+    }
+    const own = createSiteServer();
+    const requests = [];
+    own.on('request', (request) => requests.push(request.url));
+    await new Promise((resolve, reject) => {
+      own.once('error', reject);
+      own.listen(where, resolve);
+    });
+    t.after(() => new Promise((resolve) => {
+      own.closeAllConnections();
+      own.close(resolve);
+    }));
     for (const target of ['\\\\[', '\\/[']) {
-      const text = await sendRaw(port, `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`);
+      const text = await sendRaw(where, `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`);
       assert.match(text, /^HTTP\/1\.1 400 Bad Request\r\n/, target);
     }
     // With no 'connect' listener, Node closes a CONNECT's connection itself.
-    const connect = await sendRaw(port, 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n');
+    const connect = await sendRaw(where, 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n');
     assert.equal(connect, '');
     assert.deepEqual(requests, [], 'none of them reaches the request listener');
-    assert.equal((await send(port, '/guide')).status, 200);
+    // A request that reaches it is counted, and the server is still serving.
+    assert.equal((await send(where, '/guide')).status, 200);
+    assert.deepEqual(requests, ['/guide']);
   });
 
   test('serves pages at clean addresses, ignoring the query, and redirects .html addresses', async () => {
