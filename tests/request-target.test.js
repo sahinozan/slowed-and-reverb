@@ -163,11 +163,14 @@ describe('the site preview (scripts/serve-site.js)', () => {
   const openSockets = new Set();
 
   // Resolves with the server's end of `client`'s connection. While `client`
-  // is connected, no other open connection can have its port.
+  // is connected, no other open connection can have both its address and
+  // its port; a connection from another address can have the same port.
   function accepted(client) {
     return new Promise((resolve) => {
       const find = () => {
-        const socket = [...openSockets].find((open) => open.remotePort === client.localPort);
+        const socket = [...openSockets].find(
+          (open) => open.remoteAddress === client.localAddress && open.remotePort === client.localPort
+        );
         if (!socket) return false;
         server.off('connection', find);
         resolve(socket);
