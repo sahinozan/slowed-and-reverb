@@ -32,10 +32,10 @@ testing, and their advisories are tracked too:
 `npm run audit:dependencies -- <folder>` asks the npm registry about every
 version in `package-lock.json`, development tools included, and the
 Dependency audit workflow runs it every week and for dependency changes. It
-fails for every advisory it finds, including the one below, and isn't one of
+fails for every advisory it finds, including the ones below, and isn't one of
 the checks a pull request needs.
 
-### Known advisory with no fix yet
+### Known advisories with no fix yet
 
 **node-forge 1.4.0:
 [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv)
@@ -64,3 +64,33 @@ web-ext's Android runner, adbkit directly, or anything that starts the bridge
 or checks signatures or keys from somewhere else; or when the build starts
 shipping anything from `node_modules`. If you find a way this project's own
 use reaches it, report it privately as described above.
+
+**deepmerge 4.3.1:
+[GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).**
+Checked on October 29, 2026. deepmerge 4.2.0 to 4.3.1 can copy a
+`__proto__` key from an object being merged into the prototype of the
+object it returns, so properties the caller didn't set show up when they are
+read without an own-property check. It is installed through web-ext 10.8.0,
+which depends on addons-linter 10.14.0, which depends on deepmerge 4.3.1.
+4.3.1, from March 2023, is deepmerge's latest version, so no fixed version
+exists. The only change npm suggests, web-ext 3.2.1, is from 2019 and has the
+same drawbacks as the node-forge suggestion above.
+
+The project's own use doesn't reach it. addons-linter uses deepmerge only
+when it prepares the schemas it checks `manifest.json` against: it merges
+the Firefox schemas bundled in its own code with fixed objects written in
+that code, and with the range of manifest versions web-ext sets (2 to 3).
+Neither the bundled schemas nor those objects have a `__proto__`,
+`constructor` or `prototype` key. Nothing from the extension's own files is
+merged: the manifest and the other files are only checked against the result.
+Nothing in this repository calls deepmerge or passes addons-linter schemas of
+its own.
+
+The affected version is still installed, so this isn't a fix, and the audit
+keeps reporting it. Look again when deepmerge, addons-linter or web-ext
+publishes a fixed version or the advisory changes; when the versions of
+web-ext or addons-linter, or how they use deepmerge, change; when the project
+starts running addons-linter with schemas of its own, or using deepmerge
+directly; or when the build starts shipping anything from `node_modules`. If
+you find a way this project's own use reaches it, report it privately as
+described above.
