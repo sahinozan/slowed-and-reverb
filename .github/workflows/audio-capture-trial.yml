@@ -21,7 +21,16 @@ on:
       # The suites' server reads its request targets with this.
       - 'scripts/request-target.js'
       - 'scripts/ci-package-downloads.sh'
+      - 'scripts/ci-install-firefox.sh'
   workflow_dispatch:
+    inputs:
+      firefox:
+        description: >-
+          A Firefox release (such as 159.0) for the regression suite, from
+          Mozilla's archive; empty for the runner's own Firefox
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -124,9 +133,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dir="$(dirname "$(readlink -f /usr/bin/firefox)")"
+          bin="${FIREFOX_BIN:-/usr/bin/firefox}"
+          dir="$(dirname "$(readlink -f "$bin")")"
           if [[ ! -f "$dir/application.ini" ]]; then
-            echo "::warning::No Firefox install beside /usr/bin/firefox ($dir), so nothing was read."
+            echo "::warning::No Firefox install beside $bin ($dir), so nothing was read."
             exit 0
           fi
           start=$(date +%s%N)
@@ -170,12 +180,13 @@ jobs:
     # Both browsers' suites take about 10 minutes together; installing the
     # sound server took up to 13 on its own from the Azure mirror, and well
     # under one from Ubuntu's archive. Every step below has its own
-    # deadline. Together (24 minutes to set up, 2 to read Firefox's files,
-    # 10 for each browser, 1 to show the sound server and 5 to upload) they
-    # come to 52, leaving 5 for the runner's own work between them, so even a
-    # step that runs out of time leaves time to upload the evidence
-    # (tests/audio-workflow.test.js checks the sums).
-    timeout-minutes: 57
+    # deadline. Together (24 minutes to set up, 3 to install a Firefox asked
+    # for, 2 to read Firefox's files, 10 for each browser, 1 to show the
+    # sound server and 5 to upload) they come to 55, leaving 5 for the
+    # runner's own work between them, so even a step that runs out of time
+    # leaves time to upload the evidence (tests/audio-workflow.test.js
+    # checks the sums).
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
@@ -247,6 +258,20 @@ jobs:
           pactl list short sinks
           echo 'ready=true' >> "$GITHUB_OUTPUT"
 
+      # A run started by hand can ask for a Firefox release from Mozilla's
+      # archive instead of the runner's own: the suite's baseline needs
+      # Firefox's current and previous releases (e2e/audio-capture/BASELINE.md).
+      # The script checks the download against Mozilla's release key and sets
+      # FIREFOX_BIN for the steps after it. If it fails, the suites don't run:
+      # the Firefox suite's condition asks for this step's success too.
+      - name: Install the Firefox asked for
+        id: firefox-install
+        if: ${{ inputs.firefox }}
+        timeout-minutes: 3
+        env:
+          FIREFOX_VERSION: ${{ inputs.firefox }}
+        run: bash scripts/ci-install-firefox.sh
+
       # On GitHub's Ubuntu runners Firefox has sometimes not started within
       # 30 s, its main process waiting on the disk (in disk sleep, using no
       # CPU) when it was checked. Which file it waited for isn't known. As
@@ -258,9 +283,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dir="$(dirname "$(readlink -f /usr/bin/firefox)")"
+          bin="${FIREFOX_BIN:-/usr/bin/firefox}"
+          dir="$(dirname "$(readlink -f "$bin")")"
           if [[ ! -f "$dir/application.ini" ]]; then
-            echo "::warning::No Firefox install beside /usr/bin/firefox ($dir), so nothing was read."
+            echo "::warning::No Firefox install beside $bin ($dir), so nothing was read."
             exit 0
           fi
           start=$(date +%s%N)
@@ -272,9 +298,10 @@ jobs:
         run: npm run test:audio:chromium
 
       # Runs after a Chromium failure too, for its own evidence, once the
-      # sink is there; either failure fails the job.
+      # sink is there and any Firefox asked for is installed; either failure
+      # fails the job.
       - name: Run the Firefox audio regression suite
-        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' }}
+        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' && (!inputs.firefox || steps.firefox-install.outcome == 'success') }}
         timeout-minutes: 10
         run: npm run test:audio:firefox
 
