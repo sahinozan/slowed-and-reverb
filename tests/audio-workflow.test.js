@@ -105,7 +105,7 @@ function browserStepProblems(job, commands) {
 
 const JOBS = [
   ['linux-null-sink', 47, { chromium: 'npm run test:audio-trial:chromium', firefox: 'npm run test:audio-trial:firefox' }],
-  ['linux-regression', 57, { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' }]
+  ['linux-regression', 60, { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' }]
 ];
 
 describe('the audio workflow', () => {
