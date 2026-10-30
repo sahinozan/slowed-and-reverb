@@ -759,7 +759,8 @@ background script), all of this would have to be shown:
    with each run recorded.
    None may fail on sound without an explanation and a fix, or a written
    acceptance. A Firefox that doesn't start gives no result, and that run is
-   done again.
+   done again. The plan, fixed on October 30, 2026, and its results are in
+   [BASELINE.md](BASELINE.md).
 2. Firefox's late click (see "Limits") confirmed gone or present on the
    current Firefox, from saved samples, against a page known to click, or the
    remaining doubt accepted in writing. Done for Firefox 159: it's present,
