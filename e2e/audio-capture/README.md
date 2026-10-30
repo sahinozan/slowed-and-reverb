@@ -107,8 +107,10 @@ Chromium failure too, once the sink is there.
 A run started by hand can give the regression suite another Firefox than
 the runner's: its `firefox` input takes a release (such as `159.0`), which
 `scripts/ci-install-firefox.sh` downloads from Mozilla's archive, checks
-against Mozilla's release key (pinned by its fingerprint) and gives the
-suite through `FIREFOX_BIN`. If that fails, neither suite runs.
+against Mozilla's release key and the subkey that signs releases (both
+pinned by their fingerprints), and gives the suite through `FIREFOX_BIN`.
+If that fails, neither suite runs. `tests/ci-install-firefox.test.js`
+runs the script against stand-ins for the network and GnuPG.
 
 The trial's evidence goes to `test-results/audio-trial/<run>/`, about 2 MB
 in all:

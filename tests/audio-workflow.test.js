@@ -44,14 +44,18 @@ function steps(job) {
 // step with no condition runs only if all before it succeeded; always() and
 // !cancelled() run after a failure. A failed step with continue-on-error
 // counts as a success. A step that needs the sink's output
-// runs only if the sink step finished. Conditions on the Chromium cache
-// pick one of two steps and don't depend on a failure.
+// runs only if the sink step finished, and one that needs a Firefox asked
+// for only if its install did (taken as asked for, the case with more
+// steps). Conditions on the Chromium cache pick one of two steps and don't
+// depend on a failure.
 function runsAfterFailure(step, failedIndex, index, all) {
   if (all[failedIndex]?.continueOnError) return true;
   const condition = step.condition ?? '';
   if (/always\(\)/.test(condition)) return true;
   if (!/!cancelled\(\)/.test(condition)) return false;
   const sink = all.findIndex(({ id }) => id === 'sink');
+  const install = all.findIndex(({ id }) => id === 'firefox-install');
+  if (/steps\.firefox-install\.outcome == 'success'/.test(condition) && install !== -1 && failedIndex <= install) return false;
   if (/steps\.sink\.outputs\.ready == 'true'/.test(condition)) return sink < failedIndex && sink < index;
   return true;
 }
@@ -103,13 +107,19 @@ function browserStepProblems(job, commands) {
   return problems;
 }
 
+const SINK_READY = "${{ !cancelled() && steps.sink.outputs.ready == 'true' }}";
 const JOBS = [
-  ['linux-null-sink', 47, { chromium: 'npm run test:audio-trial:chromium', firefox: 'npm run test:audio-trial:firefox' }],
-  ['linux-regression', 60, { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' }]
+  ['linux-null-sink', 47, { chromium: 'npm run test:audio-trial:chromium', firefox: 'npm run test:audio-trial:firefox' }, SINK_READY],
+  [
+    'linux-regression',
+    60,
+    { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' },
+    "${{ !cancelled() && steps.sink.outputs.ready == 'true' && (!inputs.firefox || steps.firefox-install.outcome == 'success') }}"
+  ]
 ];
 
 describe('the audio workflow', () => {
-  for (const [job, cap, commands] of JOBS) {
+  for (const [job, cap, commands, firefoxCondition] of JOBS) {
     test(`${job}: every step has a deadline, and the upload has its time whichever step runs out`, () => {
       const text = jobText(job);
       assert.match(text, new RegExp(`^ {4}timeout-minutes: ${cap}$`, 'm'));
@@ -129,9 +139,21 @@ describe('the audio workflow', () => {
       const chromium = all.findIndex((step) => step.name.includes('Chromium audio'));
       const firefox = all.findIndex((step) => step.name.includes('Firefox audio'));
       assert.ok(chromium !== -1 && firefox === chromium + 1);
-      assert.equal(all[firefox].condition, "${{ !cancelled() && steps.sink.outputs.ready == 'true' }}");
+      assert.equal(all[firefox].condition, firefoxCondition);
       assert.ok(runsAfterFailure(all[firefox], chromium, firefox, all));
       assert.equal(runsAfterFailure(all[firefox], all.findIndex(({ id }) => id === 'sink'), firefox, all), false);
+      // A Firefox asked for that doesn't install (or runs out of time)
+      // stops both suites, in the job that installs one.
+      const install = all.findIndex(({ id }) => id === 'firefox-install');
+      if (job === 'linux-regression') {
+        assert.ok(install !== -1 && install < chromium, 'the regression job installs a Firefox asked for before the suites');
+        assert.equal(all[install].condition, '${{ inputs.firefox }}');
+        assert.equal(all[install].run, 'bash scripts/ci-install-firefox.sh');
+        assert.equal(runsAfterFailure(all[chromium], install, chromium, all), false);
+        assert.equal(runsAfterFailure(all[firefox], install, firefox, all), false);
+      } else {
+        assert.equal(install, -1, "the trial keeps the runner's Firefox");
+      }
       assert.deepEqual(browserStepProblems(text, commands), [], job);
     });
   }

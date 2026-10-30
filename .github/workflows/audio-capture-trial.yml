@@ -262,8 +262,10 @@ jobs:
       # archive instead of the runner's own: the suite's baseline needs
       # Firefox's current and previous releases (e2e/audio-capture/BASELINE.md).
       # The script checks the download against Mozilla's release key and sets
-      # FIREFOX_BIN for the steps after it. If it fails, the suites don't run.
+      # FIREFOX_BIN for the steps after it. If it fails, the suites don't run:
+      # the Firefox suite's condition asks for this step's success too.
       - name: Install the Firefox asked for
+        id: firefox-install
         if: ${{ inputs.firefox }}
         timeout-minutes: 3
         env:
@@ -296,9 +298,10 @@ jobs:
         run: npm run test:audio:chromium
 
       # Runs after a Chromium failure too, for its own evidence, once the
-      # sink is there; either failure fails the job.
+      # sink is there and any Firefox asked for is installed; either failure
+      # fails the job.
       - name: Run the Firefox audio regression suite
-        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' }}
+        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' && (!inputs.firefox || steps.firefox-install.outcome == 'success') }}
         timeout-minutes: 10
         run: npm run test:audio:firefox
 
