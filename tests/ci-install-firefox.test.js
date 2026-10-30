@@ -19,9 +19,19 @@ const { root } = require('./helpers/load-script');
 const SCRIPT = path.join(root, 'scripts', 'ci-install-firefox.sh');
 const PRIMARY = '14F26682D0916CDD81E37B6D61B7B526D98F0353';
 const SUBKEY = '827E658608679618CD349F93678E455D76767AA3';
-const VALID = `[GNUPG:] VALIDSIG ${SUBKEY} 2026-10-22 1761148800 0 4 0 1 10 00 ${PRIMARY}`;
+const VALID = `[GNUPG:] VALIDSIG ${SUBKEY} 2026-10-22 1792698588 0 4 0 1 10 00 ${PRIMARY}`;
 const GOOD = '[GNUPG:] GOODSIG 678E455D76767AA3 Mozilla Software Releases <release@mozilla.com>';
-const SIGNED = ['[GNUPG:] NEWSIG', GOOD, VALID, '[GNUPG:] TRUST_UNDEFINED 0 pgp'];
+// What GnuPG wrote for 159.0's SHA512SUMS on the hosted runner (run
+// 41080343461): KEYEXPIRED for each of the KEY's five expired subkeys,
+// twice, around the good signature.
+const EXPIRED_SUBKEYS = ['1684354261', '1500227572', '1561215157', '1622319338', '1746380659']
+  .map((when) => `[GNUPG:] KEYEXPIRED ${when}`);
+const CONSIDERED = `[GNUPG:] KEY_CONSIDERED ${PRIMARY} 0`;
+const SIGNED = [
+  '[GNUPG:] NEWSIG', ...EXPIRED_SUBKEYS, CONSIDERED, '[GNUPG:] SIG_ID km67fAlYO/crIJu9etrxL5mDV9w 2026-10-22 1792698588',
+  GOOD, VALID, ...EXPIRED_SUBKEYS, CONSIDERED, '[GNUPG:] TRUST_UNDEFINED 0 pgp'
+];
+const NOT_SIGNED = "isn't signed by Mozilla's release subkey";
 
 function stub(dir, name, body) {
   fs.writeFileSync(path.join(dir, name), body, { mode: 0o755 });
@@ -101,18 +111,27 @@ function install(setup, { status = SIGNED, gpgExit = 0, version = setup.version,
   };
 }
 
-function refused(result, message) {
+// Refused for the reason expected (`because`, a part of the script's
+// message), not some other error, with nothing unpacked or exported.
+function refused(result, message, because) {
   assert.notEqual(result.status, 0, `${message}: it was installed\n${result.output}`);
+  assert.ok(result.output.includes(because), `${message}: refused for another reason:\n${result.output}`);
   assert.equal(result.unpacked, false, `${message}: it was unpacked`);
   assert.equal(result.githubEnv, '', `${message}: FIREFOX_BIN was set`);
+}
+
+// A fresh fixture for each case, so no case runs into another's files.
+function fresh(t, options) {
+  const setup = setUp(options);
+  t.after(() => fs.rmSync(setup.dir, { recursive: true, force: true }));
+  return setup;
 }
 
 const skip = process.platform === 'win32' && 'the script is for a Linux runner and runs through bash';
 
 describe('scripts/ci-install-firefox.sh', { skip }, () => {
   test('installs a release signed by the pinned subkey, matching its hash and version', (t) => {
-    const setup = setUp();
-    t.after(() => fs.rmSync(setup.dir, { recursive: true, force: true }));
+    const setup = fresh(t);
     const result = install(setup);
     assert.equal(result.status, 0, result.output);
     assert.equal(result.githubEnv, `FIREFOX_BIN=${result.work}/firefox/firefox\n`);
@@ -121,55 +140,49 @@ describe('scripts/ci-install-firefox.sh', { skip }, () => {
   });
 
   test('refuses a signature GnuPG reports as revoked, expired, bad or unchecked, or by another key', (t) => {
-    const setup = setUp();
-    t.after(() => fs.rmSync(setup.dir, { recursive: true, force: true }));
     const cases = {
       'a revoked signing key, though GnuPG exits 0': [...SIGNED, '[GNUPG:] REVKEYSIG 678E455D76767AA3 Mozilla'],
+      'a revoked signing key, as GnuPG reports it': ['[GNUPG:] REVKEYSIG 678E455D76767AA3 Mozilla', VALID],
+      'a revoked key, with no arguments': [...SIGNED, '[GNUPG:] KEYREVOKED'],
       'an expired signing key': ['[GNUPG:] EXPKEYSIG 678E455D76767AA3 Mozilla', VALID],
       'an expired signature': ['[GNUPG:] EXPSIG 678E455D76767AA3 Mozilla', VALID],
       'a bad signature': ['[GNUPG:] BADSIG 678E455D76767AA3 Mozilla'],
       'a signature that could not be checked': ['[GNUPG:] ERRSIG 678E455D76767AA3 1 10 00 1761148800 9 -'],
+      'a good signature and one that could not be checked': [...SIGNED, '[GNUPG:] ERRSIG 678E455D76767AA3 1 10 00 1761148800 9 -'],
       'no public key': ['[GNUPG:] NO_PUBKEY 678E455D76767AA3'],
       'another primary key': [GOOD, VALID.replace(PRIMARY, 'A'.repeat(40))],
       'the revoked previous subkey': [GOOD, VALID.replace(SUBKEY, '09BEED63F3462A2DFFAB3B875ECB6497C1A20256')],
       'two signatures': [...SIGNED, GOOD, VALID],
+      'a second VALIDSIG by another key': [...SIGNED, VALID.replace(SUBKEY, 'B'.repeat(40))],
       'no signature at all': []
     };
-    for (const [name, status] of Object.entries(cases)) refused(install(setup, { status }), name);
-    refused(install(setup, { gpgExit: 1 }), 'good status lines, but GnuPG exited 1');
+    for (const [name, status] of Object.entries(cases)) refused(install(fresh(t), { status }), name, NOT_SIGNED);
+    refused(install(fresh(t), { gpgExit: 1 }), 'good status lines, but GnuPG exited 1', NOT_SIGNED);
   });
 
   test('refuses a release number that is not one, before downloading anything', (t) => {
-    const setup = setUp();
-    t.after(() => fs.rmSync(setup.dir, { recursive: true, force: true }));
-    for (const version of ['159.0; rm -rf /', '../158.0', '159', '159.0\n160.0', '159.0b2', '']) {
-      const result = install(setup, { version });
-      refused(result, JSON.stringify(version));
+    for (const version of ['159.0; rm -rf /', '../158.0', '159', '159.0\n160.0', '159.0b2']) {
+      const result = install(fresh(t), { version });
+      refused(result, JSON.stringify(version), 'Not a Firefox release number');
       assert.deepEqual(result.calls, [], `${JSON.stringify(version)} downloaded something`);
     }
+    const empty = install(fresh(t), { version: '' });
+    refused(empty, 'no release', 'no Firefox release given');
+    assert.deepEqual(empty.calls, []);
   });
 
   test('refuses a failed download, a missing or doubled hash, a changed archive and another version inside', (t) => {
-    const cleanups = [];
-    t.after(() => cleanups.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
-    const fresh = (options) => {
-      const setup = setUp(options);
-      cleanups.push(setup.dir);
-      return setup;
-    };
-    refused(install(fresh(), { failUrl: 'firefox-159.0.tar.xz' }), 'a failed download');
-    refused(install(fresh(), { failUrl: 'SHA512SUMS.asc' }), 'a missing signature');
-    refused(install(fresh({ sums: () => [] })), 'no hash for the file');
-    refused(install(fresh({ sums: (hash, file) => [`${hash}  ${file}`, `${hash}  ${file}`] })), 'the hash given twice');
-    refused(install(fresh({ sums: (hash, file) => [`${'a'.repeat(128)}  ${file}`] })), 'another hash');
-    refused(install(fresh({ holds: '158.0' })), 'another version in the archive');
+    refused(install(fresh(t), { failUrl: 'firefox-159.0.tar.xz' }), 'a failed download', "Couldn't download https://archive.mozilla.org/pub/firefox/releases/159.0/linux-x86_64/en-US/firefox-159.0.tar.xz");
+    refused(install(fresh(t), { failUrl: 'SHA512SUMS.asc' }), 'a missing signature', "Couldn't download https://archive.mozilla.org/pub/firefox/releases/159.0/SHA512SUMS.asc");
+    refused(install(fresh(t, { sums: () => [] })), 'no hash for the file', 'no single hash');
+    refused(install(fresh(t, { sums: (hash, file) => [`${hash}  ${file}`, `${hash}  ${file}`] })), 'the hash given twice', 'no single hash');
+    refused(install(fresh(t, { sums: (hash, file) => [`${'a'.repeat(128)}  ${file}`] })), 'another hash', "doesn't match SHA512SUMS");
+    refused(install(fresh(t, { holds: '158.0' })), 'another version in the archive', 'holds Firefox 158.0, not 159.0');
   });
 
   test('runs only on a GitHub Actions runner', (t) => {
-    const setup = setUp();
-    t.after(() => fs.rmSync(setup.dir, { recursive: true, force: true }));
-    const result = install(setup, { actions: null });
-    refused(result, 'outside GitHub Actions');
+    const result = install(fresh(t), { actions: null });
+    refused(result, 'outside GitHub Actions', 'only for a disposable Linux runner');
     assert.deepEqual(result.calls, []);
   });
 });

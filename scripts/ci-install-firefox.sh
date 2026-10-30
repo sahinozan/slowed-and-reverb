@@ -32,7 +32,10 @@ cd "$work"
 
 fetch() {
   curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-    --retry 2 --connect-timeout 30 --max-time 120 -o "$2" "$1"
+    --retry 2 --connect-timeout 30 --max-time 120 -o "$2" "$1" || {
+    echo "Couldn't download $1." >&2
+    exit 1
+  }
 }
 fetch "$base/KEY" KEY
 fetch "$base/SHA512SUMS" SHA512SUMS
@@ -45,14 +48,16 @@ gpg --batch --quiet --import KEY
 # GnuPG's machine-readable status goes to its own file, apart from its
 # messages. It has to exit 0 and report exactly one good signature, made
 # by the pinned subkey of the pinned key (VALIDSIG's first and last
-# fields), and nothing revoked, expired, bad or unchecked.
+# fields), and no signature or signing key revoked, expired, bad or
+# unchecked. KEYEXPIRED alone isn't refused: GnuPG reports it for every
+# expired subkey in Mozilla's KEY, five of them, beside a good signature.
 set +e
 gpg --batch --status-file status.txt --verify SHA512SUMS.asc SHA512SUMS 2> gpg.txt
 verified=$?
 set -e
 good=$(grep -c '^\[GNUPG:\] GOODSIG ' status.txt || true)
 valid=$(grep -cE "^\[GNUPG:\] VALIDSIG $SIGNING_SUBKEY .* $RELEASE_KEY$" status.txt || true)
-others=$(grep -cE '^\[GNUPG:\] (VALIDSIG|BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYREVOKED|KEYEXPIRED|NO_PUBKEY|SIGEXPIRED) ' status.txt || true)
+others=$(grep -cE '^\[GNUPG:\] (VALIDSIG|BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|KEYREVOKED|NO_PUBKEY|SIGEXPIRED)( |$)' status.txt || true)
 if (( verified != 0 || good != 1 || valid != 1 || others != 1 )); then
   cat status.txt gpg.txt >&2
   echo "SHA512SUMS isn't signed by Mozilla's release subkey $SIGNING_SUBKEY of $RELEASE_KEY, or GnuPG refused it." >&2
@@ -74,5 +79,10 @@ if [[ "$installed" != "$version" ]]; then
   exit 1
 fi
 tar -xJf firefox.tar.xz
+# And again as unpacked, in case the archive held more than one.
+if [[ "$(sed -n 's/^Version=//p' firefox/application.ini)" != "$version" ]]; then
+  echo "The unpacked Firefox isn't $version." >&2
+  exit 1
+fi
 echo "FIREFOX_BIN=$work/firefox/firefox" >> "$GITHUB_ENV"
 echo "Firefox $installed from $base/$file (SHA512SUMS signed by $SIGNING_SUBKEY of $RELEASE_KEY) is in $work/firefox."
