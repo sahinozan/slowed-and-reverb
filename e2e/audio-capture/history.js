@@ -19,7 +19,7 @@
 // `sites` lists the engines it was put back into, each checked on its own.
 // `expect` lists the problems it must cause in each of them ({ code,
 // during }: the problem's message names the action or steady stretch where
-// it was heard).
+// it was heard, or one of a list of them).
 
 const both = ['chromium', 'firefox'];
 
@@ -73,12 +73,17 @@ const HISTORY = [
     // A value set straight away clicks as loudly as the wave is far from 0
     // at that instant, so one change can come out small: in 23 Chromium
     // runs, keeping the pitch clicked at as little as 0.061 and once not at
-    // all. Turning the effect off and on, and the overlapping changes, have
-    // clicked at 0.33 or more in every run of either browser.
+    // all. Turning the effect off is one such change too: in 13 runs of
+    // both browsers at 4c8f568 (52 recordings), it clicked at as little as
+    // 0.136, and once, in Firefox on YouTube, not at all, because the
+    // switch fell where the wave crossed 0 (a step of 0.023). Turning it
+    // on clicked at 0.227 or more, and the overlapping changes, eight of
+    // them, 4 to 8 times every time, at 0.49 or more. So this asks for the
+    // overlapping changes and for either end of turning the effect off and
+    // on, not both.
     expect: [
       { code: 'click', during: 'during overlapping changes' },
-      { code: 'click', during: 'during turn off' },
-      { code: 'click', during: 'during turn on' }
+      { code: 'click', during: ['during turn off', 'during turn on'] }
     ]
   },
   {
@@ -269,9 +274,11 @@ function controlVerdict(entry, results, invalidCodes) {
   if (ran.join(',') !== entry.sites.join(',')) failures.push(`ran on ${ran.join(', ') || 'no site'}, wanted ${entry.sites.join(', ')}`);
   for (const { site, problems } of results) {
     const listed = problems.map(({ code, message }) => `${code}: ${message}`);
+    // `during` is one action, or a list of actions any one of which will do.
     for (const { code, during } of entry.expect) {
-      if (!problems.some((problem) => problem.code === code && problem.message.includes(during))) {
-        failures.push(`${site}: should fail with ${code} in "${during}"; got ${JSON.stringify(listed)}`);
+      const actions = [].concat(during);
+      if (!problems.some((problem) => problem.code === code && actions.some((action) => problem.message.includes(action)))) {
+        failures.push(`${site}: should fail with ${code} in ${actions.map((action) => `"${action}"`).join(' or ')}; got ${JSON.stringify(listed)}`);
       }
     }
     const invalid = problems.filter((problem) => invalidCodes.includes(problem.code));
