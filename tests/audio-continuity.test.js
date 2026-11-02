@@ -283,7 +283,7 @@ describe('audio regression historical controls', () => {
       assert.ok(entry.browsers.length && entry.browsers.every((name) => ['chromium', 'firefox'].includes(name)), entry.id);
       const keys = [`'${entry.check}':`, `"${entry.check}":`, `${entry.check}:`];
       assert.ok(keys.some((key) => suite.includes(key)), `${entry.id}: no check "${entry.check}"`);
-      assert.ok(entry.expect.length && entry.expect.every(({ code, during }) => code && during), entry.id);
+      assert.ok(entry.expect.length && entry.expect.every(({ code, during }) => code && [].concat(during).length && [].concat(during).every((action) => typeof action === 'string' && action)), entry.id);
       assert.ok(entry.sites.length && entry.sites.every((site) => ['youtube', 'spotify'].includes(site)), entry.id);
       assert.equal(new Set(entry.sites).size, entry.sites.length, entry.id);
     }
@@ -315,12 +315,22 @@ describe('audio regression historical controls', () => {
     const notRestored = { code: 'not-restored', message: 'turn the extension off: the unchanged sound never came back' };
     assert.deepEqual(controlVerdict(shutdown, [{ site: 'youtube', problems: [notRestored] }, { site: 'spotify', problems: [notRestored] }], invalid), []);
     assert.match(controlVerdict(shutdown, [{ site: 'youtube', problems: [] }, { site: 'spotify', problems: [notRestored] }], invalid)[0], /^youtube: should fail with not-restored/);
-    // Every expected problem, not just one of them.
+    // Every expected problem, not just one of them; where one lists
+    // actions, any one of them will do.
     const clicks = HISTORY.find(({ id }) => id === '02ef174');
     const during = (action) => ({ code: 'click', message: `click of 0.5 at 1 ms (channel 0), during ${action}` });
     const all = [during('overlapping changes'), during('turn off'), during('turn on')];
     assert.deepEqual(controlVerdict(clicks, [{ site: 'youtube', problems: all }, { site: 'spotify', problems: all }], invalid), []);
-    assert.equal(controlVerdict(clicks, [{ site: 'youtube', problems: all }, { site: 'spotify', problems: all.slice(0, 2) }], invalid).length, 1);
+    // The Mac's run at 4c8f568: YouTube's turn-off fell where the wave crossed 0.
+    const noTurnOff = [during('overlapping changes'), during('turn on')];
+    assert.deepEqual(controlVerdict(clicks, [{ site: 'youtube', problems: noTurnOff }, { site: 'spotify', problems: all }], invalid), []);
+    const noTurnOn = [during('overlapping changes'), during('turn off')];
+    assert.deepEqual(controlVerdict(clicks, [{ site: 'youtube', problems: all }, { site: 'spotify', problems: noTurnOn }], invalid), []);
+    const neither = controlVerdict(clicks, [{ site: 'youtube', problems: all }, { site: 'spotify', problems: [during('overlapping changes'), during('keep the pitch')] }], invalid);
+    assert.deepEqual(neither, [`spotify: should fail with click in "during turn off" or "during turn on"; got ${JSON.stringify(['click: click of 0.5 at 1 ms (channel 0), during overlapping changes', 'click: click of 0.5 at 1 ms (channel 0), during keep the pitch'])}`]);
+    const noOverlap = controlVerdict(clicks, [{ site: 'youtube', problems: [during('turn off'), during('turn on')] }, { site: 'spotify', problems: all }], invalid);
+    assert.equal(noOverlap.length, 1);
+    assert.match(noOverlap[0], /^youtube: should fail with click in "during overlapping changes"; got /);
   });
 });
 

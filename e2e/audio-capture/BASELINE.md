@@ -117,3 +117,6 @@ done.
 
 | Setup | Commit | Firefox | Runs | Passed | Failed | Not counted | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| Hosted | `4c8f568` | 159.0 | 6 | 6 | 0 | 0 | October 30, 2026; no late frame |
+| Hosted | `4c8f568` | 158.0.1 | 6 | 6 | 0 | 0 | October 31; no late frame |
+| Mac, AirPods | `4c8f568` | 159.0 | 1 | 0 | 1 | 1 | October 31. Chromium (muted) passed. In Firefox, the `02ef174` control wasn't caught as it should be: on YouTube, turning the effect off didn't click, because the switch fell where the wave crossed 0 (a step of 0.023, under the 0.05 threshold); it clicked 14 times elsewhere there, and 13 times on Spotify, turning off included. Fixed: the control now asks for a click when the effect turns off or when it turns on, not both. The fix changes what the workflow runs for, so every setup's count starts again after it; these 13 runs stay on record under `4c8f568`. Videos were playing in another browser on the Mac. |
