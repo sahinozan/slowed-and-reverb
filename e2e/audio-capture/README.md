@@ -616,7 +616,7 @@ same symptom, where the old route no longer exists.
 
 | Commit | Defect | Put back | Browsers | Caught as |
 | --- | --- | --- | --- | --- |
-| `02ef174` | Clicks when the effect or its settings changed | Narrow: every setting jumps straight to its new value, the player changes at once, no silence while a player is first routed in | Both | `click` during the overlapping changes and when the effect turns off and on (it clicks at other changes too, but a value set straight away clicks only as loudly as the wave is at that instant, so a single change can come out small) |
+| `02ef174` | Clicks when the effect or its settings changed | Narrow: every setting jumps straight to its new value, the player changes at once, no silence while a player is first routed in | Both | `click` during the overlapping changes, and when the effect turns off or when it turns on (it clicks at other changes too, but a value set straight away clicks only as loudly as the wave is at that instant, so a single change can come out small, or not click at all: once, at `4c8f568`, turning it off didn't) |
 | `3fbb1c3` | Jumps when changes overlapped | Exact (the first of its two fixes): a change starts from the setting's value now | Both | `click` during the overlapping changes |
 | `74032cc` | Spotify skipped every 12 to 13 s in Firefox | Narrow: Spotify's speed writes reach the player again, and the engine puts its speed back with its silent dip | Firefox, where it was heard | `gap` (85 to 90 ms each) during Spotify's resets, and the player changed speed 6 times |
 | `9cde26c` | The Spotify player stayed stopped after a speed request during a waiting change | Exact | Both | `gap` (over 1.2 s) during that change, and the player at 0x afterwards |
