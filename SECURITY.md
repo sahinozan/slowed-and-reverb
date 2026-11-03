@@ -35,35 +35,51 @@ Dependency audit workflow runs it every week and for dependency changes. It
 fails for every advisory it finds, including the ones below, and isn't one of
 the checks a pull request needs.
 
+node-forge, installed through web-ext and @devicefarmer/adbkit, was listed
+below until November 3, 2026, for
+[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv).
+That advisory and eleven more published on October 30, 2026 cover node-forge
+1.4.0 and earlier. node-forge 1.4.2, which fits adbkit's `^1.3.1`, fixes them
+all, and the project now installs it.
+
 ### Known advisories with no fix yet
 
-**node-forge 1.4.0:
-[GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv)
-(CVE-2026-85393).** Checked on October 23, 2026. node-forge up to 1.4.0
-accepts RSA PKCS#1 v1.5 signatures with extra elements nested in their digest
-algorithm, which can let a forged signature pass for some keys. It is
-installed through
-web-ext 10.8.0, which depends on @devicefarmer/adbkit 3.3.9, which depends on
-node-forge 1.4.0. No fixed node-forge had been published. The only change npm
-suggests, web-ext 5.1.0, is from 2020, comes with a much older linter and
-predates the Manifest V3 and data-collection checks this project relies on.
+**minimatch 3.1.5 and 10.2.6:
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+(CVE-2026-118764).** Checked on November 3, 2026. Before 11.0.1, minimatch
+can turn a glob pattern with `**/../` parts into more and more copies of
+itself while simplifying it, then compare every copy with every other, so a
+crafted pattern can use a great deal of time and memory. Two versions are
+installed: 10.2.6 through ESLint 10.13.0 and its @eslint/config-array 0.23.5,
+and 3.1.5 through web-ext 10.8.0, in multimatch 6.0.0 and in addons-linter
+10.14.0's ESLint 9.39.4, @eslint/config-array 0.21.2 and @eslint/eslintrc
+3.3.7. The fix is only in minimatch 11, a new major version, and the latest
+versions of all of these still ask for minimatch 3 or 10 (ESLint 10.14.0
+asks for `^10.2.6`), so no compatible fixed version exists. The only change
+npm suggests, ESLint 4.0.0, is from 2017, six major versions back.
 
-The project's own use doesn't reach the affected check. adbkit verifies these
-signatures only in its TCP-to-USB bridge, which listens for ADB connections
-once a program creates and starts it (`createTcpUsbBridge`, or adbkit's
-`usb-device-to-tcp` command). This project runs web-ext only to build and lint
-the store packages, which doesn't use ADB. web-ext's Firefox for Android
-runner, which this project doesn't use, uses adbkit only as a client and
-doesn't start the bridge. Nothing in this repository calls adbkit.
+The project's own use doesn't reach it. In 10.2.6 the affected code runs
+only when a caller asks for minimatch's most aggressive simplification
+(`optimizationLevel` 2 or more), which is meant for walking folders; the
+default is 1. None of the tools above sets it. 3.1.5 doesn't have that code
+at all; it is listed because the advisory covers every version before 11.0.1.
+The patterns also come only from this repository and the tools themselves:
+`eslint.config.js` and the `eslint .` in `npm run lint`, web-ext's built-in
+list of files to leave out plus the folder its build writes to, and
+addons-linter's own settings, which lint each file's text without matching
+patterns from the extension. Nothing in this repository calls minimatch or
+takes glob patterns from anyone else.
 
-The affected version is still installed, so this isn't a fix, and the audit
-keeps reporting it. Look again when node-forge, adbkit or web-ext publishes a
-fixed version or the advisory changes; when the versions of web-ext or adbkit,
-or how they depend on node-forge, change; when the project starts using
-web-ext's Android runner, adbkit directly, or anything that starts the bridge
-or checks signatures or keys from somewhere else; or when the build starts
-shipping anything from `node_modules`. If you find a way this project's own
-use reaches it, report it privately as described above.
+The affected versions are still installed, so this isn't a fix, and the
+audit keeps reporting it. Look again when minimatch publishes a fixed 3 or 10
+version or the advisory changes; when ESLint, @eslint/config-array,
+@eslint/eslintrc, multimatch, addons-linter or web-ext move to a fixed
+minimatch, or their versions or how they call it change, especially if one
+starts setting `optimizationLevel`; when the project starts taking glob
+patterns from outside the repository, such as ignore files of web-ext's or
+ESLint's from somewhere else, or using minimatch directly; or when the build
+starts shipping anything from `node_modules`. If you find a way this
+project's own use reaches it, report it privately as described above.
 
 **deepmerge 4.3.1:
 [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).**
@@ -73,8 +89,9 @@ object it returns, so properties the caller didn't set show up when they are
 read without an own-property check. It is installed through web-ext 10.8.0,
 which depends on addons-linter 10.14.0, which depends on deepmerge 4.3.1.
 4.3.1, from March 2023, is deepmerge's latest version, so no fixed version
-exists. The only change npm suggests, web-ext 3.2.1, is from 2019 and has the
-same drawbacks as the node-forge suggestion above.
+exists. The only change npm suggests, web-ext 3.2.1, is from 2019, comes with
+a much older linter and predates the Manifest V3 and data-collection checks
+this project relies on.
 
 The project's own use doesn't reach it. addons-linter uses deepmerge only
 when it prepares the schemas it checks `manifest.json` against: it merges
