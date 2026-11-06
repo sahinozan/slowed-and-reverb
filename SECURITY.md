@@ -44,42 +44,42 @@ all, and the project now installs it.
 
 ### Known advisories with no fix yet
 
-**minimatch 3.1.5 and 10.2.6:
+**minimatch 10.2.6:
 [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)
-(CVE-2026-118764).** Checked on November 3, 2026. Before 11.0.1, minimatch
-can turn a glob pattern with `**/../` parts into more and more copies of
-itself while simplifying it, then compare every copy with every other, so a
-crafted pattern can use a great deal of time and memory. Two versions are
-installed: 10.2.6 through ESLint 10.13.0 and its @eslint/config-array 0.23.5,
-and 3.1.5 through web-ext 10.8.0, in multimatch 6.0.0 and in addons-linter
-10.14.0's ESLint 9.39.4, @eslint/config-array 0.21.2 and @eslint/eslintrc
-3.3.7. The fix is only in minimatch 11, a new major version, and the latest
-versions of all of these still ask for minimatch 3 or 10 (ESLint 10.14.0
-asks for `^10.2.6`), so no compatible fixed version exists. The only change
-npm suggests, ESLint 4.0.0, is from 2017, six major versions back.
+(CVE-2026-118764).** Checked on November 6, 2026. minimatch 7.0.0 up to
+11.0.0 can turn a glob pattern with `**/../` parts into more and more copies
+of itself while simplifying it, then compare every copy with every other, so
+a crafted pattern can use a great deal of time and memory. 10.2.6 is
+installed through ESLint 10.13.0 and its @eslint/config-array 0.23.5. The fix
+is only in minimatch 11, a new major version, and the latest versions of both
+still ask for minimatch 10 (ESLint 10.14.0 asks for `^10.2.6`), so no
+compatible fixed version exists. The only change npm suggests, ESLint 9.39.5,
+goes back to the previous major version just to leave out the affected
+minimatch.
 
-The project's own use doesn't reach it. In 10.2.6 the affected code runs
-only when a caller asks for minimatch's most aggressive simplification
+minimatch 3.1.5, installed through web-ext 10.8.0 (in multimatch 6.0.0 and
+in addons-linter 10.14.0's ESLint 9.39.4, @eslint/config-array 0.21.2 and
+@eslint/eslintrc 3.3.7), was listed too until November 4, 2026, when the
+advisory was narrowed to 7.0.0 and later. It doesn't have the affected code.
+
+The project's own use doesn't reach it. The affected code runs only when a
+caller asks for minimatch's most aggressive simplification
 (`optimizationLevel` 2 or more), which is meant for walking folders; the
-default is 1. None of the tools above sets it. 3.1.5 doesn't have that code
-at all; it is listed because the advisory covers every version before 11.0.1.
-The patterns also come only from this repository and the tools themselves:
-`eslint.config.js` and the `eslint .` in `npm run lint`, web-ext's built-in
-list of files to leave out plus the folder its build writes to, and
-addons-linter's own settings, which lint each file's text without matching
-patterns from the extension. Nothing in this repository calls minimatch or
+default is 1. Neither ESLint nor @eslint/config-array sets it. The patterns
+also come only from this repository and ESLint itself: `eslint.config.js`,
+the `eslint .` in `npm run lint`, and ESLint's built-in defaults, such as
+leaving out `node_modules`. Nothing in this repository calls minimatch or
 takes glob patterns from anyone else.
 
-The affected versions are still installed, so this isn't a fix, and the
-audit keeps reporting it. Look again when minimatch publishes a fixed 3 or 10
-version or the advisory changes; when ESLint, @eslint/config-array,
-@eslint/eslintrc, multimatch, addons-linter or web-ext move to a fixed
+The affected version is still installed, so this isn't a fix, and the audit
+keeps reporting it. Look again when minimatch publishes a fixed 10 version or
+the advisory changes; when ESLint or @eslint/config-array move to a fixed
 minimatch, or their versions or how they call it change, especially if one
-starts setting `optimizationLevel`; when the project starts taking glob
-patterns from outside the repository, such as ignore files of web-ext's or
-ESLint's from somewhere else, or using minimatch directly; or when the build
-starts shipping anything from `node_modules`. If you find a way this
-project's own use reaches it, report it privately as described above.
+starts setting `optimizationLevel`; when another package brings in an
+affected minimatch; when the project starts taking ESLint's patterns from
+outside the repository, or using minimatch directly; or when the build starts
+shipping anything from `node_modules`. If you find a way this project's own
+use reaches it, report it privately as described above.
 
 **deepmerge 4.3.1:
 [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).**
