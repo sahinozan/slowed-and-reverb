@@ -44,7 +44,7 @@ all, and the project now installs it.
 
 ### Known advisories with no fix yet
 
-**minimatch 10.2.6:
+**minimatch 10.2.6, and 10.2.5 inside Playwright:
 [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)
 (CVE-2026-118764).** Checked on November 6, 2026. minimatch 7.0.0 up to
 11.0.0 can turn a glob pattern with `**/../` parts into more and more copies
@@ -55,7 +55,9 @@ is only in minimatch 11, a new major version, and the latest versions of both
 still ask for minimatch 10 (ESLint 10.14.0 asks for `^10.2.6`), so no
 compatible fixed version exists. The only change npm suggests, ESLint 9.39.5,
 goes back to the previous major version just to leave out the affected
-minimatch.
+minimatch. Playwright 1.64.1, through @playwright/test, also bundles an
+affected minimatch, 10.2.5, inside its own files, where npm's audit doesn't
+see it.
 
 minimatch 3.1.5, installed through web-ext 10.8.0 (in multimatch 6.0.0 and
 in addons-linter 10.14.0's ESLint 9.39.4, @eslint/config-array 0.21.2 and
@@ -65,21 +67,25 @@ advisory was narrowed to 7.0.0 and later. It doesn't have the affected code.
 The project's own use doesn't reach it. The affected code runs only when a
 caller asks for minimatch's most aggressive simplification
 (`optimizationLevel` 2 or more), which is meant for walking folders; the
-default is 1. Neither ESLint nor @eslint/config-array sets it. The patterns
-also come only from this repository and ESLint itself: `eslint.config.js`,
-the `eslint .` in `npm run lint`, and ESLint's built-in defaults, such as
-leaving out `node_modules`. Nothing in this repository calls minimatch or
-takes glob patterns from anyone else.
+default is 1. None of ESLint, @eslint/config-array and Playwright sets it.
+The patterns also come only from this repository and the tools themselves.
+For ESLint, they are `eslint.config.js`, the `eslint .` in `npm run lint`,
+and ESLint's built-in defaults, such as leaving out `node_modules`. For
+Playwright, they are the `testMatch` patterns in `playwright.config.js` and
+`playwright.ui.config.js`, the file names given to `playwright test`, and
+the `.gitignore` files in the repository's test folders. Nothing in
+this repository calls minimatch or takes glob patterns from anyone else.
 
-The affected version is still installed, so this isn't a fix, and the audit
-keeps reporting it. Look again when minimatch publishes a fixed 10 version or
-the advisory changes; when ESLint or @eslint/config-array move to a fixed
-minimatch, or their versions or how they call it change, especially if one
-starts setting `optimizationLevel`; when another package brings in an
-affected minimatch; when the project starts taking ESLint's patterns from
-outside the repository, or using minimatch directly; or when the build starts
-shipping anything from `node_modules`. If you find a way this project's own
-use reaches it, report it privately as described above.
+The affected versions are still installed, so this isn't a fix, and the audit
+keeps reporting ESLint's copy. Look again when minimatch publishes a fixed 10
+version or the advisory changes; when ESLint, @eslint/config-array or
+Playwright move to a fixed minimatch, or their versions or how they call it
+change, especially if one starts setting `optimizationLevel`; when another
+package brings in an affected minimatch; when the project starts taking
+ESLint's or Playwright's patterns from outside the repository, or using
+minimatch directly; or when the build starts shipping anything from
+`node_modules`. If you find a way this project's own use reaches it, report
+it privately as described above.
 
 **deepmerge 4.3.1:
 [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).**
