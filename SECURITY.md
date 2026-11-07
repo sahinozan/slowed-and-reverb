@@ -8,8 +8,12 @@ a problem that may already have been resolved.
 
 ## Report a vulnerability privately
 
-Do not open a public issue for a suspected vulnerability. Email
-[slowedandreverbsupport@proton.me](mailto:slowedandreverbsupport@proton.me) with:
+Do not open a public issue for a suspected vulnerability. Report it on
+GitHub with
+[Report a vulnerability](https://github.com/sahinozan/slowed-and-reverb/security/advisories/new),
+which only the maintainer can see, or email
+[slowedandreverbsupport@proton.me](mailto:slowedandreverbsupport@proton.me).
+Include:
 
 - the affected browser and extension version;
 - a concise description of the impact;

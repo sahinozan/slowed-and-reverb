@@ -1,0 +1,72 @@
+name: Something isn't working
+description: The extension or the website does something it shouldn't, or doesn't do what it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please don't include passwords, sign-in tokens or private library details, and remove account names from screenshots. To report a security problem, follow the [security policy](https://github.com/sahinozan/slowed-and-reverb/blob/main/SECURITY.md) instead of opening an issue.
+  - type: checkboxes
+    id: tried
+    attributes:
+      label: Before reporting
+      description: These solve most problems. Check the ones you tried.
+      options:
+        - label: The toolbar icon is pink while the song plays (gray means the effect is off or waiting for the player).
+        - label: I reloaded the page once.
+        - label: For Spotify, or for YouTube or YouTube Music in Firefox, the extension is allowed on the site in the browser's extension settings.
+        - label: I turned off other audio extensions.
+  - type: dropdown
+    id: site
+    attributes:
+      label: Where it happens
+      options:
+        - YouTube
+        - YouTube Music
+        - Spotify web player
+        - The website (slowedreverbapp.com)
+        - The popup itself
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and its full version
+      placeholder: Chrome 142.0.7444.60, Firefox 145.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 26.1, Windows 11
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Extension version
+      description: Shown in your browser's extensions page.
+      placeholder: "1.1.1"
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      description: The shortest list of steps that shows the problem.
+      placeholder: |
+        1. Open a song on YouTube.
+        2. Turn on the effect and choose the Slowed preset.
+        3. Skip to the next song.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: warning
+    attributes:
+      label: Any message in the popup
+      description: Copy the text of a warning or notice the popup showed, if any.

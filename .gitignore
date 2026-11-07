@@ -32,8 +32,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Local editor and assistant state
-.claude/
+# Local editor and assistant state. Shared Claude Code settings, hooks and
+# skills under .claude/ are committed; personal settings and worktrees aren't.
+.claude/settings.local.json
+.claude/worktrees/
 .codex/
 .idea/
 .vscode/
