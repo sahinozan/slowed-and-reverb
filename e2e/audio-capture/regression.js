@@ -124,10 +124,10 @@ const DRY_TONES = [
 // heard and fails the check.
 const FIRST_ENABLE_OBSERVE_MS = 6000;
 // Where in that recording Firefox's late frame may be (phaseSlips in
-// metrics.js): 2.1 to 3.5 s after the effect turned on on this Mac so far,
+// metrics.js): 1.13 to 3.5 s after the effect turned on on this Mac so far,
 // and 2 to 4 s in the reproducer, with room either side. A click within
 // CLICK_PLACE_MS of where the phase scan puts the frame is the frame's.
-const LATE_FRAME_MS = [1500, 5000];
+const LATE_FRAME_MS = [1000, 5000];
 const CLICK_PLACE_MS = 5;
 const LATE_FRAME_LABEL = "Firefox's late frame";
 // How long cleaning up after a check that couldn't finish may wait for the
@@ -1133,4 +1133,4 @@ function defineRegression(browser) {
   });
 }
 
-module.exports = { defineRegression, dryExpect, effectExpect, ringingTones, withoutRinging };
+module.exports = { defineRegression, dryExpect, effectExpect, LATE_FRAME_MS, ringingTones, withoutRinging };

@@ -1000,9 +1000,10 @@ function slipsOnTrack(track, sampleRate, minSamples) {
   }));
 }
 
-// Firefox's late frame (README.md in this folder, "Limits"): 2 to 4 seconds
-// after a player that is already playing is routed into a graph, Firefox
-// puts a frame of silence into the song, and the song goes on a frame late.
+// Firefox's late frame (README.md in this folder, "Limits"): usually 2 to 4
+// seconds (on this Mac once as early as 1.13 seconds) after a player that is
+// already playing is routed into a graph, Firefox puts a frame of silence
+// into the song, and the song goes on a frame late.
 // In the recording that is one slip of the tones' phase, later by one frame
 // of the song at the player's speed: 1.25 samples at 0.8x, for a 48 kHz song
 // in a 48 kHz context. Each slip has been within LATE_FRAME_TOLERANCE of
