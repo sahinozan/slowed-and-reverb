@@ -11,6 +11,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/audio-capture-trial.yml'
+      # The jobs' Node.js version.
+      - '.nvmrc'
       - 'e2e/audio-capture/**'
       - 'e2e/extension-copy.js'
       # Both suites start Firefox through it.
@@ -63,7 +65,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.19.0
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install the pinned npm version
@@ -199,7 +201,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.19.0
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install the pinned npm version
