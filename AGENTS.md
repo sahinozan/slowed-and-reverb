@@ -37,7 +37,7 @@ covers the features and development commands in full.
   replace that yet. "What it can replace" in the README below says what
   would have to be shown first. Such a change, or one to the suite itself
   (`e2e/audio-capture/`), merges only once both suites have passed on the
-  exact commit being merged, with the branch up to date with `main` (the
+  pull request's final commit, with the branch up to date with `main` (the
   workflow tests the branch merged into `main`): in the pull request's
   audio workflow, both jobs, none skipped or cancelled, and on this Mac,
   Chromium muted (`AUDIO_REGRESSION_MUTE=1`) and Firefox, which plays the
@@ -184,3 +184,8 @@ for every change, and the browser tests too unless the base commit's
 the workflows or the classifier always runs them. Every review conversation
 must be resolved before merging. Don't merge unless asked. Commit messages
 and pull request descriptions are plain prose about what changed and why.
+
+Pull requests are squash-merged, the only method the repository allows: each
+becomes one commit on `main` whose message is the pull request's title and
+description. So before merging, make sure they describe the final change,
+not the first draft, and remove the template's comment.

@@ -775,11 +775,11 @@ background script), all of this would have to be shown:
 4. Removing the extension and Spotify updates in Chromium in the suite.
    Done: both are checked now (see "What it checks").
 5. A rule for every such change: both suites and their controls pass on the
-   exact commit to merge, here and in the hosted workflow, with no unexplained
-   failure and no missing job. Either the audio workflow becomes required for
-   those files, or the rule is followed by hand. Written: it's followed by
-   hand, as `AGENTS.md` ("Checks") says, and applies to changes to the
-   suite too. The audio workflow isn't required.
+   pull request's final commit, here and in the hosted workflow, with no
+   unexplained failure and no missing job. Either the audio workflow becomes
+   required for those files, or the rule is followed by hand. Written: it's
+   followed by hand, as `AGENTS.md` ("Checks") says, and applies to changes to
+   the suite too. The audio workflow isn't required.
 
 How the effect sounds isn't part of this: listen after any change that can
 affect it (`AGENTS.md`).
