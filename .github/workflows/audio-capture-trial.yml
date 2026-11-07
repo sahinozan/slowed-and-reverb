@@ -37,10 +37,12 @@ on:
 permissions:
   contents: read
 
-# Each finished run is evidence, so a newer run waits instead of cancelling.
+# A new commit on a pull request stops the run on the commit it replaces: only
+# runs on a pull request's final commit count. Runs started by hand, such as
+# the baseline's, are never stopped; a newer one waits for them.
 concurrency:
   group: audio-capture-trial-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   linux-null-sink:
