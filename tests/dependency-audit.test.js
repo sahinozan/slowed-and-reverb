@@ -457,6 +457,10 @@ describe('dependency audit exceptions', () => {
     const result = audit([{ ...FORGE, reason }]);
     assert.equal(result.status, 'reviewed');
     assert.match(result.markdown, /\*\*Reviewed:\*\* No \\_\\_proto\\_\\_ key &lt;script&gt;alert\(1\)&lt;\/script&gt; \\\[x\\\]\(https:\/\/example\.com\) \\`code\\` \\\*bold\\\* Look again/);
+ 
+    // A backslash of its own can't undo the escaping that follows it.
+    const slashed = audit([{ ...FORGE, reason: 'C:\\path_x \\*not bold*' }]);
+    assert.match(slashed.markdown, /\*\*Reviewed:\*\* C:\\\\path\\_x \\\\\\\*not bold\\\* Look again/);
   });
 
   test('the repository\'s own list is in the expected format', () => {

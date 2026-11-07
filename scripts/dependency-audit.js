@@ -65,14 +65,16 @@ const isStringArray = (value) => Array.isArray(value) && value.every((item) => t
 const isCount = (value) => Number.isInteger(value) && value >= 0;
 
 // Text from npm's output, safe to put in Markdown: one line, with no HTML,
-// links, images, code or emphasis of its own.
-function text(value) {
+// links, images, code or emphasis of its own. Prose also has its underscores
+// escaped, so a word like __proto__ isn't read as emphasis; names and paths
+// keep theirs, as underscores inside a word don't start emphasis.
+function text(value, { prose = false } = {}) {
   return String(value)
     .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/[\\`*[\]~]/g, '\\$&')
+    .replace(prose ? /[\\`*[\]~_]/g : /[\\`*[\]~]/g, '\\$&')
     .trim();
 }
 
@@ -265,9 +267,7 @@ function advisorySection(advisory, vulnerabilities, lock) {
     const entry = vulnerabilities[name];
     lines.push(`- ${text(name)} ${text(versionsOf(lock, entry))}, affected: ${text(range)}. ${fixOf(entry)}`);
     if (problem) lines.push(`  - **Needs attention:** ${problem}`);
-    // The reason is the project's own text, but escaped too; also its
-    // underscores, so a word like __proto__ isn't read as emphasis.
-    else if (exception) lines.push(`  - **Reviewed:** ${text(exception.reason).replace(/_/g, '\\_')} Look again by ${text(exception.reviewBy)}.`);
+    else if (exception) lines.push(`  - **Reviewed:** ${text(exception.reason, { prose: true })} Look again by ${text(exception.reviewBy)}.`);
     for (const node of entry.nodes) lines.push(`  - Installed at ${text(node)}`);
     const found = chains(vulnerabilities, name);
     for (const chain of found.slice(0, MAX_CHAINS)) {
