@@ -294,7 +294,8 @@ describe('store package contracts', () => {
     assert.doesNotMatch(workflow, /uses:\s+actions\/(?:checkout|setup-node|cache)@v\d/);
     assert.doesNotMatch(workflow, /uses:\s+actions\/upload-artifact@v\d/);
     assert.match(workflow, /persist-credentials:\s+false/);
-    assert.match(workflow, /node-version:\s+24\.19\.0/);
+    assert.match(workflow, /node-version-file:\s+\.nvmrc/);
+    assert.doesNotMatch(workflow, /node-version:/);
     assert.match(workflow, /npm@11\.19\.0/);
     assert.match(workflow, /os:\s+\[ubuntu-latest, windows-latest\]/);
     assert.match(workflow, /npm run test:e2e/);

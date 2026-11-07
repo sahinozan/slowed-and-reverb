@@ -1,10 +1,11 @@
 'use strict';
 
-// The site's demo signal chain. It mirrors extension/content.js so what you
-// hear is what the extension does: an <audio> element carries speed and pitch
-// (playbackRate and preservesPitch, exactly as on YouTube), then the same EQ,
-// reverb, echo, saturation, width, pan and limiter with the same numbers. The
-// loop is a short excerpt of a Creative Commons song served from this site.
+// The site's demo signal chain. It mirrors the extension's audio engine in
+// extension/youtube-main.js so what you hear is what the extension does: an
+// <audio> element carries speed and pitch (playbackRate and preservesPitch,
+// exactly as on YouTube), then the same EQ, reverb, echo, saturation, width,
+// pan and limiter with the same numbers. The loop is a short excerpt of a
+// Creative Commons song served from this site.
 
 window.SRDemo = (function () {
   const BPM = 80;
@@ -13,7 +14,7 @@ window.SRDemo = (function () {
     keepPitch: false, saturation: 0, eqLow: 0, eqMid: 0, eqHigh: 0
   });
 
-  // Copied from extension/content.js.
+  // Copied from extension/youtube-main.js.
   const EQ_LOW_FREQUENCY = 200;
   const EQ_MID_FREQUENCY = 1000;
   const EQ_MID_Q = 1;
@@ -92,7 +93,7 @@ window.SRDemo = (function () {
     return new Blob([view], { type: 'audio/wav' });
   }
 
-  /* ---- Signal chain (mirrors createPipeline in content.js) ------------- */
+  /* ---- Signal chain (mirrors createPipeline in youtube-main.js) -------- */
 
   function createGain(value = 1) {
     const node = context.createGain();
@@ -219,7 +220,7 @@ window.SRDemo = (function () {
     pipeline = { eqLow, eqMid, eqHigh, dry, wet, echo, saturation, width, pan, bypass, processed };
   }
 
-  // Mirrors applySettings in content.js.
+  // Mirrors applySettings in youtube-main.js.
   function applyNow() {
     if (!pipeline) return;
     const { settings, enabled } = wanted;

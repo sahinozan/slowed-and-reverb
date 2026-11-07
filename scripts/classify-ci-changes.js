@@ -24,7 +24,6 @@ const NON_BROWSER_PATHS = new Set([
   '.gitattributes',
   '.gitignore',
   '.npmrc',
-  '.nvmrc',
   'eslint.config.js',
   'scripts/release.js',
   'scripts/render-icons.js',

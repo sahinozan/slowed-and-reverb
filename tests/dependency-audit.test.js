@@ -769,6 +769,7 @@ describe('dependency audit workflow', () => {
     const files = [
       '.github/workflows/dependency-audit.yml',
       '.npmrc',
+      '.nvmrc',
       'audit-exceptions.json',
       'package.json',
       'package-lock.json',
@@ -778,7 +779,8 @@ describe('dependency audit workflow', () => {
     assert.match(workflow, /^permissions:\n {2}contents: read\n\n/m);
     assert.doesNotMatch(workflow, /: write\b/);
     assert.match(workflow, /persist-credentials: false/);
-    assert.match(workflow, /node-version: 24\.19\.0/);
+    assert.match(workflow, /node-version-file: \.nvmrc/);
+    assert.doesNotMatch(workflow, /node-version:/);
     assert.match(workflow, /npm install --global npm@11\.19\.0/);
     assert.match(workflow, /timeout-minutes: \d+/);
     for (const [, action] of workflow.matchAll(/uses: (\S+)/g)) assert.match(action, /@[0-9a-f]{40}$/, action);

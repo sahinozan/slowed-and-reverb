@@ -53,8 +53,9 @@ describe('CI change classification', () => {
     }
   });
 
-  test('runs the browser tests for extension runtime and dependency changes', () => {
+  test('runs the browser tests for extension runtime, dependency and Node.js version changes', () => {
     for (const file of [
+      '.nvmrc',
       'extension/background.js',
       'extension/popup.css',
       'extension/manifest.json',
