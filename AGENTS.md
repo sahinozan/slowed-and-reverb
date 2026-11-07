@@ -37,7 +37,7 @@ covers the features and development commands in full.
   replace that yet. "What it can replace" in the README below says what
   would have to be shown first. Such a change, or one to the suite itself
   (`e2e/audio-capture/`), merges only once both suites have passed on the
-  exact commit being merged, with the branch up to date with `main` (the
+  pull request's final commit, with the branch up to date with `main` (the
   workflow tests the branch merged into `main`): in the pull request's
   audio workflow, both jobs, none skipped or cancelled, and on this Mac,
   Chromium muted (`AUDIO_REGRESSION_MUTE=1`) and Firefox, which plays the
