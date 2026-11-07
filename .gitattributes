@@ -6,3 +6,7 @@
 *.gif binary
 *.webp binary
 *.ico binary
+
+# Third-party license text stays exactly as published, trailing spaces
+# included, so the whitespace check (scripts/check-whitespace.js) skips it.
+site/assets/fonts/*-OFL.txt -whitespace

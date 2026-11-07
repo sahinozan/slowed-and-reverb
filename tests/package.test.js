@@ -306,13 +306,9 @@ describe('store package contracts', () => {
     assert.equal(fs.existsSync(path.join(root, '.github/dependabot.yml')), true);
   });
 
+  // Only files git tracks, as in CI: a local note or report that isn't part
+  // of the repository can't fail the tests.
   test('contains no prose em dashes in maintained or generated files', () => {
-    const ignoredDirectories = new Set([
-      '.git',
-      'node_modules',
-      'playwright-report',
-      'test-results'
-    ]);
     const textExtensions = new Set([
       '.css',
       '.html',
@@ -326,26 +322,20 @@ describe('store package contracts', () => {
     ]);
     const textFileNames = new Set(['.gitignore', '.nvmrc', 'LICENSE']);
     const emDash = String.fromCodePoint(0x2014);
+    const tracked = run('git', ['ls-files', '-z']).stdout.split('\0').filter(Boolean);
+    assert.ok(tracked.includes('package.json'), 'git ls-files listed the repository');
 
-    function maintainedFiles(directory) {
-      return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-        if (entry.isDirectory() && ignoredDirectories.has(entry.name)) return [];
-        const absolute = path.join(directory, entry.name);
-        return entry.isDirectory() ? maintainedFiles(absolute) : [absolute];
-      });
-    }
-
-    const offenders = maintainedFiles(root).filter((file) => {
+    const offenders = tracked.filter((file) => {
       if (!textExtensions.has(path.extname(file)) && !textFileNames.has(path.basename(file))) {
         return false;
       }
       try {
-        return fs.readFileSync(file, 'utf8').includes(emDash);
+        return fs.readFileSync(path.join(root, file), 'utf8').includes(emDash);
       } catch {
         return false;
       }
     });
 
-    assert.deepEqual(offenders.map((file) => path.relative(root, file)), []);
+    assert.deepEqual(offenders, []);
   });
 });

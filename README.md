@@ -119,7 +119,7 @@ panel shows, and on My Presets.
 
 ```sh
 npm ci                    # install exactly what package-lock.json records
-npm run lint              # ESLint 10, flat config
+npm run lint              # ESLint 10, flat config, then CI's whitespace check over every tracked file
 npm test                  # run service worker, content, popup, and package tests
 npm run test:watch        # rerun tests while developing
 npx playwright install --no-shell chromium # one-time local browser install
