@@ -167,7 +167,7 @@ in. It prints only whether it found advisories and where the summary is, or
 which file it couldn't write, so nothing from the registry reaches the console,
 where GitHub Actions would read lines like `::add-mask::` as commands. It fails for any advisory, including
 one with no fixed version yet that
-[SECURITY.md](SECURITY.md#development-dependencies) describes.
+[DEPENDENCY-ADVISORIES.md](DEPENDENCY-ADVISORIES.md) describes.
 
 The test suite runs the real extension scripts against deterministic browser,
 DOM, and Web Audio mocks. It covers tab state and shortcuts, audio graph values,

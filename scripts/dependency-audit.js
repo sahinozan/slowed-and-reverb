@@ -26,7 +26,7 @@
 //
 // This isn't part of npm run check or the release. It has its own workflow,
 // .github/workflows/dependency-audit.yml, and an advisory with no fixed
-// version keeps it failing; see "Development dependencies" in SECURITY.md.
+// version keeps it failing; see DEPENDENCY-ADVISORIES.md.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -265,7 +265,7 @@ function judge({ stdout, exitCode, signal, spawnError, lock, ended }) {
   if (exitCode === 0) lines.push('npm exited with 0 although its report lists advisories; this still fails.', '');
   for (const advisory of advisories) lines.push(...advisorySection(advisory, vulnerabilities, lock), '');
   lines.push(
-    'Advisories the project has looked at but can\'t fix yet are described under "Development dependencies" in SECURITY.md. They still fail this check.',
+    'Advisories the project has looked at but can\'t fix yet are described in DEPENDENCY-ADVISORIES.md. They still fail this check.',
     '',
     EVIDENCE,
     ''

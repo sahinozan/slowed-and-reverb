@@ -4,7 +4,7 @@ name: Dependency audit
 # tools included, through scripts/dependency-audit.js. Kept apart from the
 # required "Lint, test, and package" check: an advisory can be published
 # without any change here, and one with no fixed version yet (see
-# "Development dependencies" in SECURITY.md) keeps this failing. It fails for
+# DEPENDENCY-ADVISORIES.md) keeps this failing. It fails for
 # any advisory and whenever npm gives no report to read, and keeps npm's own
 # output as an artifact. Nothing here is allowed to fail quietly.
 

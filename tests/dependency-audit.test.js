@@ -133,7 +133,7 @@ describe('dependency audit summary', () => {
     assert.match(result.markdown, /npm counts 3 affected packages/);
     assert.doesNotMatch(result.markdown, /GHSA-pqg4-j6r4-53mv|shell-quote/);
     assert.match(result.markdown, /Brought in by web-ext 10\.8\.0 &gt; @devicefarmer\/adbkit 3\.3\.9 &gt; node-forge 1\.4\.0\n/);
-    assert.match(result.markdown, /SECURITY\.md/);
+    assert.match(result.markdown, /DEPENDENCY-ADVISORIES\.md/);
   });
 
   test('fails when the report lists advisories even if npm exited with 0', () => {
