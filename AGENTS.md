@@ -184,3 +184,8 @@ for every change, and the browser tests too unless the base commit's
 the workflows or the classifier always runs them. Every review conversation
 must be resolved before merging. Don't merge unless asked. Commit messages
 and pull request descriptions are plain prose about what changed and why.
+
+Pull requests are squash-merged, the only method the repository allows: each
+becomes one commit on `main` whose message is the pull request's title and
+description. So before merging, make sure they describe the final change,
+not the first draft, and remove the template's comment.
