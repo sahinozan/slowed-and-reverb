@@ -1,10 +1,12 @@
 'use strict';
 
 // Checks .github/workflows/audio-capture-trial.yml without running it: that
-// every step of each job has a deadline, that the deadlines leave time to
-// upload the evidence whichever step runs out of time, judged by GitHub's
-// rules for which steps run after a failure, and that the workflow runs for
-// a change to any file the audio suites load.
+// every step of each browser's job has a deadline, that the deadlines leave
+// time to upload the evidence whichever step runs out of time, judged by
+// GitHub's rules for which steps run after a failure, that each job runs
+// its browser's suite and then its trial, that the nightly runs ask for the
+// Firefox releases BASELINE.md needs, and that the workflow runs for a
+// change to any file the audio suites load.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -14,9 +16,12 @@ const { describe, test } = require('node:test');
 const { root } = require('./helpers/load-script');
 
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'audio-capture-trial.yml'), 'utf8');
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 // Minutes kept for the runner's own work between and around the steps.
 const RESERVE_MINUTES = 5;
 const UPLOAD_MINUTES = 5;
+const CAP = 50;
+const BROWSERS = ['chromium', 'firefox'];
 
 function jobText(name) {
   const match = new RegExp(`^ {2}${name}:\\n[\\s\\S]*?(?=^ {2}\\S|(?![\\s\\S]))`, 'm').exec(workflow);
@@ -40,22 +45,33 @@ function steps(job) {
     }));
 }
 
+// The steps that run in one browser's job: not those for another browser,
+// nor those that read the output of a step that doesn't run there.
+function stepsFor(all, browser) {
+  const kept = all.filter(({ condition }) => {
+    const only = /matrix\.browser == '(\w+)'/.exec(condition ?? '');
+    return !only || only[1] === browser;
+  });
+  const ids = new Set(kept.map(({ id }) => id));
+  return kept.filter(({ condition }) => [...(condition ?? '').matchAll(/steps\.([\w-]+)\.outputs/g)].every(([, id]) => ids.has(id)));
+}
+
 // Whether a step runs once an earlier step has failed, by GitHub's rules: a
-// step with no condition runs only if all before it succeeded; always() and
-// !cancelled() run after a failure. A failed step with continue-on-error
-// counts as a success. A step that needs the sink's output
-// runs only if the sink step finished, and one that needs a Firefox asked
-// for only if its install did (taken as asked for, the case with more
-// steps). Conditions on the Chromium cache pick one of two steps and don't
-// depend on a failure.
+// step with no status function runs only if all before it succeeded;
+// always() and !cancelled() run after a failure. A failed step with
+// continue-on-error counts as a success. A step that needs the sink's output
+// runs only if the sink step finished, and one that asks that a step didn't
+// fail doesn't run after that step's failure. Conditions on the Chromium
+// cache pick one of two steps and don't depend on a failure.
 function runsAfterFailure(step, failedIndex, index, all) {
   if (all[failedIndex]?.continueOnError) return true;
   const condition = step.condition ?? '';
   if (/always\(\)/.test(condition)) return true;
   if (!/!cancelled\(\)/.test(condition)) return false;
+  for (const [, id] of condition.matchAll(/steps\.([\w-]+)\.outcome != 'failure'/g)) {
+    if (all.findIndex((candidate) => candidate.id === id) === failedIndex) return false;
+  }
   const sink = all.findIndex(({ id }) => id === 'sink');
-  const install = all.findIndex(({ id }) => id === 'firefox-install');
-  if (/steps\.firefox-install\.outcome == 'success'/.test(condition) && install !== -1 && failedIndex <= install) return false;
   if (/steps\.sink\.outputs\.ready == 'true'/.test(condition)) return sink < failedIndex && sink < index;
   return true;
 }
@@ -94,117 +110,204 @@ function lateUploads(all, cap) {
   return late;
 }
 
-// What is wrong with a job's two browser steps: each has to run its own
-// browser's command, the Chromium step first, the Firefox step right after.
-function browserStepProblems(job, commands) {
+const SUITE = 'npm run test:audio:${{ matrix.browser }}';
+const TRIAL = 'npm run test:audio-trial:${{ matrix.browser }}';
+
+// What is wrong with a job's suite and trial steps: the suite runs its
+// browser's command, and the trial its own, right after it.
+function suiteStepProblems(job) {
   const all = steps(job);
   const problems = [];
-  const chromium = all.findIndex((step) => step.name.includes('Chromium audio'));
-  const firefox = all.findIndex((step) => step.name.includes('Firefox audio'));
-  if (chromium === -1 || firefox !== chromium + 1) problems.push('the Firefox step does not follow the Chromium step');
-  if (all[chromium]?.run !== commands.chromium) problems.push(`the Chromium step runs ${all[chromium]?.run}`);
-  if (all[firefox]?.run !== commands.firefox) problems.push(`the Firefox step runs ${all[firefox]?.run}`);
+  const suite = all.findIndex((step) => step.name === 'Run the audio regression suite');
+  const trial = all.findIndex((step) => step.name === 'Run the audio capture trial');
+  if (suite === -1 || trial !== suite + 1) problems.push('the trial does not follow the suite');
+  if (all[suite]?.run !== SUITE) problems.push(`the suite step runs ${all[suite]?.run}`);
+  if (all[trial]?.run !== TRIAL) problems.push(`the trial step runs ${all[trial]?.run}`);
   return problems;
 }
 
-const SINK_READY = "${{ !cancelled() && steps.sink.outputs.ready == 'true' }}";
-const JOBS = [
-  ['linux-null-sink', 47, { chromium: 'npm run test:audio-trial:chromium', firefox: 'npm run test:audio-trial:firefox' }, SINK_READY],
-  [
-    'linux-regression',
-    60,
-    { chromium: 'npm run test:audio:chromium', firefox: 'npm run test:audio:firefox' },
-    "${{ !cancelled() && steps.sink.outputs.ready == 'true' && (!inputs.firefox || steps.firefox-install.outcome == 'success') }}"
-  ]
-];
+// Every step's whole condition, by step name. The model above reads parts
+// of a condition, so a condition it doesn't know (one with `&& false` added,
+// say) is refused here instead of passing on the parts it recognizes. A
+// step not listed has no condition.
+const CONDITIONS = {
+  'Read the Playwright version': "matrix.browser == 'chromium'",
+  'Restore Playwright Chromium': "matrix.browser == 'chromium'",
+  'Install Playwright Chromium': "matrix.browser == 'chromium' && steps.playwright-cache.outputs.cache-hit != 'true'",
+  "Install Chromium's system libraries": "matrix.browser == 'chromium' && steps.playwright-cache.outputs.cache-hit == 'true'",
+  'Choose the Firefox release': "matrix.browser == 'firefox'",
+  'Install the Firefox asked for': "steps.firefox-release.outputs.version != ''",
+  "Read Firefox's files into memory": "matrix.browser == 'firefox'",
+  'Run the audio capture trial':
+    "${{ !cancelled() && steps.sink.outputs.ready == 'true' && steps.firefox-release.outcome != 'failure' && steps.firefox-install.outcome != 'failure' }}",
+  "Show the sound server's state": '${{ !cancelled() }}',
+  'Upload the evidence': '${{ always() }}'
+};
+// The only step whose failure may let the job go on: an experiment that
+// can't stop the tests.
+const MAY_FAIL = ["Read Firefox's files into memory"];
+
+// What is wrong with the job's conditions and continue-on-error: a
+// condition other than the one listed, or a step allowed to fail that may
+// not (a suite or trial failure would then leave the job green).
+function stepRuleProblems(text) {
+  const problems = [];
+  for (const step of steps(text)) {
+    const expected = CONDITIONS[step.name] ?? null;
+    if (step.condition !== expected) problems.push(`"${step.name}" runs if ${step.condition}, not ${expected}`);
+    if (step.continueOnError && !MAY_FAIL.includes(step.name)) problems.push(`"${step.name}" may fail without failing the job`);
+    if (/continue-on-error/.test(text.split(`- name: ${step.name}\n`)[1]?.split(/\n {6}- name: /)[0] ?? '') && !step.continueOnError) {
+      problems.push(`"${step.name}" has a continue-on-error this check can't read`);
+    }
+  }
+  if (/^ {4}continue-on-error:/m.test(text)) problems.push('the job may fail without failing the run');
+  return problems;
+}
+
+const job = jobText('linux');
+const SETUP = { chromium: 24, firefox: 14 };
 
 describe('the audio workflow', () => {
-  for (const [job, cap, commands, firefoxCondition] of JOBS) {
-    test(`${job}: every step has a deadline, and the upload has its time whichever step runs out`, () => {
-      const text = jobText(job);
-      assert.match(text, new RegExp(`^ {4}timeout-minutes: ${cap}$`, 'm'));
-      const all = steps(text);
-      for (const step of all) assert.ok(Number.isInteger(step.minutes) && step.minutes > 0, `${job}: "${step.name}" has no deadline`);
+  test('has one job for each browser, and neither stops the other', () => {
+    const browsers = [...job.matchAll(/^ {10}- browser: (\w+)$/gm)].map((match) => match[1]);
+    assert.deepEqual(browsers, BROWSERS);
+    assert.match(job, /^ {6}fail-fast: false$/m);
+    for (const browser of BROWSERS) {
+      assert.ok(packageJson.scripts[`test:audio:${browser}`], `no test:audio:${browser}`);
+      assert.ok(packageJson.scripts[`test:audio-trial:${browser}`], `no test:audio-trial:${browser}`);
+    }
+  });
+
+  for (const browser of BROWSERS) {
+    test(`${browser}: every step has a deadline, and the upload has its time whichever step runs out`, () => {
+      assert.match(job, new RegExp(`^ {4}timeout-minutes: ${CAP}$`, 'm'));
+      const all = stepsFor(steps(job), browser);
+      for (const step of all) assert.ok(Number.isInteger(step.minutes) && step.minutes > 0, `${browser}: "${step.name}" has no deadline`);
       const upload = all.at(-1);
       assert.match(upload.name, /^Upload /);
       assert.equal(upload.condition, '${{ always() }}');
       assert.equal(upload.minutes, UPLOAD_MINUTES);
-      assert.deepEqual(lateUploads(all, cap), [], job);
+      assert.deepEqual(lateUploads(all, CAP), [], browser);
       // The sums the job's comment gives.
       const setUp = uploadStart(all.slice(0, all.findIndex(({ id }) => id === 'sink') + 1), all.length);
-      assert.equal(setUp, 24);
-      assert.match(text, new RegExp(`\\(${setUp} minutes to set up,`));
-      assert.match(text, new RegExp(`come to ${uploadStart(all, all.length) + UPLOAD_MINUTES}, leaving ${RESERVE_MINUTES}`));
-      // Firefox runs after a Chromium failure once the sink is there.
-      const chromium = all.findIndex((step) => step.name.includes('Chromium audio'));
-      const firefox = all.findIndex((step) => step.name.includes('Firefox audio'));
-      assert.ok(chromium !== -1 && firefox === chromium + 1);
-      assert.equal(all[firefox].condition, firefoxCondition);
-      assert.ok(runsAfterFailure(all[firefox], chromium, firefox, all));
-      assert.equal(runsAfterFailure(all[firefox], all.findIndex(({ id }) => id === 'sink'), firefox, all), false);
-      // A Firefox asked for that doesn't install (or runs out of time)
-      // stops both suites, in the job that installs one.
+      assert.equal(setUp, SETUP[browser]);
+      const name = browser === 'chromium' ? 'Chromium' : 'Firefox';
+      const comment = job.replace(/\n\s*# /g, ' ');
+      assert.match(comment, new RegExp(`${uploadStart(all, all.length) + UPLOAD_MINUTES} in the ${name} job \\(${setUp} to set up,`));
+      // The trial runs after a failed suite once the sink is there.
+      const suite = all.findIndex((step) => step.name === 'Run the audio regression suite');
+      const trial = all.findIndex((step) => step.name === 'Run the audio capture trial');
+      assert.equal(all[suite].condition, null, 'the suite runs only if every step before it succeeded');
+      assert.ok(runsAfterFailure(all[trial], suite, trial, all));
+      assert.equal(runsAfterFailure(all[trial], all.findIndex(({ id }) => id === 'sink'), trial, all), false);
+      // A Firefox asked for that can't be chosen or installed (or runs out
+      // of time) stops both, in the job that installs one.
+      const choose = all.findIndex(({ id }) => id === 'firefox-release');
       const install = all.findIndex(({ id }) => id === 'firefox-install');
-      if (job === 'linux-regression') {
-        assert.ok(install !== -1 && install < chromium, 'the regression job installs a Firefox asked for before the suites');
-        assert.equal(all[install].condition, '${{ inputs.firefox }}');
+      if (browser === 'firefox') {
+        assert.ok(choose !== -1 && install === choose + 1 && install < suite, 'the Firefox job chooses and installs a Firefox before the suite');
+        assert.equal(all[choose].run, 'node scripts/firefox-release.js "$FIREFOX_ASKED" test-results/audio-regression/firefox-release.json');
+        assert.equal(all[install].condition, "steps.firefox-release.outputs.version != ''");
         assert.equal(all[install].run, 'bash scripts/ci-install-firefox.sh');
-        assert.equal(runsAfterFailure(all[chromium], install, chromium, all), false);
-        assert.equal(runsAfterFailure(all[firefox], install, firefox, all), false);
+        assert.match(job, /^ {10}FIREFOX_VERSION: \$\{\{ steps\.firefox-release\.outputs\.version \}\}$/m);
+        for (const failed of [choose, install]) {
+          assert.equal(runsAfterFailure(all[suite], failed, suite, all), false);
+          assert.equal(runsAfterFailure(all[trial], failed, trial, all), false);
+        }
       } else {
-        assert.equal(install, -1, "the trial keeps the runner's Firefox");
+        assert.equal(choose, -1, 'the Chromium job chooses no Firefox');
+        assert.equal(install, -1, 'the Chromium job installs no Firefox');
       }
-      assert.deepEqual(browserStepProblems(text, commands), [], job);
     });
   }
 
-  test("finds a browser step that runs the wrong command, another browser's, or none", () => {
-    const trial = jobText('linux-null-sink');
-    const [, , commands] = JOBS[0];
-    const chromiumLine = '        run: npm run test:audio-trial:chromium\n';
-    const firefoxLine = '        run: npm run test:audio-trial:firefox\n';
-    assert.equal(trial.split(chromiumLine).length, 2);
-    assert.equal(trial.split(firefoxLine).length, 2);
-    const swapped = trial.replace(chromiumLine, 'SWAP').replace(firefoxLine, chromiumLine).replace('SWAP', firefoxLine);
-    assert.deepEqual(browserStepProblems(swapped, commands), [
-      'the Chromium step runs npm run test:audio-trial:firefox',
-      'the Firefox step runs npm run test:audio-trial:chromium'
+  test('each job runs its suite, then its trial', () => {
+    assert.deepEqual(suiteStepProblems(job), []);
+  });
+
+  test('every step runs when it should, and only the experiment may fail without failing the job', () => {
+    assert.deepEqual(stepRuleProblems(job), []);
+    for (const name of Object.keys(CONDITIONS)) assert.ok(steps(job).some((step) => step.name === name), `no step "${name}"`);
+  });
+
+  test('finds a trial turned off, a suite allowed to fail, or a condition changed', () => {
+    const trialIf = `        if: ${CONDITIONS['Run the audio capture trial']}\n`;
+    assert.equal(job.split(trialIf).length, 2);
+    const off = job.replace(trialIf, trialIf.replace(' }}\n', ' && false }}\n'));
+    assert.deepEqual(stepRuleProblems(off), [
+      `"Run the audio capture trial" runs if ${CONDITIONS['Run the audio capture trial'].replace(' }}', ' && false }}')}, not ${CONDITIONS['Run the audio capture trial']}`
     ]);
-    // The regression suite's command in the trial's job.
-    assert.deepEqual(browserStepProblems(trial.replace(chromiumLine, '        run: npm run test:audio:chromium\n'), commands), [
-      'the Chromium step runs npm run test:audio:chromium'
-    ]);
-    // Both steps on one browser.
-    assert.deepEqual(browserStepProblems(trial.replace(firefoxLine, chromiumLine), commands), [
-      'the Firefox step runs npm run test:audio-trial:chromium'
+    const suiteHead = '      - name: Run the audio regression suite\n';
+    assert.equal(job.split(suiteHead).length, 2);
+    const failing = job.replace(suiteHead, `${suiteHead}        continue-on-error: true\n`);
+    assert.deepEqual(stepRuleProblems(failing), ['"Run the audio regression suite" may fail without failing the job']);
+    const guarded = job.replace(suiteHead, `${suiteHead}        if: \${{ always() }}\n`);
+    assert.deepEqual(stepRuleProblems(guarded), ['"Run the audio regression suite" runs if ${{ always() }}, not null']);
+    const wholeJob = job.replace('    timeout-minutes: 50\n', '    timeout-minutes: 50\n    continue-on-error: true\n');
+    assert.deepEqual(stepRuleProblems(wholeJob), ['the job may fail without failing the run']);
+  });
+
+  test("finds a suite or trial step that runs the wrong command, or none, or in the wrong order", () => {
+    const suiteLine = `        run: ${SUITE}\n`;
+    const trialLine = `        run: ${TRIAL}\n`;
+    assert.equal(job.split(suiteLine).length, 2);
+    assert.equal(job.split(trialLine).length, 2);
+    const swapped = job.replace(suiteLine, 'SWAP').replace(trialLine, suiteLine).replace('SWAP', trialLine);
+    assert.deepEqual(suiteStepProblems(swapped), [`the suite step runs ${TRIAL}`, `the trial step runs ${SUITE}`]);
+    // One browser named outright.
+    assert.deepEqual(suiteStepProblems(job.replace(suiteLine, '        run: npm run test:audio:chromium\n')), [
+      'the suite step runs npm run test:audio:chromium'
     ]);
     // A step with its command gone, though the command is still written in
     // the job (here in a comment).
-    assert.deepEqual(browserStepProblems(trial.replace(firefoxLine, `        # ${commands.firefox}\n`), commands), [
-      'the Firefox step runs null'
-    ]);
+    assert.deepEqual(suiteStepProblems(job.replace(trialLine, `        # ${TRIAL}\n`)), ['the trial step runs null']);
     // A command with something after it.
-    assert.deepEqual(browserStepProblems(trial.replace(chromiumLine, '        run: npm run test:audio-trial:chromium || true\n'), commands), [
-      'the Chromium step runs npm run test:audio-trial:chromium || true'
+    assert.deepEqual(suiteStepProblems(job.replace(suiteLine, `        run: ${SUITE} || true\n`)), [
+      `the suite step runs ${SUITE} || true`
     ]);
+    // The trial moved before the suite.
+    const trialStep = /\n {6}- name: Run the audio capture trial\n[\s\S]*?(?=\n {6}- name: )/.exec(job)[0];
+    const moved = job.replace(trialStep, '').replace('\n      - name: Run the audio regression suite', `${trialStep}\n      - name: Run the audio regression suite`);
+    assert.deepEqual(suiteStepProblems(moved), ['the trial does not follow the suite']);
   });
 
   test('finds a setup step given more time than the job has left, or none', () => {
-    // The check above, against the trial's job with npm ci given 10
-    // minutes: the upload is late once npm ci has taken them, unless npm ci
-    // is the step that failed, which skips the rest of the setup.
-    const longer = steps(jobText('linux-null-sink').replace(/(- name: Install exact dependencies\n {8}timeout-minutes: )3\n/, '$110\n'));
+    // The check above, with npm ci given 10 minutes: the upload is late
+    // once npm ci has taken them, unless npm ci is the step that failed,
+    // which skips the rest of the setup.
+    const longer = stepsFor(steps(job.replace(/(- name: Install exact dependencies\n {8}timeout-minutes: )3\n/, '$110\n')), 'chromium');
     assert.equal(longer.find(({ name }) => name === 'Install exact dependencies').minutes, 10);
-    const late = lateUploads(longer, 47);
-    assert.ok(late.includes('with nothing failing, the upload starts by minute 44'), late.join('\n'));
-    assert.ok(late.some((text) => text.includes('"Run the Firefox audio capture trial" out of time')));
+    const late = lateUploads(longer, CAP);
+    assert.ok(late.includes('with nothing failing, the upload starts by minute 47'), late.join('\n'));
+    assert.ok(late.some((text) => text.includes('"Run the audio capture trial" out of time')));
     assert.ok(!late.some((text) => text.includes('"Install exact dependencies" out of time')));
     // And one with no deadline at all.
-    const unbounded = steps(jobText('linux-null-sink').replace(/(- name: Check out repository\n) {8}timeout-minutes: 1\n/, '$1'));
+    const unbounded = steps(job.replace(/(- name: Check out repository\n) {8}timeout-minutes: 1\n/, '$1'));
     assert.ok(Number.isNaN(unbounded[0].minutes));
   });
 
-  test('runs for a change to any file the audio suites load', () => {
+  test('runs twice each night, first on Firefox\'s current release, then on the one before', () => {
+    const crons = [...workflow.matchAll(/^ {4}- cron: '([^']+)'$/gm)].map((match) => match[1]);
+    assert.equal(crons.length, 2);
+    const asked = /^ {2}FIREFOX_ASKED: (.*)$/m.exec(workflow)?.[1];
+    assert.equal(
+      asked,
+      `\${{ github.event_name == 'schedule' && (github.event.schedule == '${crons[0]}' && 'current' || 'previous') || inputs.firefox }}`
+    );
+    // On the same day in Berlin, in summer time as in winter: a run's day
+    // is when its Chromium suite started there (BASELINE.md).
+    for (const cron of crons) {
+      const [minute, hour, ...rest] = cron.split(' ');
+      assert.deepEqual(rest, ['*', '*', '*']);
+      assert.ok(Number(minute) % 60 !== 0, `${cron} starts on the hour`);
+      assert.ok(Number(hour) + 2 < 24, `${cron} can fall on the next day in Berlin`);
+    }
+    // A nightly run never replaces a waiting run started by hand.
+    assert.match(workflow, /group: audio-capture-trial-\$\{\{ github\.event_name == 'schedule' && 'nightly' \|\| /);
+    assert.match(workflow, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
+  });
+
+  test('runs for a change to any file the audio suites load or the workflow runs', () => {
     const filters = [...workflow.matchAll(/^ {6}- '([^']+)'$/gm)].map((match) => match[1]);
     const covered = (file) =>
       filters.some((filter) => (filter.endsWith('/**') ? file.startsWith(filter.slice(0, -2)) : file === filter));
@@ -223,6 +326,9 @@ describe('the audio workflow', () => {
     };
     for (const entry of entries) visit(`e2e/audio-capture/${entry}`);
     assert.ok(seen.has('e2e/firefox-launch.js'));
-    for (const file of seen) assert.ok(covered(file), `${file} is loaded by the audio suites but not in the workflow's paths`);
+    // And every script a step runs.
+    const scripts = [...workflow.matchAll(/\b(scripts\/[\w.-]+\.(?:js|sh))\b/g)].map((match) => match[1]);
+    assert.ok(scripts.includes('scripts/firefox-release.js'));
+    for (const file of [...seen, ...scripts]) assert.ok(covered(file), `${file} is used by the audio workflow but not in its paths`);
   });
 });

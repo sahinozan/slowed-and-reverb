@@ -9,17 +9,21 @@ count runs made before it under rules they didn't have.
 
 ## A run
 
-A run is one full run of the Chromium suite followed by one of the Firefox
-suite (`npm run test:audio:chromium`, then `npm run test:audio:firefox`),
-controls included, with no other browser tests meanwhile.
+A run is one full run of the Chromium suite and one of the Firefox suite
+(`npm run test:audio:chromium` and `npm run test:audio:firefox`), controls
+included, with no other browser tests on the same machine meanwhile.
 
-- **Hosted:** the "Audio regression suite" job of one start of the "Audio
-  capture trial" workflow by hand (`workflow_dispatch`) on `main`, with the
-  Firefox release it is to run (see below). Only a run's first attempt
-  counts: a rerun is recorded, not counted. The trial job runs too; its
-  result is recorded but not counted. Runs are started one at a time and
-  each is recorded before the next starts, because GitHub keeps only one
-  waiting run in the workflow's concurrency group.
+- **Hosted:** one run of the "Audio suites" workflow
+  (`.github/workflows/audio-capture-trial.yml`) on `main`, either started
+  by hand (`workflow_dispatch`) with the Firefox release it is to run, or
+  one of its two nightly runs (see below). Its two jobs, Chromium's and
+  Firefox's, run at the same time on separate runners; together they are
+  the run. Each job runs the audio capture trial after its suite; the
+  trial's result is recorded but not counted. Only a run's first attempt
+  counts: a rerun is recorded, not counted. Runs started by hand are
+  started one at a time and each is recorded before the next starts,
+  because GitHub keeps only one waiting run in the workflow's concurrency
+  group; the nightly runs have a group of their own.
 - **This Mac:** the two commands one after the other, from a clean checkout
   of `main`'s latest commit when the run starts, with the Mac kept awake
   (`caffeinate -i`). Chromium runs muted (`AUDIO_REGRESSION_MUTE=1`): the
@@ -56,7 +60,13 @@ result.
   were 159 and 158, and Mozilla planned 160 for November 6. Hosted runs
   choose their release with the workflow's `firefox` input, which installs
   it from Mozilla's archive (the runner's own was 158.0.1, on image
-  `ubuntu26` 20261026.180.1). On this Mac, a release other than the
+  `ubuntu26` 20261026.180.1). The input takes a release, or `current` or
+  `previous`, which `scripts/firefox-release.js` reads from Mozilla's
+  product-details when the run starts: the latest release, or the latest
+  of the major version before it. The nightly runs start at 01:17 UTC on
+  `current` and at 03:17 UTC on `previous`, so each night adds one run on
+  each. What a run asked for and got is saved with its evidence
+  (`firefox-release.json`). On this Mac, a release other than the
   installed one comes from Mozilla's archive into a folder of its own and
   runs through `FIREFOX_BIN`. The installed Firefox and its profiles aren't
   touched.
@@ -87,6 +97,8 @@ request's runs) isn't counted, even if the commit is merged later.
     suites were both complete then counts among the 30, as a failure.
   - **explained:** a suite that gave no result, explained (a runner's
     fault, say). It isn't counted.
+- The nightly runs can't wait for an explanation. One that starts while
+  an earlier hosted failure isn't explained yet is recorded, not counted.
 - A run that passes later doesn't cancel a failure.
 - A Firefox that doesn't start (`startupFailure` in its `environment.json`)
   gives no result for Firefox. The run isn't counted, and is done again.
@@ -95,6 +107,19 @@ request's runs) isn't counted, even if the commit is merged later.
 - Firefox's late frame (see "Limits" in the README) is reported, not failed.
   Each run records it for condition 2: in which checks, when, which tones
   moved by how much, and whether the click there was the frame's.
+
+## Changes to the plan
+
+- **November 2026, before Firefox 160 restarts the count:** the hosted
+  run's suites moved from one job, Chromium then Firefox, to a job for
+  each browser, the trial's job was folded into them, and two nightly runs
+  on `main` were added. Why: a pull request's audio gate took about 11
+  minutes with both suites in one job; the trial's own checks (the
+  recorder on known input, its failure controls, and Chromium's
+  `--mute-audio` comparison, on which the muted Mac runs rely) are kept
+  but no longer need a runner of their own; and nightly runs build the
+  hosted count without anyone starting them. The change touches what the
+  workflow runs for, so every setup's count starts again after its merge.
 
 ## Records
 
@@ -109,11 +134,13 @@ Each run records:
 - Firefox's late frame, as above;
 - anything else unusual, such as the Mac being in use.
 
-Hosted evidence is kept for 14 days by GitHub, so each run's files and log
-are downloaded when it ends. Every run's evidence is kept by the owner,
-with the tools that record and count the runs under these rules. The table
-below is brought up to date at least for each failure and when a setup is
-done.
+GitHub keeps the baseline's hosted evidence (runs started by hand or
+nightly) for 90 days, and a pull request's for 14. A run started by hand
+has its files and log downloaded when it ends; the nightly runs, when the
+owner's tools next record runs, within those 90 days. Every run's evidence
+is kept by the owner, with the tools that record and count the runs under
+these rules. The table below is brought up to date at least for each
+failure and when a setup is done.
 
 | Setup | Commit | Firefox | Runs | Passed | Failed | Not counted | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
