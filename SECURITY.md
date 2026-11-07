@@ -32,7 +32,8 @@ This policy covers the extension as published in the stores and the website at
 slowedreverbapp.com.
 
 The extension and the website ship none of this project's npm packages; those
-are development tools for building, linting and testing. Their known
-advisories, and why each one doesn't reach this project, are tracked in
-[DEPENDENCY-ADVISORIES.md](DEPENDENCY-ADVISORIES.md). If you find a way this
+are development tools for building, linting and testing. Advisories in them
+that have been reviewed and found not to reach this project are listed, each
+with its reason and a date to look at it again, in
+[audit-exceptions.json](audit-exceptions.json). If you find a way this
 project's own use does reach one, report it privately as described above.

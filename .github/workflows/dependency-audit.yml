@@ -3,10 +3,11 @@ name: Dependency audit
 # Asks the npm registry for advisories against package-lock.json, development
 # tools included, through scripts/dependency-audit.js. Kept apart from the
 # required "Lint, test, and package" check: an advisory can be published
-# without any change here, and one with no fixed version yet (see
-# DEPENDENCY-ADVISORIES.md) keeps this failing. It fails for
-# any advisory and whenever npm gives no report to read, and keeps npm's own
-# output as an artifact. Nothing here is allowed to fail quietly.
+# without any change here. It fails for any advisory not reviewed in
+# audit-exceptions.json, for an exception whose date to look again by has
+# passed or that is no longer needed, and whenever npm gives no report to
+# read, and keeps npm's own output as an artifact. Nothing here is allowed to
+# fail quietly.
 
 on:
   schedule:
@@ -16,6 +17,7 @@ on:
     paths:
       - '.github/workflows/dependency-audit.yml'
       - '.npmrc'
+      - 'audit-exceptions.json'
       - 'package.json'
       - 'package-lock.json'
       - 'scripts/dependency-audit.js'
@@ -24,6 +26,7 @@ on:
     paths:
       - '.github/workflows/dependency-audit.yml'
       - '.npmrc'
+      - 'audit-exceptions.json'
       - 'package.json'
       - 'package-lock.json'
       - 'scripts/dependency-audit.js'
@@ -61,8 +64,8 @@ jobs:
           node --version
           npm --version
 
-      # Exits with 1 for any advisory and 2 when there's no report; either
-      # fails the job. The summary goes to the job's page.
+      # Exits with 1 for an advisory or exception that needs attention and 2
+      # when there's no report; either fails the job. The summary goes to the job's page.
       - name: Audit package-lock.json
         run: npm run audit:dependencies -- "$RUNNER_TEMP/dependency-audit"
 
