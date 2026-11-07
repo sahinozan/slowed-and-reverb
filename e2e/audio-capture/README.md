@@ -487,7 +487,7 @@ every place it moves by a quarter of a sample or more. That finds a frame
 of silence, or one added or lost, that leaves no click over the threshold.
 Firefox's late frame (see "Limits") delays the whole song by a frame of it
 at the effect's speed (1.25 samples at 0.8x for this song in a 48 kHz
-context, within 0.2), 1.5 to 5 seconds in. In Firefox, the first slip that
+context, within 0.2), 1 to 5 seconds in. In Firefox, the first slip that
 moves both tones by that much is kept as an action of its own, "Firefox's
 late frame", and a click there doesn't fail the check. Each tone has to
 have slipped, and moved by that much across the whole slip too, from the
@@ -742,9 +742,10 @@ hears, in both browsers, the speed and pitch, the effect being there, clicks
 and gaps when settings change, Spotify's own speed changes, and the sound
 coming back unchanged when the effect or the extension is turned off,
 removed or updated, and each defect the project has shipped and fixed is
-caught when put back. But turning the effect on while a song plays fails in
-Firefox on a click of Firefox's own that hasn't been decided on (see
-"Limits"), and the suite hasn't run
+caught when put back. But when the effect turns on while a song plays,
+Firefox adds a frame of silence of its own, often with a click. The suite
+reports that frame without failing, and it hasn't been decided on (see
+"Limits"). And the suite hasn't run
 often enough on any machine to give it a flake rate. Run it after an engine
 change, as well as listening.
 
@@ -863,7 +864,8 @@ It doesn't cover either:
   later packet doesn't, the check finds a gap of one frame and fills it with
   one frame of silence. That happens in the first packet decoded after the
   routing, about 2 seconds of song past the end of what was queued then,
-  which at the effect's speed comes 2 to 4 seconds later. In the modeled
+  which at the effect's speed usually comes 2 to 4 seconds later (in one
+  run, 1.1 to 1.4 seconds; see below). In the modeled
   case, where the song keeps arriving in order after that one change, the
   count is then a frame ahead and the check finds no further gap; this
   doesn't show what happens after later seeks, track changes or other
@@ -896,7 +898,11 @@ It doesn't cover either:
   in Firefox, some kept twice), the scan found one slip in 15 Firefox
   recordings, 8 of them different, all on this Mac at 48 kHz: 1.25 samples
   on both tones, 2.1 to 3.5 seconds in. Each of the 6 different clicks
-  those runs had failed on was where it placed the slip. It found nothing
+  those runs had failed on was where it placed the slip. On November 7,
+  2026, in Firefox 159.0.1, it came earlier: at 1.13 seconds on Spotify and
+  1.38 seconds on YouTube, in one run of the suite, which failed on it
+  because the suite then took the frame only from 1.5 seconds; it now
+  takes it from 1 second. In the kept recordings, the scan found nothing
   else, and no move of even 0.02 samples elsewhere, in either browser; none
   of the hosted Linux recordings had the frame. Fitting each tone alone, as
   the reproducer does, the other tone leaked into it and moved its phase by

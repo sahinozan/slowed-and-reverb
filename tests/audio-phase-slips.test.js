@@ -9,10 +9,12 @@ const assert = require('node:assert/strict');
 const { describe, test } = require('node:test');
 
 const { phaseSlips } = require('../e2e/audio-capture/metrics');
+const { LATE_FRAME_MS } = require('../e2e/audio-capture/regression');
 
 const RATE = 48000;
 const TONES = [352, 528];
-const LATE_FRAME = { samples: 1.25, fromMs: 1500, toMs: 5000 };
+// The window the suite itself uses.
+const LATE_FRAME = { samples: 1.25, fromMs: LATE_FRAME_MS[0], toMs: LATE_FRAME_MS[1] };
 
 // Six seconds, each tone `by` samples late from each of `slips`' frames on
 // (only the tone `hz`, if a slip names one), each starting at `phases`.
@@ -76,12 +78,22 @@ describe("the suite's phase scan", () => {
     }
   });
 
+  // The earliest this Mac has had it, on November 7, 2026 in Firefox
+  // 159.0.1: at 1.13 s on Spotify and 1.38 s on YouTube.
+  test('takes the frame as early as it has come', () => {
+    for (const ms of [1130, 1380]) {
+      const [event, ...rest] = phaseSlips({ ...recording([{ at: at(ms), by: 1.25 }]), lateFrame: LATE_FRAME });
+      assert.equal(event.lateFrame, true, `${ms}`);
+      assert.deepEqual(rest, []);
+    }
+  });
+
   test('takes nothing else as the late frame', () => {
     const late = (slips, lateFrame = LATE_FRAME) => phaseSlips({ ...recording(slips), lateFrame }).map((event) => event.lateFrame);
     // Chromium, which has no such frame.
     assert.deepEqual(late([{ at: at(3000), by: 1.25 }], null), [false]);
     // Too early, the other way, and two frames.
-    assert.deepEqual(late([{ at: at(1000), by: 1.25 }]), [false]);
+    assert.deepEqual(late([{ at: at(600), by: 1.25 }]), [false]);
     assert.deepEqual(late([{ at: at(3000), by: -1.25 }]), [false]);
     assert.deepEqual(late([{ at: at(3000), by: 2.5 }]), [false]);
     // A second frame after the first.
