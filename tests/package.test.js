@@ -307,7 +307,9 @@ describe('store package contracts', () => {
   });
 
   // Only files git tracks, as in CI: a local note or report that isn't part
-  // of the repository can't fail the tests.
+  // of the repository can't fail the tests. JSON is read as parsed, so an
+  // escaped em dash in the manifest, which the build writes out as the
+  // character itself, is caught too.
   test('contains no prose em dashes in maintained or generated files', () => {
     const textExtensions = new Set([
       '.css',
@@ -329,11 +331,14 @@ describe('store package contracts', () => {
       if (!textExtensions.has(path.extname(file)) && !textFileNames.has(path.basename(file))) {
         return false;
       }
+      let text;
       try {
-        return fs.readFileSync(path.join(root, file), 'utf8').includes(emDash);
+        text = fs.readFileSync(path.join(root, file), 'utf8');
       } catch {
         return false;
       }
+      if (path.extname(file) === '.json') text = JSON.stringify(JSON.parse(text));
+      return text.includes(emDash);
     });
 
     assert.deepEqual(offenders, []);
