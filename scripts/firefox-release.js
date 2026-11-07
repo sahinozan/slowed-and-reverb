@@ -56,26 +56,41 @@ async function fetchJson(file) {
   return response.json();
 }
 
+function writeRecord(recordFile, record) {
+  fs.mkdirSync(path.dirname(recordFile), { recursive: true });
+  fs.writeFileSync(recordFile, `${JSON.stringify(record, null, 2)}\n`);
+}
+
+// The record is written before anything is read, and again with the error
+// if choosing fails, so a failed choice still leaves evidence to upload.
+// The version goes to $GITHUB_OUTPUT only once it is chosen.
 async function main([request = '', recordFile]) {
   if (!recordFile) throw new Error('usage: node scripts/firefox-release.js <request> <record.json>');
   const record = { asked: request || null, version: null, source: null, at: new Date().toISOString() };
-  if (request === 'current' || request === 'previous') {
-    const [versions, majors, stability] = await Promise.all([
-      fetchJson('firefox_versions.json'),
-      fetchJson('firefox_history_major_releases.json'),
-      fetchJson('firefox_history_stability_releases.json')
-    ]);
-    record.version = pickRelease(request, { versions, majors, stability });
-    record.source = PRODUCT_DETAILS;
-    record.latest = versions.LATEST_FIREFOX_VERSION;
-  } else if (request) {
-    record.version = pickRelease(request, {});
-    record.source = 'input';
-  } else {
-    record.source = 'runner';
+  writeRecord(recordFile, record);
+  try {
+    if (request === 'current' || request === 'previous') {
+      record.source = PRODUCT_DETAILS;
+      const [versions, majors, stability] = await Promise.all([
+        fetchJson('firefox_versions.json'),
+        fetchJson('firefox_history_major_releases.json'),
+        fetchJson('firefox_history_stability_releases.json')
+      ]);
+      record.latest = versions?.LATEST_FIREFOX_VERSION ?? null;
+      record.version = pickRelease(request, { versions, majors, stability });
+    } else if (request) {
+      record.source = 'input';
+      record.version = pickRelease(request, {});
+    } else {
+      record.source = 'runner';
+    }
+  } catch (error) {
+    record.version = null;
+    record.error = String(error?.message ?? error).slice(0, 2_000);
+    writeRecord(recordFile, record);
+    throw error;
   }
-  fs.mkdirSync(path.dirname(recordFile), { recursive: true });
-  fs.writeFileSync(recordFile, `${JSON.stringify(record, null, 2)}\n`);
+  writeRecord(recordFile, record);
   if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${record.version ?? ''}\n`);
   console.log(record.version ? `Firefox ${record.version} (asked: ${request}).` : "The runner's own Firefox.");
 }

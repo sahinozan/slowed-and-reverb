@@ -126,6 +126,44 @@ function suiteStepProblems(job) {
   return problems;
 }
 
+// Every step's whole condition, by step name. The model above reads parts
+// of a condition, so a condition it doesn't know (one with `&& false` added,
+// say) is refused here instead of passing on the parts it recognizes. A
+// step not listed has no condition.
+const CONDITIONS = {
+  'Read the Playwright version': "matrix.browser == 'chromium'",
+  'Restore Playwright Chromium': "matrix.browser == 'chromium'",
+  'Install Playwright Chromium': "matrix.browser == 'chromium' && steps.playwright-cache.outputs.cache-hit != 'true'",
+  "Install Chromium's system libraries": "matrix.browser == 'chromium' && steps.playwright-cache.outputs.cache-hit == 'true'",
+  'Choose the Firefox release': "matrix.browser == 'firefox'",
+  'Install the Firefox asked for': "steps.firefox-release.outputs.version != ''",
+  "Read Firefox's files into memory": "matrix.browser == 'firefox'",
+  'Run the audio capture trial':
+    "${{ !cancelled() && steps.sink.outputs.ready == 'true' && steps.firefox-release.outcome != 'failure' && steps.firefox-install.outcome != 'failure' }}",
+  "Show the sound server's state": '${{ !cancelled() }}',
+  'Upload the evidence': '${{ always() }}'
+};
+// The only step whose failure may let the job go on: an experiment that
+// can't stop the tests.
+const MAY_FAIL = ["Read Firefox's files into memory"];
+
+// What is wrong with the job's conditions and continue-on-error: a
+// condition other than the one listed, or a step allowed to fail that may
+// not (a suite or trial failure would then leave the job green).
+function stepRuleProblems(text) {
+  const problems = [];
+  for (const step of steps(text)) {
+    const expected = CONDITIONS[step.name] ?? null;
+    if (step.condition !== expected) problems.push(`"${step.name}" runs if ${step.condition}, not ${expected}`);
+    if (step.continueOnError && !MAY_FAIL.includes(step.name)) problems.push(`"${step.name}" may fail without failing the job`);
+    if (/continue-on-error/.test(text.split(`- name: ${step.name}\n`)[1]?.split(/\n {6}- name: /)[0] ?? '') && !step.continueOnError) {
+      problems.push(`"${step.name}" has a continue-on-error this check can't read`);
+    }
+  }
+  if (/^ {4}continue-on-error:/m.test(text)) problems.push('the job may fail without failing the run');
+  return problems;
+}
+
 const job = jobText('linux');
 const SETUP = { chromium: 24, firefox: 14 };
 
@@ -185,6 +223,28 @@ describe('the audio workflow', () => {
 
   test('each job runs its suite, then its trial', () => {
     assert.deepEqual(suiteStepProblems(job), []);
+  });
+
+  test('every step runs when it should, and only the experiment may fail without failing the job', () => {
+    assert.deepEqual(stepRuleProblems(job), []);
+    for (const name of Object.keys(CONDITIONS)) assert.ok(steps(job).some((step) => step.name === name), `no step "${name}"`);
+  });
+
+  test('finds a trial turned off, a suite allowed to fail, or a condition changed', () => {
+    const trialIf = `        if: ${CONDITIONS['Run the audio capture trial']}\n`;
+    assert.equal(job.split(trialIf).length, 2);
+    const off = job.replace(trialIf, trialIf.replace(' }}\n', ' && false }}\n'));
+    assert.deepEqual(stepRuleProblems(off), [
+      `"Run the audio capture trial" runs if ${CONDITIONS['Run the audio capture trial'].replace(' }}', ' && false }}')}, not ${CONDITIONS['Run the audio capture trial']}`
+    ]);
+    const suiteHead = '      - name: Run the audio regression suite\n';
+    assert.equal(job.split(suiteHead).length, 2);
+    const failing = job.replace(suiteHead, `${suiteHead}        continue-on-error: true\n`);
+    assert.deepEqual(stepRuleProblems(failing), ['"Run the audio regression suite" may fail without failing the job']);
+    const guarded = job.replace(suiteHead, `${suiteHead}        if: \${{ always() }}\n`);
+    assert.deepEqual(stepRuleProblems(guarded), ['"Run the audio regression suite" runs if ${{ always() }}, not null']);
+    const wholeJob = job.replace('    timeout-minutes: 50\n', '    timeout-minutes: 50\n    continue-on-error: true\n');
+    assert.deepEqual(stepRuleProblems(wholeJob), ['the job may fail without failing the run']);
   });
 
   test("finds a suite or trial step that runs the wrong command, or none, or in the wrong order", () => {
