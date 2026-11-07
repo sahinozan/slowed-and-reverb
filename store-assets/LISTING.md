@@ -116,10 +116,11 @@ Privacy policy: https://slowedreverbapp.com/privacy
 YouTube and YouTube Music are trademarks of Google LLC, and Spotify is a trademark of Spotify AB. This extension is made independently and isn't affiliated with, endorsed by or sponsored by either company.
 ```
 
-Firefox release notes for 1.1.1:
+Firefox release notes for 1.2.0:
 
 ```markdown
-- On Spotify in Firefox, the sound no longer skips every 12 seconds or so while the effect is on.
+- After the extension updates, a YouTube, YouTube Music or Spotify tab that's still running the old version keeps the effect off until you reload the page, and the panel says so, with a button to reload. Before, that tab kept using the old version.
+- The extension is stricter about the pages it runs on: only YouTube, YouTube Music and Spotify, over a secure connection, and the same goes for keyboard shortcuts.
 ```
 
 ## Screenshot captions

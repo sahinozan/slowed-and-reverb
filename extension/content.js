@@ -16,7 +16,7 @@
   // code by putting it out again with only the manifest's version raised, so
   // this is not read from the manifest. tests/settings.test.js keeps it equal
   // to the manifest's version in the repository.
-  const VERSION = '1.1.1';
+  const VERSION = '1.2.0';
 
   // The defaults from settings.js, which is injected before this file; they also
   // mean "effect off".
