@@ -4,10 +4,28 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # Match min-release-age in .npmrc.
+    # Match min-release-age in .npmrc. Security updates don't wait for it.
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    # One pull request a week for each group instead of one for each tool.
+    # The browser drivers stay apart: the browser and audio suites run
+    # through them, so their updates are the likeliest to change those
+    # results, and the other tools' updates needn't wait on them. Major
+    # versions still come one at a time.
+    groups:
+      browser-drivers:
+        patterns:
+          - '@playwright/test'
+          - 'puppeteer-core'
+        update-types: [minor, patch]
+      dev-tools:
+        patterns:
+          - '*'
+        exclude-patterns:
+          - '@playwright/test'
+          - 'puppeteer-core'
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /
@@ -17,3 +35,7 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - '*'
