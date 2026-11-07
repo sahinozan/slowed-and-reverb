@@ -61,9 +61,12 @@ covers the features and development commands in full.
 - After changing dependencies, run `npm run audit:dependencies -- <folder>`
   (`npm audit` on the lockfile, development tools included) and read the
   `summary.md` it writes there; it prints only how the audit ended. It fails
-  for any advisory, including the ones with no fix yet described under
-  "Development dependencies" in SECURITY.md. It isn't part of
-  `npm run check`, CI's required check or releases; the Dependency audit
+  for any advisory not reviewed in `audit-exceptions.json`, for an entry
+  whose `reviewBy` date has passed and for one no longer needed. Add or renew
+  an entry only after checking that the project's own use doesn't reach the
+  affected code: a reason of a sentence or two, a date at most 90 days ahead,
+  and the fuller analysis in the pull request, where the user decides. It
+  isn't part of `npm run check`, CI's required check or releases; the Dependency audit
   workflow runs it weekly and for dependency changes. Don't use
   `npm audit fix`, overrides or downgrades just to make it pass.
 - After changing the popup, the website, `scripts/popup-preview.js` or

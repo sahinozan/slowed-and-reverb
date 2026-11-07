@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { describe, test } = require('node:test');
-const { EXIT, STATUS_LINES, summarize } = require('../scripts/dependency-audit');
+const { EXCEPTIONS_FILE, EXIT, MAX_REVIEW_DAYS, STATUS_LINES, summarize } = require('../scripts/dependency-audit');
 
 const { root } = require('./helpers/load-script');
 
@@ -115,6 +115,7 @@ describe('dependency audit summary', () => {
     assert.match(result.markdown, /npm counts 5 affected packages/);
     assert.deepEqual(headings(result.markdown), [
       '## Dependency audit',
+      '## Needs attention',
       '### [GHSA-pqg4-j6r4-53mv](https://github.com/advisories/GHSA-pqg4-j6r4-53mv) (critical)',
       '### [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv) (high)'
     ]);
@@ -133,7 +134,7 @@ describe('dependency audit summary', () => {
     assert.match(result.markdown, /npm counts 3 affected packages/);
     assert.doesNotMatch(result.markdown, /GHSA-pqg4-j6r4-53mv|shell-quote/);
     assert.match(result.markdown, /Brought in by web-ext 10\.8\.0 &gt; @devicefarmer\/adbkit 3\.3\.9 &gt; node-forge 1\.4\.0\n/);
-    assert.match(result.markdown, /SECURITY\.md/);
+    assert.match(result.markdown, /- node-forge 1\.4\.0, .*\n {2}- \*\*Needs attention:\*\* Not in audit-exceptions\.json\.\n/);
   });
 
   test('fails when the report lists advisories even if npm exited with 0', () => {
@@ -296,6 +297,7 @@ describe('dependency audit summary', () => {
     assert.doesNotMatch(result.markdown, /(?<!\\)`code/);
     assert.deepEqual(headings(result.markdown), [
       '## Dependency audit',
+      '## Needs attention',
       '### [GHSA-2222-3333-4444](https://github.com/advisories/GHSA-2222-3333-4444) (low)',
       '### javascript:alert(1) (low)'
     ]);
@@ -303,6 +305,197 @@ describe('dependency audit summary', () => {
     assert.match(result.markdown, /- left-pad &lt;b&gt;1&lt;\/b&gt;, &lt;B&gt;2&lt;\/B&gt;, affected: &lt;1 \\\[x\\\]\(https:\/\/example\.com\)\./);
     assert.match(result.markdown, /Installed at node_modules\/left-pad&lt;\/li&gt;&lt;script&gt;\n/);
     assert.match(result.markdown, /Installed at node_modules\/b\/node_modules\/left-pad&lt;\/LI&gt;&lt;SCRIPT&gt;\n/);
+  });
+});
+
+describe('dependency audit exceptions', () => {
+  const TODAY = '2026-11-07';
+  const FORGE = {
+    advisory: 'GHSA-86w9-cpqp-85rv',
+    package: 'node-forge',
+    versions: ['1.4.0'],
+    reason: 'Only the TCP-to-USB bridge checks these signatures, and nothing here starts it.',
+    reviewBy: '2027-01-01'
+  };
+  const SHELL_QUOTE = {
+    advisory: 'GHSA-pqg4-j6r4-53mv',
+    package: 'shell-quote',
+    versions: ['1.10.0'],
+    reason: 'Only quotes arguments this repository writes.',
+    reviewBy: '2027-01-01'
+  };
+  const audit = (exceptions, overrides = {}) =>
+    summarize({ stdout: fixture('web-ext-10.8.0.json'), exitCode: 1, lock: LOCK_10_8, exceptions, today: TODAY, ...overrides });
+  const addDays = (day, days) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+
+  test('lets through an advisory reviewed in the exceptions, showing why and until when', () => {
+    const result = audit([FORGE]);
+    assert.equal(result.status, 'reviewed');
+    assert.equal(result.exitCode, EXIT.clean);
+    assert.match(result.markdown, /\*\*1 known advisory\*\* in package-lock\.json, 0 needing attention and 1 reviewed in audit-exceptions\.json\./);
+    assert.deepEqual(headings(result.markdown), [
+      '## Dependency audit',
+      '## Reviewed in audit-exceptions.json',
+      '### [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv) (high)'
+    ]);
+    assert.match(result.markdown, /\*\*Reviewed:\*\* Only the TCP-to-USB bridge checks these signatures, and nothing here starts it\. Look again by 2027-01-01\./);
+    assert.match(result.markdown, /Brought in by web-ext 10\.8\.0 &gt; @devicefarmer\/adbkit 3\.3\.9 &gt; node-forge 1\.4\.0\n/);
+    // Still valid on its last day.
+    assert.equal(audit([FORGE], { today: FORGE.reviewBy }).status, 'reviewed');
+  });
+
+  test('fails once the date to look again by has passed', () => {
+    const result = audit([FORGE], { today: '2027-01-02' });
+    assert.equal(result.status, 'advisories');
+    assert.equal(result.exitCode, EXIT.advisories);
+    assert.match(result.markdown, /\*\*Needs attention:\*\* The exception was to be looked at again by 2027-01-01\./);
+    assert.ok(headings(result.markdown).includes('## Needs attention'));
+    assert.ok(!headings(result.markdown).includes('## Reviewed in audit-exceptions.json'));
+  });
+
+  test('fails when the installed version isn\'t one that was reviewed, or isn\'t known', () => {
+    const newer = audit([{ ...FORGE, versions: ['1.3.9'] }]);
+    assert.equal(newer.status, 'advisories');
+    assert.match(newer.markdown, /audit-exceptions\.json covers 1\.3\.9, not 1\.4\.0\. Look again before adding a version\./);
+
+    const unknown = audit([FORGE], { lock: null });
+    assert.equal(unknown.status, 'advisories');
+    assert.match(unknown.markdown, /The lockfile doesn't give its installed version, so the exception can't be checked\./);
+  });
+
+  test('fails for any advisory, or any affected package, the exceptions don\'t cover', () => {
+    const result = summarize({ stdout: fixture('web-ext-10.7.0.json'), exitCode: 1, lock: LOCK_10_7, exceptions: [FORGE], today: TODAY });
+    assert.equal(result.status, 'advisories');
+    assert.equal(result.exitCode, EXIT.advisories);
+    assert.match(result.markdown, /2 known advisories\*\* in package-lock\.json, 1 needing attention and 1 reviewed/);
+    assert.deepEqual(headings(result.markdown), [
+      '## Dependency audit',
+      '## Needs attention',
+      '### [GHSA-pqg4-j6r4-53mv](https://github.com/advisories/GHSA-pqg4-j6r4-53mv) (critical)',
+      '## Reviewed in audit-exceptions.json',
+      '### [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv) (high)'
+    ]);
+    assert.equal(
+      summarize({ stdout: fixture('web-ext-10.7.0.json'), exitCode: 1, lock: LOCK_10_7, exceptions: [FORGE, SHELL_QUOTE], today: TODAY }).status,
+      'reviewed'
+    );
+
+    // One advisory over two packages, with only one of them reviewed.
+    const both = [advisory(), advisory({ name: 'right-pad', dependency: 'right-pad' })];
+    const stdout = report({ 'left-pad': entry('left-pad', { via: [both[0]] }), 'right-pad': entry('right-pad', { via: [both[1]] }) });
+    const lock = { packages: { 'node_modules/left-pad': { version: '1.0.0' }, 'node_modules/right-pad': { version: '1.0.0' } } };
+    const partly = summarize({
+      stdout,
+      exitCode: 1,
+      lock,
+      today: TODAY,
+      exceptions: [{ advisory: 'GHSA-2222-3333-4444', package: 'left-pad', versions: ['1.0.0'], reason: 'Not reached.', reviewBy: '2027-01-01' }]
+    });
+    assert.equal(partly.status, 'advisories');
+    assert.match(partly.markdown, /- left-pad 1\.0\.0, .*\n {2}- \*\*Reviewed:\*\* Not reached\./);
+    assert.match(partly.markdown, /- right-pad 1\.0\.0, .*\n {2}- \*\*Needs attention:\*\* Not in audit-exceptions\.json\./);
+
+    // An advisory that isn't on GitHub can't be reviewed in the list.
+    const elsewhere = report({ 'left-pad': entry('left-pad', { via: [advisory({ url: 'https://example.com/advisory' })] }) });
+    assert.equal(summarize({ stdout: elsewhere, exitCode: 1, lock, today: TODAY, exceptions: [] }).status, 'advisories');
+  });
+
+  test('fails for exceptions that are no longer needed', () => {
+    const fixed = summarize({ stdout: fixture('clean.json'), exitCode: 0, exceptions: [FORGE], today: TODAY });
+    assert.equal(fixed.status, 'advisories');
+    assert.equal(fixed.exitCode, EXIT.advisories);
+    assert.match(fixed.markdown, /No known advisories/);
+    assert.match(fixed.markdown, /## Exceptions no longer needed\n\nRemove these from audit-exceptions\.json:\n\n- GHSA-86w9-cpqp-85rv for node-forge: nothing installed is affected any more\./);
+
+    const other = audit([FORGE, SHELL_QUOTE]);
+    assert.equal(other.status, 'advisories');
+    assert.match(other.markdown, /- GHSA-pqg4-j6r4-53mv for shell-quote: nothing installed is affected any more\./);
+
+    // The entry's own text is escaped, underscores included.
+    const marked = audit([FORGE, { ...SHELL_QUOTE, package: '__not installed__ <b>' }, { ...FORGE, advisory: 'GHSA-5555-6666-7777', versions: ['1.4.0', '_9_'] }]);
+    assert.match(marked.markdown, /- GHSA-pqg4-j6r4-53mv for \\_\\_not installed\\_\\_ &lt;b&gt;: nothing installed is affected any more\./);
+    assert.doesNotMatch(marked.markdown, /(?<!\\)__/);
+
+    const extra = audit([{ ...FORGE, versions: ['1.3.9', '1.4.0'] }]);
+    assert.equal(extra.status, 'advisories');
+    assert.match(extra.markdown, /- GHSA-86w9-cpqp-85rv for node-forge: 1\.3\.9 is no longer installed\./);
+  });
+
+  test('still fails when npm exited with 0 although its report lists reviewed advisories', () => {
+    const result = audit([FORGE], { exitCode: 0 });
+    assert.equal(result.status, 'advisories');
+    assert.match(result.markdown, /npm exited with 0 although its report lists advisories; this still fails\./);
+  });
+
+  test('fails as unfinished when npm lists reviewed advisories but exited with neither 0 nor 1', () => {
+    for (const exitCode of [2, 42, -1]) {
+      const result = audit([FORGE], { exitCode });
+      assert.equal(result.status, 'error', String(exitCode));
+      assert.equal(result.exitCode, EXIT.error, String(exitCode));
+      assert.match(result.markdown, new RegExp(`npm reported advisories but npm exited with ${exitCode}\\.`));
+    }
+  });
+
+  test('asks for every installed version of the package, whichever copy an advisory is about', () => {
+    // Two copies, each with its own advisory; npm lists both copies under the package.
+    const a = advisory({ url: 'https://github.com/advisories/GHSA-2222-3333-4444', range: '<1.0.0' });
+    const b = advisory({ url: 'https://github.com/advisories/GHSA-5555-6666-7777', range: '>=2.0.0 <3.0.0' });
+    const stdout = report({ 'left-pad': entry('left-pad', { via: [a, b], nodes: ['node_modules/left-pad', 'node_modules/x/node_modules/left-pad'] }) });
+    const lock = { packages: { 'node_modules/left-pad': { version: '0.9.0' }, 'node_modules/x/node_modules/left-pad': { version: '2.0.0' } } };
+    const entryFor = (id, versions) => ({ advisory: id, package: 'left-pad', versions, reason: 'Not reached.', reviewBy: '2027-01-01' });
+    const each = summarize({ stdout, exitCode: 1, lock, today: TODAY, exceptions: [entryFor('GHSA-2222-3333-4444', ['0.9.0']), entryFor('GHSA-5555-6666-7777', ['2.0.0'])] });
+    assert.equal(each.status, 'advisories');
+    assert.match(each.markdown, /covers 0\.9\.0, not 0\.9\.0, 2\.0\.0\./);
+    const both = summarize({ stdout, exitCode: 1, lock, today: TODAY, exceptions: [entryFor('GHSA-2222-3333-4444', ['0.9.0', '2.0.0']), entryFor('GHSA-5555-6666-7777', ['0.9.0', '2.0.0'])] });
+    assert.equal(both.status, 'reviewed', both.markdown);
+  });
+
+  test('refuses an exceptions list that isn\'t in the expected format, instead of trusting it', () => {
+    const cases = [
+      [{ exceptions: {} }, /audit-exceptions\.json isn't a list\./],
+      [{ exceptions: ['GHSA-86w9-cpqp-85rv'] }, /Entry 1 in audit-exceptions\.json isn't an object\./],
+      [{ exceptions: [{ ...FORGE, note: 'x' }] }, /needs exactly these fields: advisory, package, versions, reason, reviewBy\./],
+      [{ exceptions: [{ ...FORGE, reviewBy: undefined }] }, /needs exactly these fields|needs a reviewBy date/],
+      [{ exceptions: [{ ...FORGE, advisory: 'CVE-2026-85393' }] }, /doesn't name a GitHub advisory/],
+      [{ exceptions: [{ ...FORGE, package: ' ' }] }, /doesn't name a package\./],
+      [{ exceptions: [{ ...FORGE, versions: [] }] }, /doesn't list the installed versions it covers\./],
+      [{ exceptions: [{ ...FORGE, versions: '1.4.0' }] }, /doesn't list the installed versions it covers\./],
+      [{ exceptions: [{ ...FORGE, versions: ['1.4.0', '1.4.0'] }] }, /lists a version twice\./],
+      [{ exceptions: [{ ...FORGE, reason: '' }] }, /gives no reason\./],
+      [{ exceptions: [{ ...FORGE, reason: 'x'.repeat(401) }] }, /has a reason longer than 400 characters/],
+      [{ exceptions: [{ ...FORGE, reviewBy: '2027-02-30' }] }, /needs a reviewBy date written YYYY-MM-DD\./],
+      [{ exceptions: [{ ...FORGE, reviewBy: 'soon' }] }, /needs a reviewBy date/],
+      [{ exceptions: [{ ...FORGE, reviewBy: addDays(TODAY, MAX_REVIEW_DAYS + 1) }] }, /has a reviewBy date more than 90 days ahead\./],
+      [{ exceptions: [SHELL_QUOTE, FORGE, { ...FORGE, reason: 'Again.' }] }, /Entry 3 in audit-exceptions\.json repeats GHSA-86w9-cpqp-85rv for node-forge\./],
+      [{ exceptionsError: 'audit-exceptions.json isn\'t valid JSON.' }, /audit-exceptions\.json isn't valid JSON\./],
+      [{ today: 'someday' }, /Today's date isn't known\./]
+    ];
+    for (const [overrides, message] of cases) {
+      const result = audit([FORGE], overrides);
+      assert.equal(result.status, 'error', message);
+      assert.equal(result.exitCode, EXIT.error, message);
+      assert.match(result.markdown, message);
+      assert.doesNotMatch(result.markdown, /Reviewed:|Needs attention/);
+    }
+    assert.equal(audit([{ ...FORGE, reviewBy: addDays(TODAY, MAX_REVIEW_DAYS) }]).status, 'reviewed');
+  });
+
+  test('puts the reason into Markdown without markup of its own', () => {
+    const reason = 'No __proto__ key <script>alert(1)</script> [x](https://example.com) `code` *bold*';
+    const result = audit([{ ...FORGE, reason }]);
+    assert.equal(result.status, 'reviewed');
+    assert.match(result.markdown, /\*\*Reviewed:\*\* No \\_\\_proto\\_\\_ key &lt;script&gt;alert\(1\)&lt;\/script&gt; \\\[x\\\]\(https:\/\/example\.com\) \\`code\\` \\\*bold\\\* Look again/);
+
+    // A backslash of its own can't undo the escaping that follows it.
+    const slashed = audit([{ ...FORGE, reason: 'C:\\path_x \\*not bold*' }]);
+    assert.match(slashed.markdown, /\*\*Reviewed:\*\* C:\\\\path\\_x \\\\\\\*not bold\\\* Look again/);
+  });
+
+  test('the repository\'s own list is in the expected format', () => {
+    const exceptions = JSON.parse(fs.readFileSync(path.join(root, EXCEPTIONS_FILE), 'utf8'));
+    // Today's date, since how far ahead a reviewBy date may be counts from it.
+    const result = summarize({ stdout: fixture('clean.json'), exitCode: 0, exceptions });
+    assert.notEqual(result.status, 'error', result.markdown);
   });
 });
 
@@ -370,6 +563,29 @@ describe('dependency audit command', () => {
     assert.match(result.read('out/summary.md'), /web-ext 10\.8\.0 &gt; @devicefarmer\/adbkit 3\.3\.9 &gt; node-forge 1\.4\.0/);
     assert.equal(result.stdout, result.printed('advisories'));
     assert.equal(result.stderr, '');
+  });
+
+  test('reads the exceptions from audit-exceptions.json, and passes when they cover every advisory', (t) => {
+    const exception = {
+      advisory: 'GHSA-86w9-cpqp-85rv',
+      package: 'node-forge',
+      versions: ['1.4.0'],
+      reason: 'Not reached.',
+      reviewBy: new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+    };
+    const setup = (dir) => fs.writeFileSync(path.join(dir, EXCEPTIONS_FILE), JSON.stringify([exception]));
+    const result = run(t, { stdout: fixture('web-ext-10.8.0.json'), status: 1, setup });
+    assert.equal(result.status, EXIT.clean, result.read('out/summary.md'));
+    assert.match(result.read('out/summary.md'), /\*\*Reviewed:\*\* Not reached\./);
+    assert.equal(result.stdout, result.printed('reviewed'));
+  });
+
+  test('fails as unfinished when audit-exceptions.json isn\'t valid JSON', (t) => {
+    const setup = (dir) => fs.writeFileSync(path.join(dir, EXCEPTIONS_FILE), '[{');
+    const result = run(t, { stdout: fixture('web-ext-10.8.0.json'), status: 1, setup });
+    assert.equal(result.status, EXIT.error);
+    assert.match(result.read('out/summary.md'), /audit-exceptions\.json isn't valid JSON\./);
+    assert.equal(result.stdout, result.printed('error'));
   });
 
   test('keeps the evidence and fails when npm returns no report', (t) => {
@@ -550,7 +766,14 @@ describe('dependency audit workflow', () => {
   test('runs the audit weekly, by hand and for dependency changes, with read-only access', () => {
     assert.match(workflow, /^ {2}schedule:\n {4}- cron: '[^']+'$/m);
     assert.match(workflow, /^ {2}workflow_dispatch:$/m);
-    const files = ['.github/workflows/dependency-audit.yml', '.npmrc', 'package.json', 'package-lock.json', 'scripts/dependency-audit.js'];
+    const files = [
+      '.github/workflows/dependency-audit.yml',
+      '.npmrc',
+      'audit-exceptions.json',
+      'package.json',
+      'package-lock.json',
+      'scripts/dependency-audit.js'
+    ];
     for (const trigger of ['pull_request', 'push']) assert.deepEqual(paths(trigger), files, trigger);
     assert.match(workflow, /^permissions:\n {2}contents: read\n\n/m);
     assert.doesNotMatch(workflow, /: write\b/);

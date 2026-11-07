@@ -13,20 +13,32 @@
 // counts every package in such a chain, so its total is larger than the
 // number of advisories.
 //
-// It exits with 0 only when npm returned a report with no advisories, 1 when
-// the report lists any (whatever their severity, and whether or not a fix
-// exists), and 2 when there is no report to trust: npm failed, couldn't reach
-// the registry, was stopped, or printed something this doesn't recognize, or
-// the folder, its files or the job summary couldn't be written. Files written
-// before such a failure are left in place.
+// Advisories the project has looked at and can't fix yet are listed in
+// audit-exceptions.json, each with the package and installed versions it
+// covers, a short reason and a date to look at it again by, at most
+// MAX_REVIEW_DAYS ahead. An advisory is let through only while an entry
+// covers every installed version of the package it affects and its date
+// hasn't passed. npm's report doesn't say which installed copy each advisory
+// affects, so with copies at several versions an entry lists them all, even
+// one that advisory's range leaves out; working that out here would take a
+// version-range parser, and a mistake in one could let an advisory through.
+//
+// It exits with 0 when npm returned a report whose advisories, if any, are all
+// covered that way, and every entry is still needed. It exits with 1 when an
+// advisory isn't covered (whatever its severity, and whether or not a fix
+// exists), an entry's date has passed, or an entry no longer matches anything
+// installed. It exits with 2 when there is no report to trust: npm failed,
+// couldn't reach the registry, was stopped, or printed something this doesn't
+// recognize; when audit-exceptions.json can't be read or isn't in the expected
+// format; or when the folder, its files or the job summary couldn't be
+// written. Files written before such a failure are left in place.
 // Nothing in npm's output is run; it is only parsed and escaped into Markdown.
 // None of it is printed either: GitHub Actions reads lines like ::add-mask::
 // in a step's output as commands, so the script prints only a fixed line
 // saying how the audit ended and where summary.md is.
 //
 // This isn't part of npm run check or the release. It has its own workflow,
-// .github/workflows/dependency-audit.yml, and an advisory with no fixed
-// version keeps it failing; see "Development dependencies" in SECURITY.md.
+// .github/workflows/dependency-audit.yml.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -36,12 +48,19 @@ const AUDIT_ARGS = ['audit', '--package-lock-only', '--include=dev', '--json'];
 const COMMAND = `npm ${AUDIT_ARGS.join(' ')}`;
 const EXIT = { clean: 0, advisories: 1, error: 2 };
 const SEVERITIES = ['critical', 'high', 'moderate', 'low', 'info'];
-const GHSA_URL = /^https:\/\/github\.com\/advisories\/(GHSA(?:-[23456789cfghjmpqrvwx]{4}){3})$/;
+const GHSA = 'GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}';
+const GHSA_URL = new RegExp(`^https://github\\.com/advisories/(${GHSA})$`);
+const GHSA_ID = new RegExp(`^${GHSA}$`);
+const EXCEPTIONS_FILE = 'audit-exceptions.json';
+const EXCEPTION_KEYS = ['advisory', 'package', 'versions', 'reason', 'reviewBy'];
+const MAX_REVIEW_DAYS = 90;
+const MAX_REASON_LENGTH = 400;
 const MAX_CHAINS = 20;
 // All the script prints, so nothing from npm's output reaches the console.
 const STATUS_LINES = {
   clean: 'Dependency audit: no known advisories.',
-  advisories: 'Dependency audit: known advisories found.',
+  reviewed: `Dependency audit: only advisories reviewed in ${EXCEPTIONS_FILE}.`,
+  advisories: 'Dependency audit: advisories or exceptions need attention.',
   error: 'Dependency audit: the audit didn\'t finish, so this says nothing about advisories.'
 };
 
@@ -50,14 +69,16 @@ const isStringArray = (value) => Array.isArray(value) && value.every((item) => t
 const isCount = (value) => Number.isInteger(value) && value >= 0;
 
 // Text from npm's output, safe to put in Markdown: one line, with no HTML,
-// links, images, code or emphasis of its own.
-function text(value) {
+// links, images, code or emphasis of its own. Prose also has its underscores
+// escaped, so a word like __proto__ isn't read as emphasis; names and paths
+// keep theirs, as underscores inside a word don't start emphasis.
+function text(value, { prose = false } = {}) {
   return String(value)
     .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/[\\`*[\]~]/g, '\\$&')
+    .replace(prose ? /[\\`*[\]~_]/g : /[\\`*[\]~]/g, '\\$&')
     .trim();
 }
 
@@ -130,6 +151,44 @@ function reportProblem(report) {
   return null;
 }
 
+// A date written YYYY-MM-DD, as a time in UTC, or null if it isn't one.
+function dayOf(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const time = Date.parse(`${value}T00:00:00Z`);
+  return Number.isNaN(time) || new Date(time).toISOString().slice(0, 10) !== value ? null : time;
+}
+
+// Why audit-exceptions.json's content can't be used, or null. today is
+// YYYY-MM-DD in UTC.
+function exceptionsProblem(list, today) {
+  if (!Array.isArray(list)) return `${EXCEPTIONS_FILE} isn't a list.`;
+  const latest = dayOf(today) + MAX_REVIEW_DAYS * 24 * 60 * 60 * 1000;
+  const seen = new Set();
+  for (const [index, item] of list.entries()) {
+    const where = `Entry ${index + 1} in ${EXCEPTIONS_FILE}`;
+    if (!isObject(item)) return `${where} isn't an object.`;
+    const keys = Object.keys(item);
+    if (keys.length !== EXCEPTION_KEYS.length || !EXCEPTION_KEYS.every((key) => keys.includes(key))) {
+      return `${where} needs exactly these fields: ${EXCEPTION_KEYS.join(', ')}.`;
+    }
+    if (typeof item.advisory !== 'string' || !GHSA_ID.test(item.advisory)) return `${where} doesn't name a GitHub advisory (GHSA-…).`;
+    if (typeof item.package !== 'string' || !item.package.trim()) return `${where} doesn't name a package.`;
+    if (!isStringArray(item.versions) || !item.versions.length || item.versions.some((version) => !version.trim())) {
+      return `${where} doesn't list the installed versions it covers.`;
+    }
+    if (new Set(item.versions).size !== item.versions.length) return `${where} lists a version twice.`;
+    if (typeof item.reason !== 'string' || !item.reason.trim()) return `${where} gives no reason.`;
+    if (item.reason.length > MAX_REASON_LENGTH) return `${where} has a reason longer than ${MAX_REASON_LENGTH} characters; keep it short.`;
+    const reviewBy = dayOf(item.reviewBy);
+    if (reviewBy === null) return `${where} needs a reviewBy date written YYYY-MM-DD.`;
+    if (reviewBy > latest) return `${where} has a reviewBy date more than ${MAX_REVIEW_DAYS} days ahead.`;
+    const key = `${item.advisory} ${item.package}`;
+    if (seen.has(key)) return `${where} repeats ${item.advisory} for ${item.package}.`;
+    seen.add(key);
+  }
+  return null;
+}
+
 // Each chain from a package the project depends on directly, or from the top
 // of the report's chain, down to the named package.
 function chains(vulnerabilities, name, below = []) {
@@ -164,9 +223,35 @@ function collectAdvisories(vulnerabilities) {
   );
 }
 
+// The installed versions of a package entry, each once; null for one the
+// lockfile doesn't give.
+function installedVersions(lock, entry) {
+  const versions = entry.nodes.map((node) => lock?.packages?.[node]?.version);
+  return [...new Set(versions.map((version) => (typeof version === 'string' ? version : null)))];
+}
+
 function versionsOf(lock, entry) {
-  const versions = entry.nodes.map((node) => lock?.packages?.[node]?.version ?? 'unknown version');
-  return [...new Set(versions)].join(', ');
+  return installedVersions(lock, entry).map((version) => version ?? 'unknown version').join(', ');
+}
+
+// Whether audit-exceptions.json lets each package an advisory affects
+// through: on each item of advisory.affected, sets exception (the entry, or
+// null) and problem (why it isn't let through, or null).
+function review(advisory, vulnerabilities, lock, exceptions, today) {
+  for (const item of advisory.affected) {
+    const exception = advisory.id
+      ? exceptions.find((candidate) => candidate.advisory === advisory.id && candidate.package === item.name) ?? null
+      : null;
+    item.exception = exception;
+    const versions = installedVersions(lock, vulnerabilities[item.name]);
+    if (!exception) item.problem = `Not in ${EXCEPTIONS_FILE}.`;
+    else if (versions.includes(null)) item.problem = 'The lockfile doesn\'t give its installed version, so the exception can\'t be checked.';
+    else if (!versions.every((version) => exception.versions.includes(version))) {
+      item.problem = `${EXCEPTIONS_FILE} covers ${text(exception.versions.join(', '), { prose: true })}, not ${text(versions.join(', '))}. Look again before adding a version.`;
+    } else if (exception.reviewBy < today) item.problem = `The exception was to be looked at again by ${text(exception.reviewBy)}.`;
+    else item.problem = null;
+  }
+  return advisory.affected.every((item) => !item.problem);
 }
 
 function fixOf(entry) {
@@ -182,9 +267,11 @@ function fixOf(entry) {
 function advisorySection(advisory, vulnerabilities, lock) {
   const label = advisory.id ? `[${advisory.id}](${advisory.url})` : text(advisory.url);
   const lines = [`### ${label} (${advisory.severity})`, '', text(advisory.title), ''];
-  for (const { name, range } of advisory.affected) {
+  for (const { name, range, exception, problem } of advisory.affected) {
     const entry = vulnerabilities[name];
     lines.push(`- ${text(name)} ${text(versionsOf(lock, entry))}, affected: ${text(range)}. ${fixOf(entry)}`);
+    if (problem) lines.push(`  - **Needs attention:** ${problem}`);
+    else if (exception) lines.push(`  - **Reviewed:** ${text(exception.reason, { prose: true })} Look again by ${text(exception.reviewBy)}.`);
     for (const node of entry.nodes) lines.push(`  - Installed at ${text(node)}`);
     const found = chains(vulnerabilities, name);
     for (const chain of found.slice(0, MAX_CHAINS)) {
@@ -218,11 +305,22 @@ function failure(ended, problem) {
 
 // What npm's run means: { status, exitCode, markdown }. stdout is what npm
 // printed; exitCode, signal and spawnError say how it ended; lock is the
-// parsed package-lock.json, used only to show installed versions.
-function summarize({ stdout, exitCode = null, signal = null, spawnError = null, lock = null }) {
+// parsed package-lock.json, used to show and check installed versions;
+// exceptions is the parsed audit-exceptions.json, or exceptionsError why it
+// couldn't be read; today is the date in UTC, YYYY-MM-DD.
+function summarize({
+  stdout,
+  exitCode = null,
+  signal = null,
+  spawnError = null,
+  lock = null,
+  exceptions = [],
+  exceptionsError = null,
+  today = new Date().toISOString().slice(0, 10)
+}) {
   const ended = describeExit({ exitCode, signal, spawnError });
   try {
-    return judge({ stdout, exitCode, signal, spawnError, lock, ended });
+    return judge({ stdout, exitCode, signal, spawnError, lock, exceptions, exceptionsError, today, ended });
   } catch (error) {
     // Rather than a crash, whose exit code 1 would read as advisories and
     // whose message on the console could quote the report.
@@ -230,7 +328,7 @@ function summarize({ stdout, exitCode = null, signal = null, spawnError = null, 
   }
 }
 
-function judge({ stdout, exitCode, signal, spawnError, lock, ended }) {
+function judge({ stdout, exitCode, signal, spawnError, lock, exceptions, exceptionsError, today, ended }) {
   const fail = (problem) => failure(ended, problem);
   if (spawnError || signal || !Number.isInteger(exitCode)) return fail('npm didn\'t run to the end.');
   if (!stdout || !stdout.trim()) return fail('npm printed no report.');
@@ -242,35 +340,70 @@ function judge({ stdout, exitCode, signal, spawnError, lock, ended }) {
   }
   const problem = reportProblem(report);
   if (problem) return fail(problem);
+  if (dayOf(today) === null) return fail('Today\'s date isn\'t known.');
+  if (exceptionsError) return fail(exceptionsError);
+  const exceptionsInvalid = exceptionsProblem(exceptions, today);
+  if (exceptionsInvalid) return fail(exceptionsInvalid);
 
   const { vulnerabilities } = report;
   const packages = Object.keys(vulnerabilities).length;
-  if (packages === 0) {
-    if (exitCode !== 0) return fail(`npm reported no advisories but ${ended}.`);
-    return {
-      status: 'clean',
-      exitCode: EXIT.clean,
-      markdown: [...heading(ended), '**No known advisories** for the versions in package-lock.json, development tools included.', '', EVIDENCE, ''].join('\n')
-    };
-  }
+  if (packages === 0 && exitCode !== 0) return fail(`npm reported no advisories but ${ended}.`);
+  // npm audit exits with 1 when it finds advisories; any other code but 0,
+  // handled below, means it didn't finish the way its report says.
+  if (packages > 0 && exitCode !== 0 && exitCode !== 1) return fail(`npm reported advisories but ${ended}.`);
 
   const advisories = collectAdvisories(vulnerabilities);
+  const attention = advisories.filter((advisory) => !review(advisory, vulnerabilities, lock, exceptions, today));
+  const reviewed = advisories.filter((advisory) => !attention.includes(advisory));
+  const used = new Set(advisories.flatMap((advisory) => advisory.affected.map((item) => item.exception)));
+  const unused = exceptions.filter((exception) => !used.has(exception));
+  // Versions an entry lists that are no longer installed.
+  const extra = exceptions.flatMap((exception) => {
+    if (!used.has(exception)) return [];
+    const installed = advisories.flatMap((advisory) =>
+      advisory.affected.filter((item) => item.exception === exception).flatMap((item) => installedVersions(lock, vulnerabilities[item.name]))
+    );
+    const gone = exception.versions.filter((version) => !installed.includes(version));
+    return gone.length ? [{ exception, gone }] : [];
+  });
+  const npmDisagrees = packages > 0 && exitCode === 0;
+  const ok = !attention.length && !unused.length && !extra.length && !npmDisagrees;
+
   const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-  const lines = [
-    ...heading(ended),
-    `**${count(advisories.length, 'known advisory', 'known advisories')}** in package-lock.json. ` +
-      `npm counts ${count(packages, 'affected package', 'affected packages')}: each package an advisory names, and the ones that depend on it.`,
-    ''
-  ];
-  if (exitCode === 0) lines.push('npm exited with 0 although its report lists advisories; this still fails.', '');
-  for (const advisory of advisories) lines.push(...advisorySection(advisory, vulnerabilities, lock), '');
-  lines.push(
-    'Advisories the project has looked at but can\'t fix yet are described under "Development dependencies" in SECURITY.md. They still fail this check.',
-    '',
-    EVIDENCE,
-    ''
-  );
-  return { status: 'advisories', exitCode: EXIT.advisories, markdown: lines.join('\n') };
+  const lines = [...heading(ended)];
+  if (packages === 0) {
+    lines.push('**No known advisories** for the versions in package-lock.json, development tools included.', '');
+  } else {
+    lines.push(
+      `**${count(advisories.length, 'known advisory', 'known advisories')}** in package-lock.json, ` +
+        `${attention.length} needing attention and ${reviewed.length} reviewed in ${EXCEPTIONS_FILE}. ` +
+        `npm counts ${count(packages, 'affected package', 'affected packages')}: each package an advisory names, and the ones that depend on it.`,
+      ''
+    );
+  }
+  if (npmDisagrees) lines.push('npm exited with 0 although its report lists advisories; this still fails.', '');
+  if (attention.length) {
+    lines.push('## Needs attention', '');
+    for (const advisory of attention) lines.push(...advisorySection(advisory, vulnerabilities, lock), '');
+  }
+  if (unused.length || extra.length) {
+    lines.push(`## Exceptions no longer needed`, '', `Remove these from ${EXCEPTIONS_FILE}:`, '');
+    for (const exception of unused) {
+      lines.push(`- ${text(exception.advisory)} for ${text(exception.package, { prose: true })}: nothing installed is affected any more.`);
+    }
+    for (const { exception, gone } of extra) {
+      lines.push(`- ${text(exception.advisory)} for ${text(exception.package, { prose: true })}: ${text(gone.join(', '), { prose: true })} is no longer installed.`);
+    }
+    lines.push('');
+  }
+  if (reviewed.length) {
+    lines.push(`## Reviewed in ${EXCEPTIONS_FILE}`, '');
+    for (const advisory of reviewed) lines.push(...advisorySection(advisory, vulnerabilities, lock), '');
+  }
+  lines.push(EVIDENCE, '');
+  const markdown = lines.join('\n');
+  if (!ok) return { status: 'advisories', exitCode: EXIT.advisories, markdown };
+  return { status: packages ? 'reviewed' : 'clean', exitCode: EXIT.clean, markdown };
 }
 
 function readLock(file) {
@@ -278,6 +411,23 @@ function readLock(file) {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {
     return null;
+  }
+}
+
+// { exceptions } from audit-exceptions.json, an empty list if there is no such
+// file, or { exceptionsError } if it can't be read.
+function readExceptions(file) {
+  let data;
+  try {
+    data = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { exceptions: [] };
+    return { exceptionsError: `${EXCEPTIONS_FILE} couldn't be read.` };
+  }
+  try {
+    return { exceptions: JSON.parse(data) };
+  } catch {
+    return { exceptionsError: `${EXCEPTIONS_FILE} isn't valid JSON.` };
   }
 }
 
@@ -318,7 +468,12 @@ function main(args) {
     write(path.join(folder, 'npm-audit.stderr.txt'), run.stderr ?? '');
     write(path.join(folder, 'npm-audit-exit.txt'), `${describeExit(ending)}\n`);
 
-    result = summarize({ stdout: run.stdout, ...ending, lock: readLock('package-lock.json') });
+    result = summarize({
+      stdout: run.stdout,
+      ...ending,
+      lock: readLock('package-lock.json'),
+      ...readExceptions(EXCEPTIONS_FILE)
+    });
     write(summary, result.markdown);
     if (process.env.GITHUB_STEP_SUMMARY) {
       step = `add to ${process.env.GITHUB_STEP_SUMMARY}`;
@@ -337,4 +492,4 @@ function main(args) {
 
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
-module.exports = { AUDIT_ARGS, EXIT, STATUS_LINES, summarize };
+module.exports = { AUDIT_ARGS, EXCEPTIONS_FILE, EXIT, MAX_REVIEW_DAYS, STATUS_LINES, summarize };

@@ -1,0 +1,20 @@
+[
+  {
+    "advisory": "GHSA-g3hv-75wg-m249",
+    "package": "minimatch",
+    "versions": [
+      "10.2.6"
+    ],
+    "reason": "The slow path needs optimizationLevel 2 or more, which neither ESLint nor Playwright sets (Playwright also bundles an affected 10.2.5 that npm can't see), and the patterns come only from this repository. The fix is in minimatch 11, which ESLint doesn't accept yet.",
+    "reviewBy": "2027-02-01"
+  },
+  {
+    "advisory": "GHSA-gcqx-w48m-w2h4",
+    "package": "deepmerge",
+    "versions": [
+      "4.3.1"
+    ],
+    "reason": "addons-linter, through web-ext, merges only its own bundled schemas, none with a __proto__, constructor or prototype key; nothing from this repository is merged. No fixed deepmerge exists.",
+    "reviewBy": "2027-02-01"
+  }
+]
