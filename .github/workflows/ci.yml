@@ -36,10 +36,14 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      # This job installs nothing. Left on, setup-node's automatic npm cache
+      # (package.json names npm in packageManager) saved an empty cache under
+      # the lockfile's key before the jobs that install could save theirs.
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.19.0
+          package-manager-cache: false
 
       # tests/ci-workflow.test.js runs this script and the gate's in throwaway
       # repositories, so keep GitHub expressions out of them and pass values in env.

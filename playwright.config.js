@@ -10,7 +10,11 @@ module.exports = defineConfig({
   testMatch: 'extension.spec.js',
   fullyParallel: false,
   workers: 1,
+  forbidOnly: Boolean(process.env.CI),
+  // CI retries a failed test once to record its trace, but a test that
+  // passes only on the retry still fails the run, so a flake is seen.
   retries: process.env.CI ? 1 : 0,
+  failOnFlakyTests: Boolean(process.env.CI),
   reporter: process.env.CI
     ? [['line'], ['html', { open: 'never' }]]
     : [['line']],

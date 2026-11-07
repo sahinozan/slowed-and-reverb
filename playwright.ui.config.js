@@ -41,7 +41,9 @@ module.exports = defineConfig({
   fullyParallel: false,
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
+  // As in playwright.config.js: a test that passes only on its retry fails.
   retries: process.env.CI ? 1 : 0,
+  failOnFlakyTests: Boolean(process.env.CI),
   reporter: process.env.CI
     ? [['line'], ['html', { open: 'never', outputFolder: 'playwright-report/ui' }]]
     : [['line']],

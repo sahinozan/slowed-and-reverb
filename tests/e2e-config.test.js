@@ -17,9 +17,9 @@ const { root } = require('./helpers/load-script');
 const cli = require.resolve('@playwright/test/cli');
 
 // Runs playwright test --list, with SLOWED_REVERB_UI_FIREFOX_PLAYBACK set to
-// `playback` or, when that's undefined, unset.
-function list(config, playback) {
-  const env = { ...process.env, CI: '', SLOWED_REVERB_POPUP_HISTORY: '' };
+// `playback` or, when that's undefined, unset, and CI set to `ci`.
+function list(config, playback, ci = '') {
+  const env = { ...process.env, CI: ci, SLOWED_REVERB_POPUP_HISTORY: '' };
   delete env.SLOWED_REVERB_UI_FIREFOX_PLAYBACK;
   if (playback !== undefined) env.SLOWED_REVERB_UI_FIREFOX_PLAYBACK = playback;
   return spawnSync(process.execPath, [cli, 'test', '--list', '--reporter=json', `--config=${config}`], {
@@ -114,6 +114,19 @@ describe('Playwright configurations', () => {
     assert.equal(missing.length, PLAYBACK_TESTS.length, missing.join('\n'));
     assert.deepEqual(playbackTests(omitted, 'firefox'), []);
     assert.equal(left.size, named(all, 'firefox').length - PLAYBACK_TESTS.length);
+  });
+
+  // A retry records a failed test's trace, but a test that passes only on
+  // its retry still fails CI, and a stray test.only can't shrink the run.
+  test('on CI both configurations retry once yet fail on flaky tests and test.only', () => {
+    for (const config of ['playwright.config.js', 'playwright.ui.config.js']) {
+      const result = list(config, undefined, 'true');
+      assert.equal(result.status, 0, result.stderr);
+      const report = JSON.parse(result.stdout);
+      assert.equal(report.config.failOnFlakyTests, true, config);
+      assert.equal(report.config.forbidOnly, true, config);
+      for (const project of report.config.projects) assert.equal(project.retries, 1, `${config} ${project.name}`);
+    }
   });
 
   test('SLOWED_REVERB_UI_FIREFOX_PLAYBACK takes only "run" or "omit"', () => {

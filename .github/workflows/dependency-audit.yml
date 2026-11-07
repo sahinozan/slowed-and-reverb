@@ -50,11 +50,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # Nothing is installed: npm audits the lockfile as it is.
+      # Nothing is installed: npm audits the lockfile as it is. So no npm
+      # cache either, which would otherwise be saved empty (see ci.yml).
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.19.0
+          package-manager-cache: false
 
       - name: Install the pinned npm version
         run: npm install --global npm@11.19.0

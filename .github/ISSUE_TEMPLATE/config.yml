@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/sahinozan/slowed-and-reverb/security/advisories/new
+    about: Don't open a public issue for a security problem. See SECURITY.md.
+  - name: Ask a private question by email
+    url: mailto:slowedandreverbsupport@proton.me
+    about: For a private support or privacy question. Don't send passwords or sign-in tokens.
