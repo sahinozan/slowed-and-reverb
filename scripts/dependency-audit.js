@@ -17,7 +17,11 @@
 // audit-exceptions.json, each with the package and installed versions it
 // covers, a short reason and a date to look at it again by, at most
 // MAX_REVIEW_DAYS ahead. An advisory is let through only while an entry
-// covers every installed version it affects and its date hasn't passed.
+// covers every installed version of the package it affects and its date
+// hasn't passed. npm's report doesn't say which installed copy each advisory
+// affects, so with copies at several versions an entry lists them all, even
+// one that advisory's range leaves out; working that out here would take a
+// version-range parser, and a mistake in one could let an advisory through.
 //
 // It exits with 0 when npm returned a report whose advisories, if any, are all
 // covered that way, and every entry is still needed. It exits with 1 when an
@@ -243,7 +247,7 @@ function review(advisory, vulnerabilities, lock, exceptions, today) {
     if (!exception) item.problem = `Not in ${EXCEPTIONS_FILE}.`;
     else if (versions.includes(null)) item.problem = 'The lockfile doesn\'t give its installed version, so the exception can\'t be checked.';
     else if (!versions.every((version) => exception.versions.includes(version))) {
-      item.problem = `${EXCEPTIONS_FILE} covers ${text(exception.versions.join(', '))}, not ${text(versions.join(', '))}. Look again before adding a version.`;
+      item.problem = `${EXCEPTIONS_FILE} covers ${text(exception.versions.join(', '), { prose: true })}, not ${text(versions.join(', '))}. Look again before adding a version.`;
     } else if (exception.reviewBy < today) item.problem = `The exception was to be looked at again by ${text(exception.reviewBy)}.`;
     else item.problem = null;
   }
@@ -344,6 +348,9 @@ function judge({ stdout, exitCode, signal, spawnError, lock, exceptions, excepti
   const { vulnerabilities } = report;
   const packages = Object.keys(vulnerabilities).length;
   if (packages === 0 && exitCode !== 0) return fail(`npm reported no advisories but ${ended}.`);
+  // npm audit exits with 1 when it finds advisories; any other code but 0,
+  // handled below, means it didn't finish the way its report says.
+  if (packages > 0 && exitCode !== 0 && exitCode !== 1) return fail(`npm reported advisories but ${ended}.`);
 
   const advisories = collectAdvisories(vulnerabilities);
   const attention = advisories.filter((advisory) => !review(advisory, vulnerabilities, lock, exceptions, today));
@@ -382,10 +389,10 @@ function judge({ stdout, exitCode, signal, spawnError, lock, exceptions, excepti
   if (unused.length || extra.length) {
     lines.push(`## Exceptions no longer needed`, '', `Remove these from ${EXCEPTIONS_FILE}:`, '');
     for (const exception of unused) {
-      lines.push(`- ${text(exception.advisory)} for ${text(exception.package)}: nothing installed is affected any more.`);
+      lines.push(`- ${text(exception.advisory)} for ${text(exception.package, { prose: true })}: nothing installed is affected any more.`);
     }
     for (const { exception, gone } of extra) {
-      lines.push(`- ${text(exception.advisory)} for ${text(exception.package)}: ${text(gone.join(', '))} is no longer installed.`);
+      lines.push(`- ${text(exception.advisory)} for ${text(exception.package, { prose: true })}: ${text(gone.join(', '), { prose: true })} is no longer installed.`);
     }
     lines.push('');
   }

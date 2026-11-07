@@ -411,6 +411,11 @@ describe('dependency audit exceptions', () => {
     assert.equal(other.status, 'advisories');
     assert.match(other.markdown, /- GHSA-pqg4-j6r4-53mv for shell-quote: nothing installed is affected any more\./);
 
+    // The entry's own text is escaped, underscores included.
+    const marked = audit([FORGE, { ...SHELL_QUOTE, package: '__not installed__ <b>' }, { ...FORGE, advisory: 'GHSA-5555-6666-7777', versions: ['1.4.0', '_9_'] }]);
+    assert.match(marked.markdown, /- GHSA-pqg4-j6r4-53mv for \\_\\_not installed\\_\\_ &lt;b&gt;: nothing installed is affected any more\./);
+    assert.doesNotMatch(marked.markdown, /(?<!\\)__/);
+
     const extra = audit([{ ...FORGE, versions: ['1.3.9', '1.4.0'] }]);
     assert.equal(extra.status, 'advisories');
     assert.match(extra.markdown, /- GHSA-86w9-cpqp-85rv for node-forge: 1\.3\.9 is no longer installed\./);
@@ -420,6 +425,29 @@ describe('dependency audit exceptions', () => {
     const result = audit([FORGE], { exitCode: 0 });
     assert.equal(result.status, 'advisories');
     assert.match(result.markdown, /npm exited with 0 although its report lists advisories; this still fails\./);
+  });
+
+  test('fails as unfinished when npm lists reviewed advisories but exited with neither 0 nor 1', () => {
+    for (const exitCode of [2, 42, -1]) {
+      const result = audit([FORGE], { exitCode });
+      assert.equal(result.status, 'error', String(exitCode));
+      assert.equal(result.exitCode, EXIT.error, String(exitCode));
+      assert.match(result.markdown, new RegExp(`npm reported advisories but npm exited with ${exitCode}\\.`));
+    }
+  });
+
+  test('asks for every installed version of the package, whichever copy an advisory is about', () => {
+    // Two copies, each with its own advisory; npm lists both copies under the package.
+    const a = advisory({ url: 'https://github.com/advisories/GHSA-2222-3333-4444', range: '<1.0.0' });
+    const b = advisory({ url: 'https://github.com/advisories/GHSA-5555-6666-7777', range: '>=2.0.0 <3.0.0' });
+    const stdout = report({ 'left-pad': entry('left-pad', { via: [a, b], nodes: ['node_modules/left-pad', 'node_modules/x/node_modules/left-pad'] }) });
+    const lock = { packages: { 'node_modules/left-pad': { version: '0.9.0' }, 'node_modules/x/node_modules/left-pad': { version: '2.0.0' } } };
+    const entryFor = (id, versions) => ({ advisory: id, package: 'left-pad', versions, reason: 'Not reached.', reviewBy: '2027-01-01' });
+    const each = summarize({ stdout, exitCode: 1, lock, today: TODAY, exceptions: [entryFor('GHSA-2222-3333-4444', ['0.9.0']), entryFor('GHSA-5555-6666-7777', ['2.0.0'])] });
+    assert.equal(each.status, 'advisories');
+    assert.match(each.markdown, /covers 0\.9\.0, not 0\.9\.0, 2\.0\.0\./);
+    const both = summarize({ stdout, exitCode: 1, lock, today: TODAY, exceptions: [entryFor('GHSA-2222-3333-4444', ['0.9.0', '2.0.0']), entryFor('GHSA-5555-6666-7777', ['0.9.0', '2.0.0'])] });
+    assert.equal(both.status, 'reviewed', both.markdown);
   });
 
   test('refuses an exceptions list that isn\'t in the expected format, instead of trusting it', () => {

@@ -172,9 +172,11 @@ It fails for any advisory not listed in
 advisories that have been looked at, have no usable fix yet, and don't reach
 this project, each with the package and installed versions it covers, a
 reason of a sentence or two, and a `reviewBy` date at most 90 days ahead. An
-advisory on the list is let through only while every installed version it
-affects is listed and the date hasn't passed, so a new version or a passed date
-fails the audit until someone looks again. An entry that no longer matches
+advisory on the list is let through only while every installed version of the
+package is listed and the date hasn't passed, so a new version or a passed date
+fails the audit until someone looks again. When the package is installed at
+several versions, an entry lists all of them, even one the advisory doesn't
+affect, since npm's report doesn't say which copy each advisory is about. An entry that no longer matches
 anything installed fails it too, so the list doesn't keep entries that aren't
 needed. Add or renew an entry only after checking how the project uses the
 affected code, and put the fuller analysis in the pull request that changes
