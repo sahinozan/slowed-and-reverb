@@ -1,16 +1,19 @@
-name: Audio capture trial
+name: Audio suites
 
-# Kept apart from the required "Lint, test, and package" check. The trial
-# asks whether a hosted Ubuntu runner with a PulseAudio null sink can record
-# the extension's audio in Chromium and Firefox; the regression suite
-# records the engines through the changes that have gone wrong before. See
-# e2e/audio-capture/README.md. Neither is required yet. Their failures stay
-# visible; nothing here is allowed to fail quietly.
+# Kept apart from the required "Lint, test, and package" check. Each browser
+# has its own job on its own runner: it runs the audio regression suite,
+# which records the engines through the changes that have gone wrong
+# before, then the audio capture trial, which checks the recorder itself
+# and, in Chromium, that --mute-audio doesn't change what is recorded. See
+# e2e/audio-capture/README.md and BASELINE.md. Neither is required yet.
+# Their failures stay visible; nothing here is allowed to fail quietly.
 
 on:
   pull_request:
     paths:
       - '.github/workflows/audio-capture-trial.yml'
+      # The jobs' Node.js version.
+      - '.nvmrc'
       - 'e2e/audio-capture/**'
       - 'e2e/extension-copy.js'
       # Both suites start Firefox through it.
@@ -22,12 +25,21 @@ on:
       - 'scripts/request-target.js'
       - 'scripts/ci-package-downloads.sh'
       - 'scripts/ci-install-firefox.sh'
+      - 'scripts/firefox-release.js'
+  # Two runs on main each night for the baseline (BASELINE.md), the first
+  # on Firefox's current release, the second on the one before. The times
+  # are UTC, off the hour, when GitHub's schedule is least crowded.
+  schedule:
+    - cron: '17 1 * * *'
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       firefox:
         description: >-
-          A Firefox release (such as 159.0) for the regression suite, from
-          Mozilla's archive; empty for the runner's own Firefox
+          A Firefox release (such as 159.0) for the Firefox job, from
+          Mozilla's archive, or current or previous for Mozilla's latest
+          release or the latest of the major version before it; empty for
+          the runner's own Firefox
         required: false
         default: ''
         type: string
@@ -35,22 +47,43 @@ on:
 permissions:
   contents: read
 
-# Each finished run is evidence, so a newer run waits instead of cancelling.
+# What the Firefox job asks scripts/firefox-release.js for.
+env:
+  FIREFOX_ASKED: ${{ github.event_name == 'schedule' && (github.event.schedule == '17 1 * * *' && 'current' || 'previous') || inputs.firefox }}
+
+# A new commit on a pull request stops the run on the commit it replaces: only
+# runs on a pull request's final commit count. Runs started by hand, such as
+# the baseline's, are never stopped; a newer one waits for them. The nightly
+# runs have a group of their own, so one never replaces a run started by
+# hand that is waiting (GitHub keeps one waiting run per group).
 concurrency:
-  group: audio-capture-trial-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  group: audio-capture-trial-${{ github.event_name == 'schedule' && 'nightly' || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  linux-null-sink:
-    name: Audio capture trial (Ubuntu, PulseAudio null sink)
+  linux:
+    name: Audio suites, ${{ matrix.name }} (Ubuntu, PulseAudio null sink)
     runs-on: ubuntu-latest
-    # Every step below has its own deadline. Together (24 minutes to set up,
-    # 2 to read Firefox's files, 5 for each browser, 1 to show the sound
-    # server and 5 to upload) they come to 42, leaving 5 for the runner's
-    # own work between them, so even a step that runs out of time leaves
-    # time to upload the evidence. A hosted run took under 1 minute to set
-    # up (tests/audio-workflow.test.js checks the sums).
-    timeout-minutes: 47
+    strategy:
+      # One browser's failure doesn't stop the other's run.
+      fail-fast: false
+      matrix:
+        include:
+          - browser: chromium
+            name: Chromium
+          - browser: firefox
+            name: Firefox
+    # A browser's suite takes about 5 minutes and its trial about 1;
+    # installing the sound server took up to 13 on its own from the Azure
+    # mirror, and well under one from Ubuntu's archive. Every step below has
+    # its own deadline. Together they come to 45 in the Chromium job (24 to
+    # set up, 10 for the suite, 5 for the trial, 1 to show the sound server
+    # and 5 to upload) and 41 in the Firefox job (14 to set up, 1 to choose
+    # a Firefox, 3 to install it, 2 to read its files, then as in Chromium's),
+    # leaving 5 for the runner's own work between them, so even a step that
+    # runs out of time leaves time to upload the evidence
+    # (tests/audio-workflow.test.js checks the sums).
+    timeout-minutes: 50
 
     steps:
       - name: Check out repository
@@ -63,7 +96,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.19.0
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install the pinned npm version
@@ -80,6 +113,7 @@ jobs:
 
       - name: Read the Playwright version
         id: playwright
+        if: matrix.browser == 'chromium'
         timeout-minutes: 1
         shell: bash
         run: |
@@ -88,6 +122,7 @@ jobs:
 
       - name: Restore Playwright Chromium
         id: playwright-cache
+        if: matrix.browser == 'chromium'
         timeout-minutes: 2
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -96,16 +131,16 @@ jobs:
 
       # One of these two runs.
       - name: Install Playwright Chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        if: matrix.browser == 'chromium' && steps.playwright-cache.outputs.cache-hit != 'true'
         timeout-minutes: 7
         run: npx playwright install --with-deps --no-shell chromium
 
       - name: Install Chromium's system libraries
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        if: matrix.browser == 'chromium' && steps.playwright-cache.outputs.cache-hit == 'true'
         timeout-minutes: 5
         run: npx playwright install-deps chromium
 
-      # A virtual output device: both browsers play into it as into speakers.
+      # A virtual output device: the browser plays into it as into speakers.
       - name: Start a PulseAudio null sink
         id: sink
         timeout-minutes: 5
@@ -122,154 +157,25 @@ jobs:
           pactl list short sinks
           echo 'ready=true' >> "$GITHUB_OUTPUT"
 
-      # On GitHub's Ubuntu runners Firefox has sometimes not started within
-      # 30 s, its main process waiting on the disk (in disk sleep, using no
-      # CPU) when it was checked. Which file it waited for isn't known. As
-      # an experiment, this reads Firefox's install once first, so it is in
-      # memory, and logs how long the disk took. It can't stop the tests.
-      - name: Read Firefox's files into memory
-        continue-on-error: true
-        timeout-minutes: 2
-        shell: bash
-        run: |
-          set -euo pipefail
-          bin="${FIREFOX_BIN:-/usr/bin/firefox}"
-          dir="$(dirname "$(readlink -f "$bin")")"
-          if [[ ! -f "$dir/application.ini" ]]; then
-            echo "::warning::No Firefox install beside $bin ($dir), so nothing was read."
-            exit 0
-          fi
-          start=$(date +%s%N)
-          bytes=$(find "$dir" -type f -print0 | xargs -0 cat | wc -c)
-          echo "Read $bytes bytes of Firefox from $dir in $(( ($(date +%s%N) - start) / 1000000 )) ms."
-
-      - name: Run the Chromium audio capture trial
-        timeout-minutes: 5
-        run: npm run test:audio-trial:chromium
-
-      # Runs after a Chromium failure too, for its own evidence, once the
-      # sink is there; either failure fails the job.
-      - name: Run the Firefox audio capture trial
-        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' }}
-        timeout-minutes: 5
-        run: npm run test:audio-trial:firefox
-
-      - name: Show the sound server's state
-        if: ${{ !cancelled() }}
+      # Which Firefox this run is for: the one a run started by hand asks
+      # for, Mozilla's current or previous release for the nightly runs, or
+      # the runner's own. The choice is kept with the evidence. If it fails,
+      # nothing runs: the suite needs every step before it to succeed, and
+      # the trial asks that this one didn't fail.
+      - name: Choose the Firefox release
+        id: firefox-release
+        if: matrix.browser == 'firefox'
         timeout-minutes: 1
-        shell: bash
-        run: |
-          pactl info || true
-          pactl list short sinks || true
-          pactl list short sink-inputs || true
+        run: node scripts/firefox-release.js "$FIREFOX_ASKED" test-results/audio-regression/firefox-release.json
 
-      # Whatever happened before, even a cancelled run, keeps what it has.
-      - name: Upload the trial's evidence
-        if: ${{ always() }}
-        timeout-minutes: 5
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: audio-capture-trial-linux
-          path: test-results/audio-trial/
-          if-no-files-found: warn
-          retention-days: 14
-
-  linux-regression:
-    name: Audio regression suite (Ubuntu, PulseAudio null sink)
-    runs-on: ubuntu-latest
-    # Both browsers' suites take about 10 minutes together; installing the
-    # sound server took up to 13 on its own from the Azure mirror, and well
-    # under one from Ubuntu's archive. Every step below has its own
-    # deadline. Together (24 minutes to set up, 3 to install a Firefox asked
-    # for, 2 to read Firefox's files, 10 for each browser, 1 to show the
-    # sound server and 5 to upload) they come to 55, leaving 5 for the
-    # runner's own work between them, so even a step that runs out of time
-    # leaves time to upload the evidence (tests/audio-workflow.test.js
-    # checks the sums).
-    timeout-minutes: 60
-
-    steps:
-      - name: Check out repository
-        timeout-minutes: 1
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Node.js
-        timeout-minutes: 2
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24.19.0
-          cache: npm
-
-      - name: Install the pinned npm version
-        timeout-minutes: 2
-        run: npm install --global npm@11.19.0
-
-      - name: Install exact dependencies
-        timeout-minutes: 3
-        run: npm ci
-
-      - name: Download Ubuntu packages from Ubuntu's archive
-        timeout-minutes: 1
-        run: bash scripts/ci-package-downloads.sh
-
-      - name: Read the Playwright version
-        id: playwright
-        timeout-minutes: 1
-        shell: bash
-        run: |
-          version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Restore Playwright Chromium
-        id: playwright-cache
-        timeout-minutes: 2
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
-
-      # One of these two runs.
-      - name: Install Playwright Chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        timeout-minutes: 7
-        run: npx playwright install --with-deps --no-shell chromium
-
-      - name: Install Chromium's system libraries
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        timeout-minutes: 5
-        run: npx playwright install-deps chromium
-
-      # A virtual output device: both browsers play into it as into speakers.
-      - name: Start a PulseAudio null sink
-        id: sink
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends pulseaudio pulseaudio-utils
-          pulseaudio --version
-          pulseaudio --start --exit-idle-time=-1
-          pactl load-module module-null-sink sink_name=audio_trial sink_properties=device.description=Audio_trial
-          pactl set-default-sink audio_trial
-          pactl info
-          pactl list short sinks
-          echo 'ready=true' >> "$GITHUB_OUTPUT"
-
-      # A run started by hand can ask for a Firefox release from Mozilla's
-      # archive instead of the runner's own: the suite's baseline needs
-      # Firefox's current and previous releases (e2e/audio-capture/BASELINE.md).
-      # The script checks the download against Mozilla's release key and sets
-      # FIREFOX_BIN for the steps after it. If it fails, the suites don't run:
-      # the Firefox suite's condition asks for this step's success too.
+      # The script checks the download against Mozilla's release key and
+      # sets FIREFOX_BIN for the steps after it, the trial's included.
       - name: Install the Firefox asked for
         id: firefox-install
-        if: ${{ inputs.firefox }}
+        if: steps.firefox-release.outputs.version != ''
         timeout-minutes: 3
         env:
-          FIREFOX_VERSION: ${{ inputs.firefox }}
+          FIREFOX_VERSION: ${{ steps.firefox-release.outputs.version }}
         run: bash scripts/ci-install-firefox.sh
 
       # On GitHub's Ubuntu runners Firefox has sometimes not started within
@@ -278,6 +184,7 @@ jobs:
       # an experiment, this reads Firefox's install once first, so it is in
       # memory, and logs how long the disk took. It can't stop the tests.
       - name: Read Firefox's files into memory
+        if: matrix.browser == 'firefox'
         continue-on-error: true
         timeout-minutes: 2
         shell: bash
@@ -293,17 +200,17 @@ jobs:
           bytes=$(find "$dir" -type f -print0 | xargs -0 cat | wc -c)
           echo "Read $bytes bytes of Firefox from $dir in $(( ($(date +%s%N) - start) / 1000000 )) ms."
 
-      - name: Run the Chromium audio regression suite
+      - name: Run the audio regression suite
         timeout-minutes: 10
-        run: npm run test:audio:chromium
+        run: npm run test:audio:${{ matrix.browser }}
 
-      # Runs after a Chromium failure too, for its own evidence, once the
-      # sink is there and any Firefox asked for is installed; either failure
-      # fails the job.
-      - name: Run the Firefox audio regression suite
-        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' && (!inputs.firefox || steps.firefox-install.outcome == 'success') }}
-        timeout-minutes: 10
-        run: npm run test:audio:firefox
+      # Runs after a failed suite too, for its own evidence (a recorder
+      # fault shows here), once the sink is there and no Firefox asked for
+      # failed to install; either failure fails the job.
+      - name: Run the audio capture trial
+        if: ${{ !cancelled() && steps.sink.outputs.ready == 'true' && steps.firefox-release.outcome != 'failure' && steps.firefox-install.outcome != 'failure' }}
+        timeout-minutes: 5
+        run: npm run test:audio-trial:${{ matrix.browser }}
 
       - name: Show the sound server's state
         if: ${{ !cancelled() }}
@@ -315,12 +222,16 @@ jobs:
           pactl list short sink-inputs || true
 
       # Whatever happened before, even a cancelled run, keeps what it has.
-      - name: Upload the suite's evidence
+      # A pull request's evidence is kept for 14 days, the baseline's (runs
+      # started by hand or nightly) for 90, so it can be recorded later.
+      - name: Upload the evidence
         if: ${{ always() }}
         timeout-minutes: 5
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: audio-regression-linux
-          path: test-results/audio-regression/
+          name: audio-linux-${{ matrix.browser }}
+          path: |
+            test-results/audio-regression/
+            test-results/audio-trial/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 14 || 90 }}

@@ -17,6 +17,7 @@ on:
     paths:
       - '.github/workflows/dependency-audit.yml'
       - '.npmrc'
+      - '.nvmrc'
       - 'audit-exceptions.json'
       - 'package.json'
       - 'package-lock.json'
@@ -26,6 +27,7 @@ on:
     paths:
       - '.github/workflows/dependency-audit.yml'
       - '.npmrc'
+      - '.nvmrc'
       - 'audit-exceptions.json'
       - 'package.json'
       - 'package-lock.json'
@@ -55,7 +57,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.19.0
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Install the pinned npm version

@@ -17,7 +17,7 @@ site/
   site.js           applies the popup's theme to the page and the favicon
   app.js            home page: cassette, speed fader, demo controls
   guide.js          guide page: switches the popup's tab as you scroll
-  demo-audio.js     the demo's audio chain, mirroring extension/content.js
+  demo-audio.js     the demo's audio chain, mirroring extension/youtube-main.js
   popup-embed.js    talks to the popup iframe
   popup/            a copy of the shipping popup, plus popup-host.js
   assets/           icon, social image, font, brand logos, demo audio
