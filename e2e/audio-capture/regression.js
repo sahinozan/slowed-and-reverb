@@ -119,9 +119,10 @@ const DRY_TONES = [
   { hz: TONE.rightHz, amplitude: TONE.amplitude }
 ];
 // Turning the effect on while a song plays is recorded until this long
-// after it: Firefox's own click after a playing player is routed into a
-// graph comes 2 to 4 s later (README.md in this folder), so a click then is
-// heard and fails the check.
+// after it: Firefox's late frame after a playing player is routed into a
+// graph usually comes 2 to 4 s later (README.md in this folder), so it is
+// found and reported, without failing the check (LATE_FRAME_MS), and any
+// other click or slip then fails it.
 const FIRST_ENABLE_OBSERVE_MS = 6000;
 // Where in that recording Firefox's late frame may be (phaseSlips in
 // metrics.js): 1.13 to 3.5 s after the effect turned on on this Mac so far,

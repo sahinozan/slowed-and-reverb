@@ -742,9 +742,10 @@ hears, in both browsers, the speed and pitch, the effect being there, clicks
 and gaps when settings change, Spotify's own speed changes, and the sound
 coming back unchanged when the effect or the extension is turned off,
 removed or updated, and each defect the project has shipped and fixed is
-caught when put back. But turning the effect on while a song plays fails in
-Firefox on a click of Firefox's own that hasn't been decided on (see
-"Limits"), and the suite hasn't run
+caught when put back. But when the effect turns on while a song plays,
+Firefox adds a frame of silence of its own, often with a click. The suite
+reports that frame without failing, and it hasn't been decided on (see
+"Limits"). And the suite hasn't run
 often enough on any machine to give it a flake rate. Run it after an engine
 change, as well as listening.
 
