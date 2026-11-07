@@ -119,7 +119,7 @@ YouTube and YouTube Music are trademarks of Google LLC, and Spotify is a tradema
 Firefox release notes for 1.2.0:
 
 ```markdown
-- After the extension updates, a YouTube, YouTube Music or Spotify tab that was already open keeps the effect off until you reload the page, and the panel says so, with a button to reload. Before, that tab could keep using the old version.
+- After the extension updates, a YouTube, YouTube Music or Spotify tab that's still running the old version keeps the effect off until you reload the page, and the panel says so, with a button to reload. Before, that tab kept using the old version.
 - The extension is stricter about the pages it runs on: only YouTube, YouTube Music and Spotify, over a secure connection, and the same goes for keyboard shortcuts.
 ```
 
