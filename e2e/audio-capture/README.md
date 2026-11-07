@@ -84,8 +84,8 @@ seconds), before the reproducer stops with the deadline's error. Nothing is trie
 Playwright's own launch timeout.
 
 On Linux the trial expects a PulseAudio (or PipeWire) sound server. The
-workflow `.github/workflows/audio-capture-trial.yml` sets one up with a
-null sink:
+workflow `.github/workflows/audio-capture-trial.yml` ("Audio suites") sets
+one up with a null sink:
 
 ```sh
 sudo apt-get install -y --no-install-recommends pulseaudio pulseaudio-utils
@@ -94,23 +94,32 @@ pactl load-module module-null-sink sink_name=audio_trial
 pactl set-default-sink audio_trial
 ```
 
-Every step of the workflow's two jobs has its own deadline, setting up
+The workflow has a job for each browser, on its own runner. Each runs its
+browser's regression suite, then the trial, which runs after a failed
+suite too, once the sink is there: the trial's controls show whether the
+recorder itself was at fault. Every step has its own deadline, setting up
 included (24 minutes at most, against under a minute on a hosted run), and
 the deadlines add up to 5 minutes less than the job's own limit, with 5 of
 them for the upload. So a step that runs out of time fails as a step and
 the evidence is still uploaded, rather than the whole job being cancelled.
-`tests/audio-workflow.test.js` checks those sums, with each step in turn
-running out of time and GitHub's rules for which steps run after a
-failure; it doesn't run the workflow. The Firefox step runs after a
-Chromium failure too, once the sink is there.
+`tests/audio-workflow.test.js` checks those sums for each browser's job,
+with each step in turn running out of time and GitHub's rules for which
+steps run after a failure; it doesn't run the workflow.
 
-A run started by hand can give the regression suite another Firefox than
-the runner's: its `firefox` input takes a release (such as `159.0`), which
-`scripts/ci-install-firefox.sh` downloads from Mozilla's archive, checks
-against Mozilla's release key and the subkey that signs releases (both
-pinned by their fingerprints), and gives the suite through `FIREFOX_BIN`.
-If that fails, neither suite runs. `tests/ci-install-firefox.test.js`
-runs the script against stand-ins for the network and GnuPG.
+A run started by hand can give the Firefox job another Firefox than the
+runner's: its `firefox` input takes a release (such as `159.0`), or
+`current` or `previous`, which `scripts/firefox-release.js` reads from
+Mozilla's product-details (the latest release, or the latest of the major
+version before it). The workflow also runs on `main` twice each night for
+the baseline, on `current` and then on `previous` (`BASELINE.md`).
+`scripts/ci-install-firefox.sh` downloads the release from Mozilla's
+archive, checks it against Mozilla's release key and the subkey that signs
+releases (both pinned by their fingerprints), and gives the suite and the
+trial through `FIREFOX_BIN`. If either step fails, neither runs. What was
+asked for and chosen is kept as `firefox-release.json` in the suite's
+evidence. `tests/ci-install-firefox.test.js` runs the install script
+against stand-ins for the network and GnuPG, and
+`tests/firefox-release.test.js` checks how a release is chosen.
 
 The trial's evidence goes to `test-results/audio-trial/<run>/`, about 2 MB
 in all:
