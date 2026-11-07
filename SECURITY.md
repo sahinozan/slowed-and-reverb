@@ -11,7 +11,7 @@ a problem that may already have been resolved.
 Do not open a public issue for a suspected vulnerability. Report it on
 GitHub with
 [Report a vulnerability](https://github.com/sahinozan/slowed-and-reverb/security/advisories/new),
-which only the maintainer can see, or email
+which keeps the report private, or email
 [slowedandreverbsupport@proton.me](mailto:slowedandreverbsupport@proton.me).
 Include:
 

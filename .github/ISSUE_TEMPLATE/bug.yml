@@ -55,7 +55,7 @@ body:
       description: The shortest list of steps that shows the problem.
       placeholder: |
         1. Open a song on YouTube.
-        2. Turn on the effect and choose the Slowed preset.
+        2. Turn on the effect and choose the Slowed + Reverb preset.
         3. Skip to the next song.
     validations:
       required: true
