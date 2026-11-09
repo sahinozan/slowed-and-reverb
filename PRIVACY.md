@@ -1,6 +1,7 @@
 # Privacy Policy for Slowed & Reverb
 
 Effective date: October 16, 2026
+
 Last updated: October 28, 2026
 
 This policy applies to versions `1.0.0`, `1.0.1`, `1.1.0`, `1.1.1`, and

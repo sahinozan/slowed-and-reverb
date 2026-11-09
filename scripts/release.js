@@ -38,7 +38,9 @@ const INTERRUPTED = 'Stopped; nothing was recorded.';
 // Firefox Add-ons shows the privacy policy as Markdown that drops headings and
 // keeps only http(s) links, so its copy of PRIVACY.md has no title, section
 // headings as bold lines, one line per paragraph and list item, and email
-// links as plain text.
+// links as the address in code. A plain address would do worse: Firefox
+// Add-ons makes any address outside code a link, and points it at its own
+// home page.
 function firefoxPrivacyText(markdown) {
   const lines = markdown.split(/\r?\n/);
   if (/^#\s/.test(lines[0])) lines.shift();
@@ -78,7 +80,7 @@ function firefoxPrivacyText(markdown) {
     })
     .join('')
     .trimEnd();
-  return `${output.replace(/\[([^\]]+@[^\]]+)\]\(mailto:[^)]+\)/g, '$1')}\n`;
+  return `${output.replace(/\[([^\]]+@[^\]]+)\]\(mailto:[^)]+\)/g, '`$1`')}\n`;
 }
 
 function parseVersion(version) {
@@ -308,8 +310,8 @@ function releaseRecord(release) {
       'firefox-privacy-policy.txt  (paste into Manage Authors & License → Privacy Policy)',
       wrap(
         'Made from PRIVACY.md: the title dropped, section headings as bold lines, each ' +
-          'paragraph and list item on one line, and the support email as plain text, ' +
-          `since Firefox keeps only http(s) links.${privacyNote(release)}`
+          'paragraph and list item on one line, and the support email as code, since ' +
+          `Firefox keeps only http(s) links and makes a plain address a link to its own home page.${privacyNote(release)}`
       )
     ].join('\n'),
     ['Verification', ...verification.map((line) => wrap(`- ${line}`, '  '))].join('\n'),
