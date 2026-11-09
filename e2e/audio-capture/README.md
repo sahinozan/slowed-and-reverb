@@ -106,7 +106,10 @@ extension off, removing and updating it.
 
 Each historical defect in `history.js` is put back into a copy, and the
 check that should hear it has to fail as listed, in every engine it was put
-back into. A new audible defect gets an entry there.
+back into. A new audible defect gets an entry there. One this song can't set
+off gets a silent test of its own with a control: the limiter turning loud
+treble down in Firefox is checked by `e2e/ui/limiter.spec.js`, which renders
+the limiter offline in both browsers.
 
 ### What it can replace, and what stays manual
 

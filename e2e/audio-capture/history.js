@@ -20,6 +20,12 @@
 // `expect` lists the problems it must cause in each of them ({ code,
 // during }: the problem's message names the action or steady stretch where
 // it was heard, or one of a list of them).
+//
+// Not here: the limiter turning loud, bright music down in Firefox (its
+// compressor reacts to treble as if it were louder than it is). The suite's
+// song is two quiet low tones, which can't set that off, and a song that
+// could would be loud treble played aloud in Firefox. Its check and control
+// are in e2e/ui/limiter.spec.js, which renders the limiter without sound.
 
 const both = ['chromium', 'firefox'];
 

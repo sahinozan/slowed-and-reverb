@@ -72,7 +72,10 @@ YouTube Music and Spotify:
       wiring, an effect's code, gains, fades, presets or defaults, or a
       browser change to Web Audio): listen to reverb, echo, EQ, width and
       saturation with music. The audio suite keeps echo, saturation and EQ
-      neutral, so it can't hear this.
+      neutral, so it can't hear this. Compare a loud, bright song in Chromium
+      and Firefox too: they should sound alike, and in each, turning the
+      extension on with every setting at its default should only make the
+      song a little louder (the limiter stage).
 - [ ] **New store art:** look at each image at the size the store shows it
       (`store-assets/README.md`).
 

@@ -189,6 +189,39 @@ describe('Spotify main-world audio engine', () => {
     harness.dom.window.close();
   });
 
+  // The limiter stage (tests/limiter-stage.test.js): in Firefox a filter each
+  // side of the limiter cancels the filters Firefox's compressor has.
+  test('routes the effect through the limiter stage', async () => {
+    for (const [userAgent, filters] of [[undefined, 0], [FIREFOX_USER_AGENT, 2]]) {
+      const harness = setup({ userAgent });
+      harness.apply(true);
+      harness.media.dispatchEvent(new harness.window.Event('playing'));
+      await settle();
+
+      const context = FakeAudioContext.instances[0];
+      const targets = (node) => node.connections.map(({ target }) => target);
+      const [limiter] = context.compressors;
+      const [cut, boost] = context.iirFilters;
+      const processed = outputGains(context)[1];
+      assert.equal(context.compressors.length, 1);
+      assert.equal(context.iirFilters.length, filters);
+      assert.deepEqual(
+        ['threshold', 'knee', 'ratio', 'attack', 'release'].map((key) => limiter[key].value),
+        [-3, 3, 20, 0.003, 0.25]
+      );
+      assert.deepEqual(targets(context.panners[0]), [filters ? cut : limiter]);
+      if (filters) {
+        assert.deepEqual(targets(cut), [limiter]);
+        assert.deepEqual(targets(limiter), [boost]);
+        assert.deepEqual(targets(boost), [processed]);
+      } else {
+        assert.deepEqual(targets(limiter), [processed]);
+      }
+
+      harness.dom.window.close();
+    }
+  });
+
   test('keeps the graph attached and returns it to bypass when disabled', async () => {
     const harness = setup();
     harness.apply(true);
