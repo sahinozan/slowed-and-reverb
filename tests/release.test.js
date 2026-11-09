@@ -105,11 +105,16 @@ describe('Firefox privacy policy text', () => {
     assert.doesNotMatch(text, /^#/m);
     assert.doesNotMatch(text, /mailto:/);
     assert.doesNotMatch(text, /\n{3}/);
-    // Each date on a line of its own, and no address outside code, which
-    // Firefox Add-ons would make a link to its own home page.
-    assert.match(text, /^Effective date: [^\n]+\n\nLast updated: [^\n]+\n\n/);
-    assert.match(text, /`[^`\s]+@[^`\s]+`/);
-    assert.doesNotMatch(text.replace(/`[^`\n]*`/g, ''), /\S+@\S+\.\S+/);
+    // Each date alone on its line: a missing blank line on either side
+    // would join it to its neighbor.
+    const date = '[A-Z][a-z]+ \\d{1,2}, \\d{4}';
+    assert.match(text, new RegExp(`^Effective date: ${date}\n\nLast updated: ${date}\n\n`));
+    // No address outside code, which Firefox Add-ons would make a link to
+    // its own home page. A code span opens and closes with the same number
+    // of backticks, and an escaped backtick doesn't open one.
+    const outsideCode = text.replace(/(?<![\\`])(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g, '');
+    assert.match(text, /\S+@\S+\.\S+/);
+    assert.doesNotMatch(outsideCode, /\S+@\S+\.\S+/);
     assert.match(text, /^\*\*Summary\*\*\nSlowed & Reverb processes audio locally in the browser\. /m);
     for (const link of markdown.match(/\]\(https:[^)]+\)/g)) assert.ok(text.includes(link), link);
   });
