@@ -77,7 +77,7 @@ describe('Firefox privacy policy text', () => {
     );
   });
 
-  test('keeps web links and turns email links into plain addresses', () => {
+  test('keeps web links and turns email links into the address in code', () => {
     const markdown = [
       '# Privacy Policy',
       '',
@@ -87,7 +87,7 @@ describe('Firefox privacy policy text', () => {
 
     assert.equal(
       firefoxPrivacyText(markdown),
-      'Use the [public issue tracker](https://github.com/sahinozan/slowed-and-reverb/issues), or email help@example.com.\n'
+      'Use the [public issue tracker](https://github.com/sahinozan/slowed-and-reverb/issues), or email `help@example.com`.\n'
     );
   });
 
@@ -105,6 +105,11 @@ describe('Firefox privacy policy text', () => {
     assert.doesNotMatch(text, /^#/m);
     assert.doesNotMatch(text, /mailto:/);
     assert.doesNotMatch(text, /\n{3}/);
+    // Each date on a line of its own, and no address outside code, which
+    // Firefox Add-ons would make a link to its own home page.
+    assert.match(text, /^Effective date: [^\n]+\n\nLast updated: [^\n]+\n\n/);
+    assert.match(text, /`[^`\s]+@[^`\s]+`/);
+    assert.doesNotMatch(text.replace(/`[^`\n]*`/g, ''), /\S+@\S+\.\S+/);
     assert.match(text, /^\*\*Summary\*\*\nSlowed & Reverb processes audio locally in the browser\. /m);
     for (const link of markdown.match(/\]\(https:[^)]+\)/g)) assert.ok(text.includes(link), link);
   });
