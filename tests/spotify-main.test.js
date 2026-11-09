@@ -192,14 +192,29 @@ describe('Spotify main-world audio engine', () => {
   // The limiter stage (tests/limiter-stage.test.js): in Firefox a filter each
   // side of the limiter cancels the filters Firefox's compressor has.
   test('routes the effect through the limiter stage', async () => {
-    for (const [userAgent, filters] of [[undefined, 0], [FIREFOX_USER_AGENT, 2]]) {
+    const cases = [
+      { filters: 0 },
+      { userAgent: FIREFOX_USER_AGENT, filters: 2 },
+      // The effect turned on at once, before the stage's check of the
+      // browser is over: the sound then leaves the stage by a node of its
+      // own, so the filters could still be taken out.
+      { userAgent: FIREFOX_USER_AGENT, filters: 2, atOnce: true }
+    ];
+    for (const { userAgent, filters, atOnce } of cases) {
       const harness = setup({ userAgent });
+      if (!atOnce) await new Promise((resolve) => setTimeout(resolve, 0));
       harness.apply(true);
       harness.media.dispatchEvent(new harness.window.Event('playing'));
       await settle();
 
       const context = FakeAudioContext.instances[0];
-      const targets = (node) => node.connections.map(({ target }) => target);
+      // Compared one by one and never printed: a node leads to its whole
+      // page, and printing that for a failed comparison takes all the
+      // memory there is.
+      const leadsTo = (node, expected, what) => {
+        const targets = node.connections.map(({ target }) => target);
+        assert.ok(targets.length === expected.length && targets.every((target, index) => target === expected[index]), what);
+      };
       const [limiter] = context.compressors;
       const [cut, boost] = context.iirFilters;
       const processed = outputGains(context)[1];
@@ -209,13 +224,20 @@ describe('Spotify main-world audio engine', () => {
         ['threshold', 'knee', 'ratio', 'attack', 'release'].map((key) => limiter[key].value),
         [-3, 3, 20, 0.003, 0.25]
       );
-      assert.deepEqual(targets(context.panners[0]), [filters ? cut : limiter]);
+      leadsTo(context.panners[0], [filters ? cut : limiter], 'the panner leads to the limiter stage');
       if (filters) {
-        assert.deepEqual(targets(cut), [limiter]);
-        assert.deepEqual(targets(limiter), [boost]);
-        assert.deepEqual(targets(boost), [processed]);
+        leadsTo(cut, [limiter], 'the cut leads to the limiter');
+        leadsTo(limiter, [boost], 'the limiter leads to the boost');
+        if (atOnce) {
+          const [own] = boost.connections.map(({ target }) => target);
+          assert.equal(own?.type, 'gain');
+          leadsTo(boost, [own], 'the boost leads to one node');
+          leadsTo(own, [processed], "the stage's own node leads to the effect's output");
+        } else {
+          leadsTo(boost, [processed], "the boost leads to the effect's output");
+        }
       } else {
-        assert.deepEqual(targets(limiter), [processed]);
+        leadsTo(limiter, [processed], "the limiter leads to the effect's output");
       }
 
       harness.dom.window.close();

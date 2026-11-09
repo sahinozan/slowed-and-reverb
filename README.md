@@ -258,8 +258,9 @@ puts a filter each side of the limiter to cancel that. The test renders the
 stage from each file offline in both browsers and checks that tones from
 100 Hz to 18 kHz, white noise and a bass note under bursts of treble, all
 below the limiter's threshold, come out at the same level in both; that the
-defect is heard when it is put back; and that a compressor without the
-filters is left as it was.
+defect is heard when it is put back; that a compressor without the filters
+is left as it was; and that a limiter connected before the stage has checked
+the browser limits a loud tone exactly as one connected after.
 GitHub Actions runs `npm run check` for every change, and the browser tests on
 disposable Ubuntu and Windows machines unless the change can't affect them. The
 pull request's base commit decides that with its copy of

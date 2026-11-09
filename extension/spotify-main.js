@@ -226,9 +226,11 @@
   // Whether the compressor has those filters. Only Firefox is asked, so other
   // browsers run nothing new, and Firefox is taken to have them until it has
   // answered, a few milliseconds after this script starts, or if it can't
-  // answer. `known` settles once it has (the tests wait for it).
+  // answer. `known` settles once it has (the tests wait for it). Until then
+  // `undo` collects, for each limiter connected in the meantime, how to take
+  // its filters out again should the answer be no.
   const LIMITER_IN_FIREFOX = window.navigator.userAgent.includes('Firefox');
-  const limiterFilters = { present: LIMITER_IN_FIREFOX, known: null };
+  const limiterFilters = { present: LIMITER_IN_FIREFOX, known: null, undo: LIMITER_IN_FIREFOX ? [] : null };
 
   // Half a second of a 12 kHz tone at half scale, rendered without playing
   // it, through a compressor with the limiter's settings. The tone is under
@@ -256,7 +258,14 @@
   }
 
   limiterFilters.known = LIMITER_IN_FIREFOX
-    ? limiterTurnsTrebleDown().then((turnedDown) => { limiterFilters.present = turnedDown; }, () => {})
+    ? limiterTurnsTrebleDown().then(
+      (turnedDown) => {
+        limiterFilters.present = turnedDown;
+        if (!turnedDown) limiterFilters.undo.forEach((undo) => undo());
+        limiterFilters.undo = null;
+      },
+      () => { limiterFilters.undo = null; }
+    )
     : Promise.resolve();
 
   // Puts the limiter after `input` and returns the node its sound leaves by.
@@ -265,10 +274,24 @@
     if (!limiterFilters.present) return input.connect(limiter);
     const cut = limiterFilter(context.sampleRate, false);
     const boost = limiterFilter(context.sampleRate, true);
-    return input
-      .connect(context.createIIRFilter(cut.feedforward, cut.feedback))
-      .connect(limiter)
-      .connect(context.createIIRFilter(boost.feedforward, boost.feedback));
+    const before = context.createIIRFilter(cut.feedforward, cut.feedback);
+    const after = context.createIIRFilter(boost.feedforward, boost.feedback);
+    input.connect(before).connect(limiter).connect(after);
+    if (!limiterFilters.undo) return after;
+    // The browser hasn't answered yet. Cancelling filters that aren't there
+    // would let peaks past the limiter, so the sound leaves by a node that
+    // stays, and the filters can be taken out from around the limiter if the
+    // answer is no.
+    const output = context.createGain();
+    after.connect(output);
+    limiterFilters.undo.push(() => {
+      input.disconnect(before);
+      before.disconnect();
+      limiter.disconnect(after);
+      after.disconnect();
+      input.connect(limiter).connect(output);
+    });
+    return output;
   }
   // ---- End of the limiter stage ----
 

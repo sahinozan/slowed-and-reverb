@@ -25,6 +25,11 @@
 //   then has to do what Firefox 159 was measured to do;
 // - the stage's own check of the browser found what this test finds, and a
 //   compressor without the filters is left exactly as it was.
+//
+// A second test for each file connects a limiter before the stage's check
+// of the browser has answered, as an engine can in its first milliseconds.
+// It is given the filters then, and if the answer is no they have to come
+// out again, or peaks would get past the limiter and clip.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -183,6 +188,51 @@ async function measureLimiter({ body, sampleRate }) {
   };
 }
 
+// Runs in the page. Connects one limiter straight away, before the stage's
+// check of the browser can have answered, and one after the answer, and
+// renders a full-scale 10 kHz tone (well over the threshold) through each.
+// `claimsFirefox` gives the stage a window that says it is Firefox, so a
+// browser without the filters is asked too, and answers no.
+async function measureEarlyLimiter({ body, claimsFirefox }) {
+  const page = claimsFirefox
+    ? { navigator: { userAgent: 'Mozilla/5.0 (Macintosh; rv:159.0) Gecko/20100101 Firefox/159.0' }, OfflineAudioContext }
+    : window;
+  const stage = new Function('window', body)(page);
+
+  const sampleRate = 48000;
+  const frames = sampleRate;
+  const tone = new Float32Array(frames);
+  for (let i = 0; i < frames; i++) tone[i] = Math.sin((2 * Math.PI * 10000 * i) / sampleRate);
+  const connect = () => {
+    const context = new OfflineAudioContext(2, frames, sampleRate);
+    const buffer = context.createBuffer(2, frames, sampleRate);
+    buffer.copyToChannel(tone, 0);
+    buffer.copyToChannel(tone, 1);
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    stage.connectLimiter(context, source).connect(context.destination);
+    source.start();
+    return context;
+  };
+
+  const early = connect();
+  const waitedForAnswer = stage.limiterFilters.undo !== null;
+  await stage.limiterFilters.known;
+  const late = connect();
+
+  const earlySound = (await early.startRendering()).getChannelData(0);
+  const lateSound = (await late.startRendering()).getChannelData(0);
+  let largestDifference = 0;
+  let earlyPeak = 0;
+  let latePeak = 0;
+  for (let i = 0; i < frames; i++) {
+    largestDifference = Math.max(largestDifference, Math.abs(earlySound[i] - lateSound[i]));
+    earlyPeak = Math.max(earlyPeak, Math.abs(earlySound[i]));
+    latePeak = Math.max(latePeak, Math.abs(lateSound[i]));
+  }
+  return { waitedForAnswer, filtersFound: stage.limiterFilters.present, largestDifference, earlyPeak, latePeak };
+}
+
 const toneAt = (measured, hz) => measured.tones.find((tone) => tone.hz === hz).gainDb;
 
 for (const file of LIMITER_STAGE_FILES) {
@@ -227,6 +277,23 @@ for (const file of LIMITER_STAGE_FILES) {
       expect(Math.abs(defect.noiseGainDb - FIREFOX_159[sampleRate].noiseDb), `white noise ${at} came out at ${defect.noiseGainDb} dB`).toBeLessThan(0.1);
       expect(Math.abs(defect.bassDropDb - FIREFOX_159[sampleRate].bassDropDb), `the bass ${at} dropped by ${defect.bassDropDb} dB`).toBeLessThan(0.1);
     }
+  });
 
+  test(`a limiter in ${file} connected before the browser has answered limits as one connected after`, async ({ page }, testInfo) => {
+    const body = limiterStageBody(limiterStage(fs.readFileSync(path.join(root, file), 'utf8'), file));
+    await page.goto('about:blank');
+
+    // Firefox is asked as it is. Chromium is asked only when the page says
+    // it is Firefox, and then it answers that it has no filters.
+    const measured = await page.evaluate(measureEarlyLimiter, { body, claimsFirefox: testInfo.project.name !== 'firefox' });
+    await testInfo.attach('early-limiter.json', { body: JSON.stringify(measured, null, 2), contentType: 'application/json' });
+
+    expect(measured.waitedForAnswer, 'the first limiter was connected before the answer').toBe(true);
+    if (testInfo.project.name === 'chromium') expect(measured.filtersFound, "Chromium's compressor has the filters").toBe(false);
+    // The same sound from both, to a rounding error: with the filters left
+    // around a compressor that has none, this tone peaked at 1.148 and not
+    // at 0.916.
+    expect(measured.largestDifference, `peaks of ${measured.earlyPeak} and ${measured.latePeak}`).toBeLessThan(1e-6);
+    expect(measured.latePeak, 'the tone is limited').toBeLessThan(1);
   });
 }

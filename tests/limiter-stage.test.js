@@ -62,6 +62,15 @@ const stageOf = (file) => limiterStage(fs.readFileSync(path.join(root, file), 'u
 const settingsOf = (node) => ['threshold', 'knee', 'ratio', 'attack', 'release'].map((key) => node[key].value);
 const targets = (node) => node.connections.map(({ target }) => target);
 
+// Nodes are compared one by one and never printed. A node in an engine's
+// graph leads to its whole page, and printing that for a failed comparison
+// (as assert.equal and assert.deepEqual do) takes all the memory there is.
+function leadsTo(node, expected, what) {
+  const actual = targets(node);
+  assert.ok(actual.length === expected.length && actual.every((target, index) => target === expected[index]), what);
+}
+const same = (actual, expected, what) => assert.ok(actual === expected, what);
+
 // A filter's response at one frequency, as [real, imaginary].
 function response({ feedforward, feedback }, frequency, sampleRate) {
   const turn = (-2 * Math.PI * frequency) / sampleRate;
@@ -95,6 +104,8 @@ describe('limiter stage', () => {
   test('leaves the limiter as it was outside Firefox, and checks nothing', async () => {
     const { FakeOfflineAudioContext, made } = offlineContext();
     const stage = loadLimiterStage(stageOf(LIMITER_STAGE_FILES[0]), { userAgent: CHROMIUM, OfflineAudioContext: FakeOfflineAudioContext });
+    assert.equal(stage.limiterFilters.present, false);
+    assert.equal(stage.limiterFilters.undo, null, 'nothing waits for an answer');
     await stage.limiterFilters.known;
     assert.equal(stage.limiterFilters.present, false);
     assert.equal(made.length, 0);
@@ -103,8 +114,8 @@ describe('limiter stage', () => {
     const input = new FakeAudioNode('gain', context);
     const output = stage.connectLimiter(context, input);
 
-    assert.equal(output, context.compressors[0]);
-    assert.deepEqual(targets(input), [output]);
+    same(output, context.compressors[0], 'the sound leaves by the limiter');
+    leadsTo(input, [output], 'input leads to output');
     assert.deepEqual(settingsOf(output), [-3, 3, 20, 0.003, 0.25]);
     assert.equal(context.iirFilters.length, 0);
   });
@@ -124,8 +135,8 @@ describe('limiter stage', () => {
     assert.deepEqual([check.channels, check.frames, check.sampleRate], [1, 24000, 48000]);
     assert.deepEqual([...check.tone.slice(0, 8)], [0, 0.5, 0, -0.5, 0, 0.5, 0, -0.5]);
     assert.deepEqual(settingsOf(check.compressors[0]), [-3, 3, 20, 0.003, 0.25]);
-    assert.deepEqual(targets(check.source), [check.compressors[0]]);
-    assert.deepEqual(targets(check.compressors[0]), [check.destination]);
+    leadsTo(check.source, [check.compressors[0]], 'check.source leads to check.compressors[0]');
+    leadsTo(check.compressors[0], [check.destination], 'check.compressors[0] leads to check.destination');
 
     const context = new FakeAudioContext();
     context.sampleRate = 48000;
@@ -134,10 +145,10 @@ describe('limiter stage', () => {
     const [cut, boost] = context.iirFilters;
     const [limiter] = context.compressors;
 
-    assert.deepEqual(targets(input), [cut]);
-    assert.deepEqual(targets(cut), [limiter]);
-    assert.deepEqual(targets(limiter), [boost]);
-    assert.equal(output, boost);
+    leadsTo(input, [cut], 'input leads to cut');
+    leadsTo(cut, [limiter], 'cut leads to limiter');
+    leadsTo(limiter, [boost], 'limiter leads to boost');
+    same(output, boost, 'the sound leaves by the boost');
     assert.deepEqual(settingsOf(limiter), [-3, 3, 20, 0.003, 0.25]);
     assert.deepEqual([cut.feedforward, cut.feedback], Object.values(stage.limiterFilter(48000, false)));
     assert.deepEqual([boost.feedforward, boost.feedback], Object.values(stage.limiterFilter(48000, true)));
@@ -152,7 +163,7 @@ describe('limiter stage', () => {
 
     const context = new FakeAudioContext();
     const input = new FakeAudioNode('gain', context);
-    assert.equal(stage.connectLimiter(context, input), context.compressors[0]);
+    same(stage.connectLimiter(context, input), context.compressors[0], 'the sound leaves by the limiter');
     assert.equal(context.iirFilters.length, 0);
   });
 
@@ -167,6 +178,68 @@ describe('limiter stage', () => {
       await stage.limiterFilters.known;
       assert.equal(stage.limiterFilters.present, true, name);
     }
+  });
+
+  // A limiter connected in the few milliseconds before Firefox has answered
+  // is given the filters. If the answer is no, they have to come out again:
+  // cancelling filters that aren't there lets peaks past the limiter.
+  describe('connected before Firefox has answered', () => {
+    // The stage, a graph made straight away, and what the graph looks like.
+    function early(offline) {
+      const stage = loadLimiterStage(stageOf(LIMITER_STAGE_FILES[0]), { userAgent: FIREFOX, OfflineAudioContext: offline });
+      const context = new FakeAudioContext();
+      const input = new FakeAudioNode('gain', context);
+      const output = stage.connectLimiter(context, input);
+      const [before, after] = context.iirFilters;
+      const [limiter] = context.compressors;
+      // The filters around the limiter, and a node of its own for the sound to leave by.
+      leadsTo(input, [before], 'input leads to before');
+      leadsTo(before, [limiter], 'before leads to limiter');
+      leadsTo(limiter, [after], 'limiter leads to after');
+      leadsTo(after, [output], 'after leads to output');
+      assert.equal(output.type, 'gain');
+      leadsTo(output, [], 'output leads to nothing');
+      return { stage, context, input, output, before, after, limiter };
+    }
+
+    test('keeps its filters when the compressor has them', async () => {
+      const { stage, context, input, output, before, after, limiter } = early(offlineContext({ gain: 10 ** (-6.25 / 20) }).FakeOfflineAudioContext);
+      await stage.limiterFilters.known;
+
+      leadsTo(input, [before], 'input leads to before');
+      leadsTo(before, [limiter], 'before leads to limiter');
+      leadsTo(limiter, [after], 'limiter leads to after');
+      leadsTo(after, [output], 'after leads to output');
+      assert.equal(stage.limiterFilters.undo, null);
+      // One connected after the answer needs no node of its own to leave by.
+      const later = stage.connectLimiter(context, new FakeAudioNode('gain', context));
+      same(later, context.iirFilters[3], 'the sound leaves by the boost');
+    });
+
+    test('has its filters taken out when the compressor has none', async () => {
+      const { stage, context, input, output, before, after, limiter } = early(offlineContext({ gain: 10 ** (1.2 / 20) }).FakeOfflineAudioContext);
+      await stage.limiterFilters.known;
+
+      leadsTo(input, [limiter], 'input leads to limiter');
+      leadsTo(limiter, [output], 'limiter leads to output');
+      leadsTo(before, [], 'before leads to nothing');
+      leadsTo(after, [], 'after leads to nothing');
+      assert.equal(stage.limiterFilters.undo, null);
+      // And one connected after the answer is the limiter alone.
+      const later = stage.connectLimiter(context, new FakeAudioNode('gain', context));
+      same(later, context.compressors[1], 'the sound leaves by the limiter');
+      assert.equal(context.iirFilters.length, 2);
+    });
+
+    test('keeps its filters when the check cannot run', async () => {
+      const { stage, input, output, before, after, limiter } = early(offlineContext({ problem: 'rendering' }).FakeOfflineAudioContext);
+      await stage.limiterFilters.known;
+
+      leadsTo(input, [before], 'input leads to before');
+      leadsTo(limiter, [after], 'limiter leads to after');
+      leadsTo(after, [output], 'after leads to output');
+      assert.equal(stage.limiterFilters.undo, null);
+    });
   });
 
   test('the cut undoes the boost exactly, and both leave the bass alone', () => {
@@ -218,13 +291,13 @@ describe('limiter stage', () => {
 
       assert.equal(context.compressors.length, 1);
       assert.equal(context.iirFilters.length, filters);
-      assert.deepEqual(targets(context.panners[0]), [filters ? cut : limiter]);
+      leadsTo(context.panners[0], [filters ? cut : limiter], 'the panner leads to the limiter stage');
       if (filters) {
-        assert.deepEqual(targets(cut), [limiter]);
-        assert.deepEqual(targets(limiter), [boost]);
-        assert.deepEqual(targets(boost), [processed]);
+        leadsTo(cut, [limiter], 'cut leads to limiter');
+        leadsTo(limiter, [boost], 'limiter leads to boost');
+        leadsTo(boost, [processed], 'boost leads to processed');
       } else {
-        assert.deepEqual(targets(limiter), [processed]);
+        leadsTo(limiter, [processed], 'limiter leads to processed');
       }
     }
   });

@@ -61,8 +61,8 @@ describe('Playwright configurations', () => {
   test('npm run test:ui runs the popup layout, website and limiter tests in both engines', () => {
     const { projects, tests } = listed('playwright.ui.config.js');
     const files = [...new Set(tests.map(({ file }) => path.basename(file)))].sort();
-    // The limiter has one test for each file that carries it.
-    const least = { 'limiter.spec.js': 3, 'popup-layout.spec.js': 10, 'site.spec.js': 10 };
+    // The limiter has two tests for each of the three files that carry it.
+    const least = { 'limiter.spec.js': 6, 'popup-layout.spec.js': 10, 'site.spec.js': 10 };
 
     assert.deepEqual(projects, ['chromium', 'firefox']);
     assert.deepEqual(files, Object.keys(least));

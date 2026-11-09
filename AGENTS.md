@@ -128,7 +128,8 @@ The tests fail when the site's popup copy or stamps are out of date.
   comments, and a test keeps the copies equal. Firefox's compressor reacts to
   treble as if it were louder than it is (it has filters Chromium removed);
   in Firefox the stage puts a filter each side of the limiter to cancel them,
-  after checking the compressor still has them. Change all three together.
+  and checks once that the compressor has them, leaving the limiter as it
+  was if not. Change all three together.
 - **Privacy:** the extension makes no network requests and has no analytics,
   telemetry or remote code. Don't add permissions; the optional site
   permissions are requested only when the user asks. The website loads
