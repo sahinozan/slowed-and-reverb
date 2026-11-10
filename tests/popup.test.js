@@ -968,4 +968,594 @@ describe('popup behavior', () => {
       assert.equal(later.local.data.ratingPrompt.days, 8);
     });
   });
+
+  describe('finer speed control', () => {
+    const FIREFOX = {
+      manifest: { browser_specific_settings: { gecko: {} } },
+      grantedOrigins: ['https://www.youtube.com/*']
+    };
+    const playingAt = (speed) => ({
+      enabled: true,
+      settings: { ...DEFAULT_SETTINGS, speed },
+      blocked: false,
+      live: false
+    });
+    const settle = async () => {
+      for (let attempt = 0; attempt < 6; attempt++) await flushPromises();
+    };
+    const speedControls = (harness) => {
+      const document = harness.window.document;
+      return {
+        slider: document.getElementById('speed-slider'),
+        field: document.getElementById('speed-input'),
+        down: document.getElementById('speed-down-btn'),
+        up: document.getElementById('speed-up-btn'),
+        stepper: document.getElementById('speed-stepper')
+      };
+    };
+    // What the slider and the field show, and what the field is read out as.
+    const shown = (harness) => {
+      const { slider, field } = speedControls(harness);
+      return [slider.value, field.value, field.getAttribute('aria-valuetext')];
+    };
+    const sentSpeeds = (harness) => audioUpdates(harness).map(({ message }) => message.settings.speed);
+    const press = (harness, element, key, init = {}) => {
+      const event = new harness.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
+      element.dispatchEvent(event);
+      return event;
+    };
+    const type = (harness, text) => {
+      const { field } = speedControls(harness);
+      field.value = text;
+      press(harness, field, 'Enter');
+    };
+    const pointer = (harness, element, name, init = {}) =>
+      element.dispatchEvent(new harness.window.MouseEvent(name, { bubbles: true, button: 0, ...init }));
+
+    // Puts the popup's timers in the test's hands, so a hold or a wait takes
+    // no real time and ends exactly when the test says.
+    function fakeTimers(window) {
+      let now = 0;
+      let lastId = 0;
+      const timers = new Map();
+      window.setTimeout = (callback, delay = 0) => {
+        timers.set(++lastId, { at: now + delay, callback });
+        return lastId;
+      };
+      window.clearTimeout = (id) => {
+        timers.delete(id);
+      };
+      return {
+        advance(ms) {
+          const end = now + ms;
+          for (;;) {
+            const [id, timer] = [...timers].filter(([, { at }]) => at <= end).sort((a, b) => a[1].at - b[1].at)[0] ?? [];
+            if (!timer) break;
+            timers.delete(id);
+            now = timer.at;
+            timer.callback();
+          }
+          now = end;
+        }
+      };
+    }
+
+    // Holds each of the tab's answers to a change until the test lets it go.
+    function slowTab(speed) {
+      const answers = [];
+      return {
+        answers,
+        onTabMessage(_tabId, message) {
+          if (message.type === 'GET_STATE') return playingAt(speed);
+          return new Promise((resolve) => {
+            answers.push(() => resolve({ success: true }));
+          });
+        }
+      };
+    }
+
+    test('opens with the slider, the field and the buttons on the speed in use', async (t) => {
+      const harness = await createPopupHarness({ contentState: playingAt(0.83) });
+      t.after(() => close(harness));
+      const { slider, field, down, up, stepper } = speedControls(harness);
+
+      assert.deepEqual(shown(harness), ['0.83', '0.83', '0.83x']);
+      assert.equal(field.getAttribute('aria-valuenow'), '0.83');
+      assert.equal(slider.getAttribute('aria-valuetext'), '0.83x');
+      // The field shows the speed, so the label doesn't repeat it.
+      assert.equal(harness.window.document.getElementById('speed-value').textContent, '');
+      assert.equal(stepper.hidden, false);
+      assert.deepEqual([field.disabled, down.disabled, up.disabled], [false, false, false]);
+      assert.equal(audioUpdates(harness).length, 0);
+
+      // The slider can sit on any speed the field gives it, and the field
+      // tells a screen reader the same range as the settings allow.
+      const [minimum, maximum] = harness.window.SlowedReverbSettings.BOUNDS.speed;
+      assert.equal(slider.step, '0.01');
+      assert.deepEqual([Number(slider.min), Number(slider.max)], [minimum, maximum]);
+      assert.deepEqual(
+        [Number(field.getAttribute('aria-valuemin')), Number(field.getAttribute('aria-valuemax'))],
+        [minimum, maximum]
+      );
+      assert.equal(field.getAttribute('aria-label'), 'Exact speed');
+      assert.deepEqual([down.getAttribute('aria-label'), down.title], ['Slower by 0.01x', 'Slower by 0.01x']);
+      assert.deepEqual([up.getAttribute('aria-label'), up.title], ['Faster by 0.01x', 'Faster by 0.01x']);
+    });
+
+    test('keeps the field with the slider through presets and Reset Defaults', async (t) => {
+      const harness = await createPopupHarness({
+        contentState: playingAt(0.83),
+        local: { customPresets: [{ ...DEFAULT_SETTINGS, id: 'fine', name: 'Fine', speed: 0.97 }] }
+      });
+      t.after(() => close(harness));
+      const document = harness.window.document;
+
+      document.querySelector('[data-preset="nightcore"]').click();
+      await settle();
+      assert.deepEqual(shown(harness), ['1.2', '1.20', '1.20x']);
+
+      document.querySelector('.custom-preset-btn').click();
+      await settle();
+      assert.deepEqual(shown(harness), ['0.97', '0.97', '0.97x']);
+      assert.deepEqual(presetBar(harness), { hidden: false, label: 'Current Preset: Fine' });
+
+      document.getElementById('reset-btn').click();
+      await settle();
+      assert.deepEqual(shown(harness), ['1', '1.00', '1.00x']);
+      assert.deepEqual(sentSpeeds(harness), [1.2, 0.97, 1]);
+    });
+
+    test('takes a typed speed on Enter and when the field is left', async (t) => {
+      const harness = await createPopupHarness({ contentState: playingAt(1) });
+      t.after(() => close(harness));
+      const { field } = speedControls(harness);
+
+      type(harness, '0.83');
+      await settle();
+      assert.deepEqual(shown(harness), ['0.83', '0.83', '0.83x']);
+      assert.equal(harness.local.data.speed, 0.83);
+      assert.equal(harness.session.data['tabState:9'].settings.speed, 0.83);
+
+      field.value = '1.07';
+      // Nothing is sent while typing.
+      field.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+      await settle();
+      assert.deepEqual(sentSpeeds(harness), [0.83]);
+      field.dispatchEvent(new harness.window.Event('blur'));
+      await settle();
+      assert.deepEqual(shown(harness), ['1.07', '1.07', '1.07x']);
+      assert.deepEqual(sentSpeeds(harness), [0.83, 1.07]);
+    });
+
+    test('rounds a typed speed to two decimals and keeps it inside the range', async (t) => {
+      const harness = await createPopupHarness({ contentState: playingAt(1) });
+      t.after(() => close(harness));
+
+      const typed = [
+        ['0.834', 0.83],
+        ['0.836', 0.84],
+        ['2', 1.5],
+        ['0.1', 0.5],
+        ['0,9', 0.9],
+        ['-3', 0.5],
+        ['.75', 0.75],
+        ['1.', 1],
+        [' 1.25x ', 1.25],
+        ['+1.3', 1.3],
+        ['99999', 1.5]
+      ];
+      for (const [text, speed] of typed) {
+        type(harness, text);
+        await settle();
+        assert.deepEqual(
+          shown(harness),
+          [String(speed), speed.toFixed(2), `${speed.toFixed(2)}x`],
+          `typing "${text}"`
+        );
+        assert.equal(sentSpeeds(harness).at(-1), speed, `typing "${text}"`);
+      }
+      // One message for each speed that was a change.
+      assert.equal(sentSpeeds(harness).length, typed.length);
+    });
+
+    test('drops typed text that is not a speed', async (t) => {
+      const harness = await createPopupHarness({ contentState: playingAt(0.83) });
+      t.after(() => close(harness));
+
+      for (const text of ['', ' ', 'fast', 'x', '1e0', '0x10', '1.2.3', '1,2,3', '--1', 'Infinity', 'NaN', '0.8 0.9']) {
+        type(harness, text);
+        await settle();
+        assert.deepEqual(shown(harness), ['0.83', '0.83', '0.83x'], `typing "${text}"`);
+      }
+      // The same speed again changes nothing either.
+      type(harness, '0.830');
+      await settle();
+      assert.deepEqual(shown(harness), ['0.83', '0.83', '0.83x']);
+      assert.equal(audioUpdates(harness).length, 0);
+    });
+
+    test('steps by 0.01 with the buttons and with the arrow keys in the field', async (t) => {
+      const harness = await createPopupHarness({ contentState: playingAt(0.83) });
+      t.after(() => close(harness));
+      const { field, down, up } = speedControls(harness);
+
+      up.click();
+      assert.deepEqual(shown(harness), ['0.84', '0.84', '0.84x']);
+      down.click();
+      down.click();
+      assert.deepEqual(shown(harness), ['0.82', '0.82', '0.82x']);
+
+      const arrowUp = press(harness, field, 'ArrowUp');
+      assert.equal(arrowUp.defaultPrevented, true);
+      assert.deepEqual(shown(harness), ['0.83', '0.83', '0.83x']);
+      press(harness, field, 'ArrowDown');
+      press(harness, field, 'ArrowDown');
+      assert.deepEqual(shown(harness), ['0.81', '0.81', '0.81x']);
+
+      // An arrow key steps from what is typed, when that is a speed...
+      field.value = '1.1';
+      press(harness, field, 'ArrowUp');
+      assert.deepEqual(shown(harness), ['1.11', '1.11', '1.11x']);
+      // ...and from the speed in use when it isn't.
+      field.value = 'fast';
+      press(harness, field, 'ArrowDown');
+      assert.deepEqual(shown(harness), ['1.1', '1.10', '1.10x']);
+
+      // The other keys are the field's own.
+      assert.equal(press(harness, field, 'ArrowLeft').defaultPrevented, false);
+      await settle();
+      assert.equal(sentSpeeds(harness).at(-1), 1.1);
+      assert.equal(harness.local.data.speed, 1.1);
+    });
+
+    test('stops at the ends of the range without sending anything', async (t) => {
+      for (const [speed, button, text] of [[1.5, 'up', '1.50'], [0.5, 'down', '0.50']]) {
+        const harness = await createPopupHarness({ contentState: playingAt(speed) });
+        t.after(() => close(harness));
+        const controls = speedControls(harness);
+
+        controls[button].click();
+        press(harness, controls.field, button === 'up' ? 'ArrowUp' : 'ArrowDown');
+        press(harness, controls.slider, button === 'up' ? 'ArrowRight' : 'ArrowLeft');
+        await settle();
+
+        assert.deepEqual(shown(harness), [String(speed), text, `${text}x`]);
+        assert.equal(audioUpdates(harness).length, 0);
+      }
+    });
+
+    test("keeps the slider's own moves on the 0.05 marks", async (t) => {
+      const harness = await createPopupHarness({ contentState: playingAt(0.83) });
+      t.after(() => close(harness));
+      const { slider } = speedControls(harness);
+      const moveTo = (value) => {
+        slider.value = value;
+        slider.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+      };
+
+      // A drag reports the 0.01 step it is over, and goes to the nearest mark.
+      moveTo('0.84');
+      assert.deepEqual(shown(harness), ['0.85', '0.85', '0.85x']);
+      moveTo('0.86');
+      moveTo('0.87');
+      assert.deepEqual(shown(harness), ['0.85', '0.85', '0.85x']);
+      moveTo('0.88');
+      assert.deepEqual(shown(harness), ['0.9', '0.90', '0.90x']);
+      await settle();
+      // Moving within a mark is no change of speed.
+      assert.deepEqual(sentSpeeds(harness), [0.85, 0.9]);
+
+      // The arrow keys go to the next mark, also from a speed between two.
+      type(harness, '0.83');
+      const right = press(harness, slider, 'ArrowRight');
+      assert.equal(right.defaultPrevented, true);
+      assert.deepEqual(shown(harness), ['0.85', '0.85', '0.85x']);
+      press(harness, slider, 'ArrowUp');
+      assert.deepEqual(shown(harness), ['0.9', '0.90', '0.90x']);
+      type(harness, '0.83');
+      press(harness, slider, 'ArrowLeft');
+      assert.deepEqual(shown(harness), ['0.8', '0.80', '0.80x']);
+      press(harness, slider, 'ArrowDown');
+      assert.deepEqual(shown(harness), ['0.75', '0.75', '0.75x']);
+
+      // Home, End and the page keys stay the slider's own, and a shortcut
+      // with an arrow in it is the browser's.
+      for (const key of ['Home', 'End', 'PageUp', 'PageDown']) {
+        assert.equal(press(harness, slider, key).defaultPrevented, false, key);
+      }
+      assert.equal(press(harness, slider, 'ArrowLeft', { altKey: true }).defaultPrevented, false);
+      assert.deepEqual(shown(harness), ['0.75', '0.75', '0.75x']);
+    });
+
+    test('sends one change at a time and always the speed it ends on', async (t) => {
+      const tab = slowTab(1);
+      const harness = await createPopupHarness({ onTabMessage: tab.onTabMessage });
+      t.after(() => close(harness));
+      const { up } = speedControls(harness);
+
+      for (let step = 0; step < 10; step++) up.click();
+      await settle();
+      // The first step is on its way and the tab hasn't answered: the nine
+      // after it wait as one.
+      assert.deepEqual(sentSpeeds(harness), [1.01]);
+      assert.deepEqual(shown(harness), ['1.1', '1.10', '1.10x']);
+
+      tab.answers.shift()();
+      await settle();
+      assert.deepEqual(sentSpeeds(harness), [1.01, 1.1]);
+
+      // More steps while that one is on its way, then nothing left over.
+      up.click();
+      up.click();
+      tab.answers.shift()();
+      await settle();
+      assert.deepEqual(sentSpeeds(harness), [1.01, 1.1, 1.12]);
+      tab.answers.shift()();
+      await settle();
+      assert.deepEqual(sentSpeeds(harness), [1.01, 1.1, 1.12]);
+      assert.equal(tab.answers.length, 0);
+      assert.equal(harness.local.data.speed, 1.12);
+      assert.equal(harness.session.data['tabState:9'].settings.speed, 1.12);
+      assert.equal(harness.window.document.getElementById('power-toggle').checked, true);
+    });
+
+    test('keeps the last choice when the effect is turned off while a change is on its way', async (t) => {
+      const tab = slowTab(1);
+      const harness = await createPopupHarness({ onTabMessage: tab.onTabMessage });
+      t.after(() => close(harness));
+      const { up } = speedControls(harness);
+      const power = harness.window.document.getElementById('power-toggle');
+
+      up.click();
+      await settle();
+      up.click();
+      power.checked = false;
+      power.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+      tab.answers.shift()();
+      await settle();
+      tab.answers.shift()();
+      await settle();
+
+      const sent = audioUpdates(harness).map(({ message }) => [message.settings.speed, message.enabled]);
+      assert.deepEqual(sent, [[1.01, true], [1.02, false]]);
+      assert.equal(power.checked, false);
+      assert.equal(presetBar(harness).hidden, true);
+    });
+
+    test('repeats while a button is held down, and not for the click that ends the hold', async (t) => {
+      const harness = await createPopupHarness({ contentState: playingAt(1) });
+      t.after(() => close(harness));
+      const timers = fakeTimers(harness.window);
+      const { up, down } = speedControls(harness);
+
+      pointer(harness, up, 'pointerdown');
+      timers.advance(399);
+      assert.deepEqual(shown(harness), ['1', '1.00', '1.00x']);
+      timers.advance(1);
+      assert.deepEqual(shown(harness), ['1.01', '1.01', '1.01x']);
+      timers.advance(120);
+      assert.deepEqual(shown(harness), ['1.03', '1.03', '1.03x']);
+      pointer(harness, up, 'pointerup');
+      pointer(harness, up, 'click', { detail: 1 });
+      timers.advance(5000);
+      assert.deepEqual(shown(harness), ['1.03', '1.03', '1.03x']);
+
+      // A short press is one step, made by its click.
+      pointer(harness, up, 'pointerdown');
+      timers.advance(150);
+      pointer(harness, up, 'pointerup');
+      pointer(harness, up, 'click', { detail: 1 });
+      timers.advance(5000);
+      assert.deepEqual(shown(harness), ['1.04', '1.04', '1.04x']);
+
+      // A hold that ends off the button has no click, and the keyboard's
+      // click after it still steps.
+      pointer(harness, down, 'pointerdown');
+      timers.advance(400);
+      pointer(harness, down, 'pointerleave');
+      timers.advance(5000);
+      assert.deepEqual(shown(harness), ['1.03', '1.03', '1.03x']);
+      down.click();
+      assert.deepEqual(shown(harness), ['1.02', '1.02', '1.02x']);
+
+      // Another mouse button doesn't start a hold.
+      pointer(harness, down, 'pointerdown', { button: 2 });
+      timers.advance(5000);
+      assert.deepEqual(shown(harness), ['1.02', '1.02', '1.02x']);
+    });
+
+    test('stops repeating at the end of the range', async (t) => {
+      const harness = await createPopupHarness({ contentState: playingAt(1.48) });
+      t.after(() => close(harness));
+      const timers = fakeTimers(harness.window);
+      const { up } = speedControls(harness);
+
+      pointer(harness, up, 'pointerdown');
+      timers.advance(5000);
+      await settle();
+      assert.deepEqual(shown(harness), ['1.5', '1.50', '1.50x']);
+      assert.equal(sentSpeeds(harness).at(-1), 1.5);
+    });
+
+    test('hides and turns off the field and the buttons on a live stream', async (t) => {
+      const harness = await createPopupHarness({
+        contentState: { ...playingAt(0.7), live: true }
+      });
+      t.after(() => close(harness));
+      const { slider, field, down, up, stepper } = speedControls(harness);
+
+      assert.equal(stepper.hidden, true);
+      assert.deepEqual([slider.disabled, field.disabled, down.disabled, up.disabled], [true, true, true, true]);
+      assert.deepEqual(shown(harness), ['1', '1.00', '1.00x']);
+      assert.equal(
+        harness.window.document.getElementById('speed-value').textContent,
+        '(unavailable while live)'
+      );
+
+      // Whatever reaches them anyway changes nothing.
+      field.value = '0.6';
+      field.dispatchEvent(new harness.window.Event('blur'));
+      await settle();
+      assert.equal(audioUpdates(harness).length, 0);
+    });
+
+    test('turns off the field and the buttons on a page the effects cannot work on', async (t) => {
+      const harness = await createPopupHarness({
+        contentState: { enabled: false, blocked: true, blockReason: 'drm' }
+      });
+      t.after(() => close(harness));
+      const { field, down, up, stepper } = speedControls(harness);
+
+      assert.equal(stepper.hidden, false);
+      assert.deepEqual([field.disabled, down.disabled, up.disabled], [true, true, true]);
+      assert.deepEqual(shown(harness), ['1', '1.00', '1.00x']);
+    });
+
+    describe('in Firefox, where every change of speed is a gap in the sound', () => {
+      test('sends the first step at once and the rest when they stop', async (t) => {
+        const harness = await createPopupHarness({ ...FIREFOX, contentState: playingAt(1) });
+        t.after(() => close(harness));
+        const timers = fakeTimers(harness.window);
+        const { up, field } = speedControls(harness);
+
+        up.click();
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.01]);
+
+        // Each step starts the wait again.
+        for (let step = 0; step < 4; step++) {
+          timers.advance(250);
+          up.click();
+        }
+        await settle();
+        assert.deepEqual(shown(harness), ['1.05', '1.05', '1.05x']);
+        assert.deepEqual(sentSpeeds(harness), [1.01]);
+
+        timers.advance(299);
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.01]);
+        timers.advance(1);
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.01, 1.05]);
+        assert.equal(harness.local.data.speed, 1.05);
+
+        // After the wait a new step is the first of its own run. A single
+        // step leaves nothing to send later.
+        timers.advance(1000);
+        type(harness, '0.9');
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.01, 1.05, 0.9]);
+        timers.advance(1000);
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.01, 1.05, 0.9]);
+
+        // A held key's first press is sent. Its repeats wait, even when they
+        // begin after the wait is over.
+        press(harness, field, 'ArrowUp');
+        await settle();
+        timers.advance(500);
+        for (let repeat = 0; repeat < 5; repeat++) {
+          press(harness, field, 'ArrowUp', { repeat: true });
+          timers.advance(30);
+        }
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.01, 1.05, 0.9, 0.91]);
+        timers.advance(300);
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.01, 1.05, 0.9, 0.91, 0.96]);
+      });
+
+      test('shows the effect as on while a step waits', async (t) => {
+        const harness = await createPopupHarness({
+          ...FIREFOX,
+          session: {
+            'tabState:9': { origin: 'https://www.youtube.com', enabled: false, settings: SLOWED }
+          },
+          contentState: { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+        });
+        t.after(() => close(harness));
+        const timers = fakeTimers(harness.window);
+        const { up, field } = speedControls(harness);
+        const power = harness.window.document.getElementById('power-toggle');
+        assert.equal(power.checked, false);
+
+        // A held key's repeat with no run before it waits too.
+        press(harness, field, 'ArrowUp', { repeat: true });
+        up.click();
+        await settle();
+        assert.equal(power.checked, true);
+        assert.equal(audioUpdates(harness).length, 0);
+
+        timers.advance(300);
+        await settle();
+        const sent = audioUpdates(harness).map(({ message }) => [message.settings.speed, message.enabled]);
+        assert.deepEqual(sent, [[0.82, true]]);
+      });
+
+      test('sends a waiting speed with any other change, and does not send it twice', async (t) => {
+        const harness = await createPopupHarness({ ...FIREFOX, contentState: playingAt(1) });
+        t.after(() => close(harness));
+        const timers = fakeTimers(harness.window);
+        const { up } = speedControls(harness);
+        const power = harness.window.document.getElementById('power-toggle');
+
+        up.click();
+        up.click();
+        power.checked = false;
+        power.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+        await settle();
+        timers.advance(1000);
+        await settle();
+
+        const sent = audioUpdates(harness).map(({ message }) => [message.settings.speed, message.enabled]);
+        // Turning the effect off stays the last word.
+        assert.deepEqual(sent, [[1.01, true], [1.02, false]]);
+        assert.equal(power.checked, false);
+      });
+
+      test('sends a waiting speed when the popup closes', async (t) => {
+        const harness = await createPopupHarness({ ...FIREFOX, contentState: playingAt(1) });
+        t.after(() => close(harness));
+        fakeTimers(harness.window);
+        const { up } = speedControls(harness);
+
+        up.click();
+        await settle();
+        up.click();
+        up.click();
+        harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+        await settle();
+
+        assert.deepEqual(sentSpeeds(harness), [1.01, 1.03]);
+        assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
+        assert.equal(harness.session.data['tabState:9'].settings.speed, 1.03);
+      });
+    });
+
+    test('sends a change that was still waiting for the tab when the popup closes', async (t) => {
+      const tab = slowTab(1);
+      const harness = await createPopupHarness({ onTabMessage: tab.onTabMessage });
+      t.after(() => close(harness));
+      const { up } = speedControls(harness);
+
+      up.click();
+      await settle();
+      up.click();
+      up.click();
+      harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+      while (tab.answers.length > 0) {
+        tab.answers.shift()();
+        await settle();
+      }
+
+      assert.equal(sentSpeeds(harness).at(-1), 1.03);
+      assert.equal(harness.session.data['tabState:9'].settings.speed, 1.03);
+
+      // With nothing waiting, closing sends nothing.
+      const before = audioUpdates(harness).length;
+      harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+      await settle();
+      assert.equal(audioUpdates(harness).length, before);
+    });
+  });
 });

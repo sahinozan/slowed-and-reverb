@@ -434,9 +434,17 @@ test(`the demo plays and pauses, and follows the popup both ways ${PLAYBACK}`, a
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('ArrowLeft');
   await expect(popupFrame(page).locator('#speed-slider')).toHaveValue('1.1');
-  await expect(popupFrame(page).locator('#speed-value')).toHaveText('(1.10x)');
+  await expect(popupFrame(page).locator('#speed-input')).toHaveValue('1.10');
   await expect(page.locator('#speed-out')).toHaveText('1.10×');
   await expect.poll(async () => (await media(page)).rate).toBe(1.1);
+
+  // A 0.01 step in the popup reaches the demo too. The page's fader moves in
+  // 0.05, so it rests on the mark nearest to that speed.
+  await popupFrame(page).locator('#speed-up-btn').click();
+  await expect(popupFrame(page).locator('#speed-slider')).toHaveValue('1.11');
+  await expect(page.locator('#speed-out')).toHaveText('1.11×');
+  await expect.poll(async () => (await media(page)).rate).toBe(1.11);
+  await expect(page.locator('#speed')).toHaveValue('1.1');
 
   // Turning the effect off in the popup plays the song as it is.
   await popupFrame(page).locator('.header-power .switch-slider').click();

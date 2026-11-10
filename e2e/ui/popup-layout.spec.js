@@ -17,7 +17,9 @@ const { execFileSync } = require('child_process');
 const { expect, test } = require('@playwright/test');
 
 const { DEFAULT_SETTINGS, installPopupBrowserMock, startServer } = require('../../scripts/popup-preview');
-const { BASIC_CONTROLS, EFFECT_CONTROLS, FRAME_CONTROLS, UPPER_TABS, measurePopup } = require('../popup-geometry');
+const {
+  BASIC_CONTROLS, EFFECT_CONTROLS, FRAME_CONTROLS, SPEED_STEP_CONTROLS, UPPER_TABS, measurePopup
+} = require('../popup-geometry');
 
 const root = path.join(__dirname, '..', '..');
 const SLOWED = Object.freeze({ ...DEFAULT_SETTINGS, speed: 0.8, reverb: 40 });
@@ -218,8 +220,10 @@ const STATES = [
     shows: async (page) => {
       await expect(page.locator('#speed-value')).toHaveText('(unavailable while live)');
       await expect(page.locator('#speed-slider')).toBeDisabled();
+      // The label takes the place of the speed's field and buttons.
+      await expect(page.locator('#speed-stepper')).toBeHidden();
     },
-    controls: BASIC_CONTROLS
+    controls: BASIC_CONTROLS.filter((selector) => !SPEED_STEP_CONTROLS.includes(selector))
   },
   {
     title: 'protected audio',
@@ -438,6 +442,180 @@ test.describe('popup layout', () => {
     } finally {
       await context.close();
     }
+  });
+});
+
+// The speed's slider, field and buttons, where a browser does what jsdom
+// doesn't: a slider rounds a value it is given to its step, and has a drag
+// and keys of its own. The unit tests (tests/popup.test.js) cover the rest.
+test.describe('speed controls', () => {
+  const BETWEEN_MARKS = { settings: { ...SLOWED, speed: 0.83 } };
+  // What the slider and the field show.
+  const shown = (page) => page.evaluate(() => [
+    document.getElementById('speed-slider').value,
+    document.getElementById('speed-input').value
+  ]);
+  const typeSpeed = async (page, text) => {
+    await page.locator('#speed-input').fill(text);
+    await page.keyboard.press('Enter');
+  };
+
+  async function withPopup(browser, browserName, baseUrl, mock, check) {
+    const { context, page, errors } = await openPopup(browser, browserName, baseUrl, mock);
+    try {
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      await check(page);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  }
+
+  const showsSpeedBetweenMarks = async (page) => {
+    expect(await shown(page)).toEqual(['0.83', '0.83']);
+  };
+
+  test('the slider shows a speed between its marks', async ({ browser, browserName }) => {
+    await withPopup(browser, browserName, server.baseUrl, BETWEEN_MARKS, showsSpeedBetweenMarks);
+  });
+
+  // The slider as it was, moving in 0.05: it rounds 0.83 to 0.85, and the
+  // popup would show, and send with the next change, a speed nobody chose.
+  test('finds a slider that can only sit on its marks', async ({ browser, browserName }) => {
+    const controlServer = await serveWith({
+      'popup.html': patched('popup.html', [[/(id="speed-slider" min="0\.5" max="1\.5" step=")0\.01"/, '$10.05"']])
+    });
+    try {
+      await withPopup(browser, browserName, controlServer.baseUrl, BETWEEN_MARKS, async (page) => {
+        await expect(showsSpeedBetweenMarks(page)).rejects.toThrow();
+        expect(await shown(page)).toEqual(['0.85', '0.85']);
+      });
+    } finally {
+      await controlServer.close();
+    }
+  });
+
+  test("the slider's keys and its drag go to the 0.05 marks", async ({ browser, browserName }) => {
+    await withPopup(browser, browserName, server.baseUrl, BETWEEN_MARKS, async (page) => {
+      const slider = page.locator('#speed-slider');
+      await slider.focus();
+      await page.keyboard.press('ArrowRight');
+      expect(await shown(page)).toEqual(['0.85', '0.85']);
+      await page.keyboard.press('ArrowUp');
+      expect(await shown(page)).toEqual(['0.9', '0.90']);
+
+      await typeSpeed(page, '0.83');
+      await slider.focus();
+      await page.keyboard.press('ArrowLeft');
+      expect(await shown(page)).toEqual(['0.8', '0.80']);
+      await page.keyboard.press('ArrowDown');
+      expect(await shown(page)).toEqual(['0.75', '0.75']);
+
+      // Page Up is the slider's own key, a tenth of the range, and its move
+      // lands on a mark as well.
+      await typeSpeed(page, '0.83');
+      await slider.focus();
+      await page.keyboard.press('PageUp');
+      expect(await shown(page)).toEqual(['0.95', '0.95']);
+      await page.keyboard.press('Home');
+      expect(await shown(page)).toEqual(['0.5', '0.50']);
+      await page.keyboard.press('End');
+      expect(await shown(page)).toEqual(['1.5', '1.50']);
+
+      // A press on the track, then a slow drag: every speed on the way is a
+      // mark, and the drag gets somewhere.
+      await typeSpeed(page, '0.83');
+      const box = await slider.boundingBox();
+      const y = box.y + box.height / 2;
+      const start = box.x + box.width * 0.3;
+      await page.mouse.move(start, y);
+      await page.mouse.down();
+      const seen = [await shown(page)];
+      for (let moved = 2; moved <= 120; moved += 2) {
+        await page.mouse.move(start + moved, y);
+        seen.push(await shown(page));
+      }
+      await page.mouse.up();
+      seen.push(await shown(page));
+
+      for (const [sliderValue, fieldValue] of seen) {
+        expect(Math.round(Number(sliderValue) * 100) % 5, `the drag passed ${sliderValue}`).toBe(0);
+        expect(fieldValue).toBe(Number(sliderValue).toFixed(2));
+      }
+      expect(new Set(seen.map(([sliderValue]) => sliderValue)).size).toBeGreaterThan(3);
+    });
+  });
+
+  test('the field and the buttons set the speed in steps of 0.01', async ({ browser, browserName }) => {
+    await withPopup(browser, browserName, server.baseUrl, { settings: SLOWED }, async (page) => {
+      // By the names a screen reader gives them.
+      const field = page.getByRole('spinbutton', { name: 'Exact speed' });
+      const faster = page.getByRole('button', { name: 'Faster by 0.01x' });
+      const slower = page.getByRole('button', { name: 'Slower by 0.01x' });
+
+      await faster.click();
+      expect(await shown(page)).toEqual(['0.81', '0.81']);
+      await slower.click();
+      await slower.click();
+      expect(await shown(page)).toEqual(['0.79', '0.79']);
+
+      await field.fill('0.9');
+      // Nothing changes until the speed is entered.
+      expect(await shown(page)).toEqual(['0.79', '0.9']);
+      await page.keyboard.press('Enter');
+      expect(await shown(page)).toEqual(['0.9', '0.90']);
+      await page.keyboard.press('ArrowUp');
+      await page.keyboard.press('ArrowUp');
+      expect(await shown(page)).toEqual(['0.92', '0.92']);
+      await page.keyboard.press('ArrowDown');
+      expect(await shown(page)).toEqual(['0.91', '0.91']);
+      await expect(field).toHaveAttribute('aria-valuetext', '0.91x');
+
+      // Leaving the field enters what was typed, rounded and kept in range.
+      await field.fill('1,237');
+      await page.locator('#reverb-slider').focus();
+      expect(await shown(page)).toEqual(['1.24', '1.24']);
+      await field.fill('7');
+      await page.keyboard.press('Enter');
+      expect(await shown(page)).toEqual(['1.5', '1.50']);
+      await field.fill('fast');
+      await page.keyboard.press('Enter');
+      expect(await shown(page)).toEqual(['1.5', '1.50']);
+      await expect(page.locator('#current-preset-label')).toHaveText('Current Preset: Custom');
+    });
+  });
+
+  test('a button held down keeps stepping until it is let go', async ({ browser, browserName }) => {
+    await withPopup(browser, browserName, server.baseUrl, { settings: SLOWED }, async (page) => {
+      const speed = async () => Number((await shown(page))[0]);
+      await page.locator('#speed-up-btn').hover();
+      await page.mouse.down();
+      await expect.poll(speed).toBeGreaterThanOrEqual(0.85);
+      await page.mouse.up();
+      const stopped = await shown(page);
+      expect(stopped[1]).toBe(Number(stopped[0]).toFixed(2));
+      await page.waitForTimeout(400);
+      // It stopped with the button, and letting go wasn't one more step.
+      expect(await shown(page)).toEqual(stopped);
+    });
+  });
+
+  test('the speed controls are reached with the Tab key, in order', async ({ browser, browserName }) => {
+    await withPopup(browser, browserName, server.baseUrl, { settings: SLOWED }, async (page) => {
+      await page.locator('#effect-tab-basic').focus();
+      const reached = [];
+      for (let presses = 0; presses < 4; presses++) {
+        await page.keyboard.press('Tab');
+        reached.push(await page.evaluate(() => document.activeElement.id));
+      }
+      expect(reached).toEqual(['speed-down-btn', 'speed-input', 'speed-up-btn', 'speed-slider']);
+      // Tab into the field selects its text, so typing replaces it.
+      await page.keyboard.press('Shift+Tab');
+      await page.keyboard.press('Shift+Tab');
+      await page.keyboard.type('1.2');
+      await page.keyboard.press('Enter');
+      expect(await shown(page)).toEqual(['1.2', '1.20']);
+    });
   });
 });
 

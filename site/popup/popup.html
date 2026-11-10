@@ -145,9 +145,23 @@
           <div class="control-group">
             <div class="control-header">
               <span class="control-icon">⇄</span>
-              <label for="speed-slider">Speed <span id="speed-value" class="value-inline">(1.00x)</span></label>
+              <label for="speed-slider">Speed <span id="speed-value" class="value-inline"></span></label>
+              <div id="speed-stepper" class="speed-stepper">
+                <button type="button" id="speed-down-btn" class="speed-step-btn"
+                  title="Slower by 0.01x" aria-label="Slower by 0.01x">−</button>
+                <span class="speed-field">
+                  <input type="text" id="speed-input" inputmode="decimal" autocomplete="off" spellcheck="false"
+                    maxlength="6" value="1.00" role="spinbutton" aria-label="Exact speed"
+                    aria-valuemin="0.5" aria-valuemax="1.5" aria-valuenow="1" aria-valuetext="1.00x">
+                  <span class="speed-unit" aria-hidden="true">x</span>
+                </span>
+                <button type="button" id="speed-up-btn" class="speed-step-btn"
+                  title="Faster by 0.01x" aria-label="Faster by 0.01x">+</button>
+              </div>
             </div>
-            <input type="range" id="speed-slider" min="0.5" max="1.5" step="0.05" value="1.0">
+            <!-- The step is 0.01 so the slider can sit at any speed the field
+                 gives it; popup.js keeps the slider's own moves to 0.05. -->
+            <input type="range" id="speed-slider" min="0.5" max="1.5" step="0.01" value="1.0">
           </div>
 
           <div class="control-group">

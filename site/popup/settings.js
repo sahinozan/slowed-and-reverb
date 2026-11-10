@@ -49,7 +49,8 @@
     nightcore: 'Nightcore'
   });
 
-  // Speeds come from a slider with 0.05 steps, so compare them with a tolerance.
+  // Speeds are set in steps of 0.01, and they are fractions that aren't stored
+  // exactly, so compare them with a tolerance well under one step.
   const SPEED_EPSILON = 0.001;
 
   // A complete settings object, with every number clamped to its range and

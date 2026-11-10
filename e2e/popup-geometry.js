@@ -164,11 +164,16 @@ const FRAME_CONTROLS = Object.freeze([
 // The upper tabs, which every state shows.
 const UPPER_TABS = Object.freeze(['#tab-presets', '#tab-custom']);
 
+// The speed's − and + buttons and the field between them. A live stream
+// hides them.
+const SPEED_STEP_CONTROLS = Object.freeze(['#speed-down-btn', '#speed-input', '#speed-up-btn']);
+
 // The effect controls under the presets, on the Basic tab. They stay below
 // My Presets too.
 const EFFECT_CONTROLS = Object.freeze([
   '#effect-tab-basic',
   '#effect-tab-advanced',
+  ...SPEED_STEP_CONTROLS,
   '#speed-slider',
   '#reverb-slider',
   '#eq-handle-low',
@@ -190,6 +195,7 @@ module.exports = {
   FRAME_CONTROLS,
   POPUP_MAX_HEIGHT,
   POPUP_WIDTH,
+  SPEED_STEP_CONTROLS,
   UPPER_TABS,
   measurePopup
 };
