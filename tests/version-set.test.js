@@ -333,10 +333,12 @@ describe('npm run version:set', () => {
     setVersion({ directory, version: next, today });
     assert.ok(!files.includes('PRIVACY.md'));
     const versions = (text) => [...new Set(text.match(/\d+\.\d+\.\d+/g))].sort();
-    const policy = reader(root)('PRIVACY.md');
-    // The page's words: its article, which leaves out the icons' drawings
+    // Each copy's words, however its lines are broken.
+    const words = (text) => text.replace(/\s+/g, ' ');
+    const policy = words(reader(root)('PRIVACY.md'));
+    // The page's words are its article, which leaves out the icons' drawings
     // and the footer.
-    const page = /<article[\s\S]*<\/article>/.exec(reader(directory)('site/privacy.html'))[0].replace(/<[^>]*>/g, ' ');
+    const page = words(/<article[\s\S]*<\/article>/.exec(reader(directory)('site/privacy.html'))[0].replace(/<[^>]*>/g, ' '));
     assert.deepEqual(versions(policy), ['1.0.0', '1.1.0']);
     assert.deepEqual(versions(page), ['1.0.0', '1.1.0']);
     assert.match(policy, /applies to version `1\.0\.0` and later of the/);
