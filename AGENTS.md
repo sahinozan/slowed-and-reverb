@@ -19,6 +19,10 @@ covers the features, CONTRIBUTING.md the setup and development commands, and
   Chromium and a puppeteer-core test for Firefox.
 - `docs/`: `checks.md`, which checks a change needs, made from
   `checks.json`, and `testing.md`, what each test command covers.
+- `.claude/skills/`: step-by-step procedures for coding agents, loaded when
+  a task needs one: `release`, `mac-audio-run`, `land-dependabot`,
+  `popup-change` and `store-assets`. `.agents/skills` is a link to the same
+  folder, which is where Codex looks.
 
 ## Checks
 
