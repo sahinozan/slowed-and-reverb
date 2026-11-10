@@ -1281,6 +1281,32 @@ describe('popup behavior', () => {
       assert.deepEqual(shown(harness), ['0.75', '0.75', '0.75x']);
     });
 
+    test('turns the effect on when the slider is moved to the speed it already had', async (t) => {
+      const harness = await createPopupHarness({
+        session: {
+          'tabState:9': { origin: 'https://www.youtube.com', enabled: false, settings: SLOWED }
+        },
+        contentState: { enabled: false, settings: DEFAULT_SETTINGS, blocked: false, live: false }
+      });
+      t.after(() => close(harness));
+      const { slider } = speedControls(harness);
+      const power = harness.window.document.getElementById('power-toggle');
+      assert.equal(power.checked, false);
+      assert.deepEqual(shown(harness), ['0.8', '0.80', '0.80x']);
+
+      // As the website's fader does: the same speed, given to the slider again.
+      slider.value = '0.8';
+      slider.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+      await settle();
+      assert.equal(power.checked, true);
+      assert.deepEqual(appliesSent(harness), [[0.8, true]]);
+
+      // With the effect on, the same speed again is nothing to send.
+      slider.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+      await settle();
+      assert.deepEqual(appliesSent(harness), [[0.8, true]]);
+    });
+
     test('sends one change at a time and always the speed it ends on', async (t) => {
       const tab = slowTab(1);
       const harness = await createPopupHarness({ onTabMessage: tab.onTabMessage });

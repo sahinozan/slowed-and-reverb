@@ -452,6 +452,23 @@ test(`the demo plays and pauses, and follows the popup both ways ${PLAYBACK}`, a
   await expect(page.locator('#speed-out')).toHaveText('1.00×');
   await expect.poll(async () => (await media(page)).rate).toBe(1);
 
+  // The fader turns the effect back on, also when it is moved to the speed
+  // the popup still holds: off, the fader rests at 1.00, and the popup's
+  // slider is given the speed it already has.
+  await page.locator('#speed').fill('0.9');
+  await expect(popupFrame(page).locator('#power-status')).toHaveText('On');
+  await expect(page.locator('#speed-out')).toHaveText('0.90×');
+  await popupFrame(page).locator('.header-power .switch-slider').click();
+  await expect(page.locator('#speed-out')).toHaveText('1.00×');
+  await expect(page.locator('#speed')).toHaveValue('1');
+  await page.locator('#speed').fill('0.9');
+  await expect(popupFrame(page).locator('#power-status')).toHaveText('On');
+  await expect(page.locator('#speed-out')).toHaveText('0.90×');
+  await expect.poll(async () => (await media(page)).rate).toBe(0.9);
+  await popupFrame(page).locator('.header-power .switch-slider').click();
+  await expect(popupFrame(page).locator('#power-status')).toHaveText('Off');
+  await expect.poll(async () => (await media(page)).rate).toBe(1);
+
   await page.locator('#play').click();
   await expect(page.locator('#play')).toHaveAttribute('aria-pressed', 'false');
   await expect.poll(async () => (await media(page)).paused).toBe(true);

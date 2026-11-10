@@ -1244,8 +1244,13 @@ function bindSpeedControls() {
   // The slider's step is 0.01 so that it can show any speed, and a drag, a
   // click on its track or Page Up moves it by that. Its own moves stay on the
   // 0.05x marks: each goes to the nearest one.
+  // Moving the slider turns the effect on, as moving any slider does, also
+  // when it ends on the speed it had: the website's fader shows 1.00x while
+  // the effect is off, and moved to the speed the popup still holds, it
+  // gives the slider that same speed again.
   speedSlider.addEventListener('input', () => {
-    changeSpeed(sliderMark(Number.parseFloat(speedSlider.value)));
+    const changed = changeSpeed(sliderMark(Number.parseFloat(speedSlider.value)));
+    if (!changed && !els.power.checked) saveAndApplySettings(true);
   });
   // Its arrow keys would move it by 0.01 and be put straight back, so they
   // go to the next mark here.
