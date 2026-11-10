@@ -106,12 +106,15 @@
       "needs": ["repo", "extension", "ui", "site"]
     },
     {
-      "about": "Repository and editor settings, the unit tests, and the tools that check, render or release, which no browser test loads.",
+      "about": "Repository, editor and coding-agent settings, the agents' hooks, the unit tests, and the tools that check, render or release, which no browser test loads.",
       "paths": [
         ".claude/launch.json",
+        ".claude/settings.json",
+        ".codex/hooks.json",
         ".github/**",
         ".gitignore",
         "eslint.config.js",
+        "scripts/agent-hooks/**",
         "scripts/check-whitespace.js",
         "scripts/checks-for.js",
         "scripts/node-test-results.js",

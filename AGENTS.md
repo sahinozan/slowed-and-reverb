@@ -122,6 +122,15 @@ Never edit these by hand. Change the source, then regenerate:
 The tests fail when the site's popup copy or stamps, or what is made from
 `checks.json`, are out of date.
 
+In Claude Code and Codex, hooks keep to this table (`scripts/agent-hooks/`,
+set up in `.claude/settings.json` and `.codex/hooks.json`): an edit to one of
+these files is refused, and `npm run site:popup`, `npm run site:stamp` and
+`npm run checks:tables` run by themselves after an edit to their sources.
+The hooks see only an agent's edit tools, so a command that writes these
+files isn't stopped, and Claude Code loads them only in a session started
+at a checkout's root. A new row here needs an entry in
+`scripts/agent-hooks/generated-files.js`; a test keeps the two equal.
+
 ## Rules
 
 - **Settings:** the defaults, ranges and built-in presets live in
