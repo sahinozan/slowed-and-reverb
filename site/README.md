@@ -100,8 +100,12 @@ repository. `wrangler.jsonc` in the repository root is the whole
 configuration: no build step, no Worker script. Wrangler runs in Cloudflare's
 build container, so it is not a dependency here.
 
-- Cloudflare redeploys on every push to `main` and gives other branches a
-  preview URL.
+- Cloudflare redeploys on a push to `main`, and gives another branch a preview
+  URL, only when the push changes `site/` or `wrangler.jsonc`. Those build
+  watch paths are a setting in Cloudflare, not in this repository, and it is
+  kept twice: once for `main` and once for the other branches. The dashboard's
+  field sets only `main`'s. The other belongs to the trigger named "Deploy
+  non-production branches" and is set through Cloudflare's Builds API.
 - Pages are served without `.html` (`/guide`, `/privacy`). The canonical and
   Open Graph URLs in each page's `<head>` and `sitemap.xml` use those addresses;
   they are the only places the domain is written out.
