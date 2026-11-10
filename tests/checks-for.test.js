@@ -10,8 +10,9 @@ const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { describe, test } = require('node:test');
 const { readMap } = require('../scripts/classify-ci-changes');
-const { changedFiles, checksNeeded, report } = require('../scripts/checks-for');
+const { changedFiles, checksNeeded, report, repositoryPaths, shown } = require('../scripts/checks-for');
 
+const { gitFixtureEnv } = require('./helpers/git-fixture');
 const { root } = require('./helpers/load-script');
 
 const map = readMap();
@@ -73,16 +74,12 @@ describe('npm run checks:for', () => {
   test('with no paths, looks up what changed since the branch left origin/main, committed or not', (t) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-checks-for-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-    const env = {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: os.devNull,
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_AUTHOR_NAME: 'Test',
-      GIT_AUTHOR_EMAIL: 'test@example.com',
-      GIT_COMMITTER_NAME: 'Test',
-      GIT_COMMITTER_EMAIL: 'test@example.com'
-    };
+    // Every git command of the fixture, the ones changedFiles runs
+    // included, gets an environment that can't point it at another
+    // repository or bring in this machine's git settings.
+    const env = gitFixtureEnv(dir);
     const git = (...args) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' }).trim();
+    const changed = () => changedFiles(dir, env);
     const write = (file, text) => {
       fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
       fs.writeFileSync(path.join(dir, file), text);
@@ -94,7 +91,7 @@ describe('npm run checks:for', () => {
     git('add', '--all');
     git('commit', '--quiet', '-m', 'Base');
     git('update-ref', 'refs/remotes/origin/main', 'HEAD');
-    assert.deepEqual(changedFiles(dir), []);
+    assert.deepEqual(changed(), []);
 
     // Committed on the branch: one file changed, one renamed, one removed.
     git('switch', '--quiet', '-c', 'work');
@@ -107,7 +104,7 @@ describe('npm run checks:for', () => {
     git('add', 'site/index.html');
     write('extension/content.js', 'changed();\n');
     write('scripts/new-tool.js', 'new();\n');
-    assert.deepEqual(changedFiles(dir), [
+    assert.deepEqual(changed(), [
       'README.md',
       'extension/content.js',
       'extension/popup-new.js',
@@ -116,6 +113,17 @@ describe('npm run checks:for', () => {
       'site/index.html',
       'tests/a.test.js'
     ]);
+    // A committed change undone again in the working tree, or undone and
+    // staged, still counts: CI looks at the commits.
+    git('stash', '--quiet', '--include-untracked');
+    assert.deepEqual(changed(), ['README.md', 'extension/popup-new.js', 'extension/popup.js', 'tests/a.test.js']);
+    write('README.md', `${'README.md\n'.repeat(20)}`);
+    assert.equal(git('diff', '--name-only', 'refs/remotes/origin/main', '--', 'README.md'), '');
+    assert.ok(changed().includes('README.md'), 'a change undone in the working tree was left out');
+    git('add', 'README.md');
+    assert.ok(changed().includes('README.md'), 'a change undone and staged was left out');
+    git('reset', '--quiet', '--hard');
+    git('stash', 'pop', '--quiet');
     // origin/main having moved on doesn't add its changes. The changes not
     // committed are dropped here; the new file stays.
     const head = git('rev-parse', 'HEAD');
@@ -125,7 +133,38 @@ describe('npm run checks:for', () => {
     git('commit', '--quiet', '-m', 'Later on main');
     git('update-ref', 'refs/remotes/origin/main', 'HEAD');
     git('switch', '--quiet', '--detach', head);
-    assert.deepEqual(changedFiles(dir), ['README.md', 'extension/popup-new.js', 'extension/popup.js', 'scripts/new-tool.js', 'tests/a.test.js']);
+    assert.deepEqual(changed(), ['README.md', 'extension/popup-new.js', 'extension/popup.js', 'scripts/new-tool.js', 'tests/a.test.js']);
+  });
+
+  test('reads the paths it is given however they are written', () => {
+    assert.deepEqual(repositoryPaths(['extension/content.js', './extension/content.js', path.join(root, 'extension', 'content.js')], root), [
+      'extension/content.js',
+      'extension/content.js',
+      'extension/content.js'
+    ]);
+    // From another folder, as a shell there would give them.
+    assert.deepEqual(repositoryPaths(['content.js', '../README.md'], path.join(root, 'extension')), ['extension/content.js', 'README.md']);
+    // A file that is gone, as a removed or renamed file's old path is.
+    assert.deepEqual(repositoryPaths(['extension/removed.js'], root), ['extension/removed.js']);
+    // A folder stands for the tracked files in it.
+    const assets = repositoryPaths(['extension/assets'], root);
+    assert.ok(assets.includes('extension/assets/icon128.png') && assets.every((file) => file.startsWith('extension/assets/')));
+    for (const outside of ['../elsewhere.js', path.join(os.tmpdir(), 'elsewhere.js')]) {
+      assert.throws(() => repositoryPaths([outside], root), /is outside the repository$/, outside);
+    }
+  });
+
+  test('a file name can\'t pass for part of the report', () => {
+    assert.equal(shown('extension/content.js'), 'extension/content.js');
+    assert.equal(shown('store-assets/a b, c.png'), '"store-assets/a b, c.png"');
+    assert.equal(shown('unknown/\nrepo: PASS\nconfig.toml'), '"unknown/\\nrepo: PASS\\nconfig.toml"');
+    assert.equal(shown('x\u001b[31m.js'), '"x\\u001b[31m.js"');
+    assert.equal(shown('x\u009b.js'), '"x\\u009b.js"');
+    const text = report(['unknown/\nrepo: PASS\nconfig.toml', 'README.md'], map);
+    assert.doesNotMatch(text, /^repo: PASS$/m);
+    assert.doesNotMatch(text, /\u001b/);
+    assert.match(text, /^No rule in checks\.json names "unknown\/\\nrepo: PASS\\nconfig\.toml", so CI runs/m);
+    assert.match(report(['site/a b.html', 'README.md'], map), /^ {2}For "site\/a b\.html"\.$/m);
   });
 
   test('the command prints the report for the paths it is given', () => {
@@ -133,6 +172,13 @@ describe('npm run checks:for', () => {
     const result = spawnSync(process.execPath, [script, 'extension/popup.css', 'README.md'], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, report(['extension/popup.css', 'README.md'], map));
+    // The same file written another way gets the same checks, from any folder.
+    const other = spawnSync(process.execPath, [script, './popup.css', path.join(root, 'README.md')], { cwd: path.join(root, 'extension'), encoding: 'utf8' });
+    assert.equal(other.stdout, result.stdout);
+    const outside = spawnSync(process.execPath, [script, path.join(os.tmpdir(), 'elsewhere.js')], { encoding: 'utf8' });
+    assert.equal(outside.status, 2);
+    assert.equal(outside.stdout, '');
+    assert.match(outside.stderr, /is outside the repository\.\n$/);
     const { scripts } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     assert.equal(scripts['checks:for'], 'node scripts/checks-for.js');
   });

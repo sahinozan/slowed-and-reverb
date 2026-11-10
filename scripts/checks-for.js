@@ -5,6 +5,7 @@
 // origin/main, committed or not (npm run checks:for). docs/checks.md has
 // the whole map.
 
+const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { checksFor, readMap, ruleFor } = require('./classify-ci-changes');
@@ -12,15 +13,42 @@ const { about, runBy } = require('./render-checks-tables');
 
 const root = path.join(__dirname, '..');
 
-// The files a change touches, in a checkout: what differs from where the
-// branch left origin/main, committed, staged or not, a removed or renamed
-// file's old path included, and the new files git doesn't track yet.
-function changedFiles(directory = root) {
-  const git = (...args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+// The files a change touches, in a checkout: what the branch's commits
+// changed since it left origin/main, which is what CI looks at, and on top
+// of that what is staged, what is changed and not staged, and the new files
+// git doesn't track yet. A removed or renamed file's old path is included.
+// Each is listed by itself, so a committed change undone in the working
+// tree still counts: CI would still see it.
+function changedFiles(directory = root, env = process.env) {
+  const git = (...args) => execFileSync('git', args, { cwd: directory, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const names = (...args) => git('diff', '--no-renames', '--name-only', '-z', ...args).split('\0');
   const base = git('merge-base', 'origin/main', 'HEAD').trim();
-  const changed = git('diff', '--no-renames', '--name-only', '-z', base).split('\0');
   const untracked = git('ls-files', '--others', '--exclude-standard', '-z').split('\0');
-  return [...new Set([...changed, ...untracked].filter(Boolean))].sort();
+  return [...new Set([...names(base, 'HEAD'), ...names('--cached'), ...names(), ...untracked].filter(Boolean))].sort();
+}
+
+// The paths given on the command line as the map knows them: from the
+// repository's root, with forward slashes. A folder stands for the tracked
+// files in it. A path outside the repository is refused.
+function repositoryPaths(paths, directory = process.cwd()) {
+  return paths.flatMap((given) => {
+    const full = path.resolve(directory, given);
+    const file = path.relative(root, full).split(path.sep).join('/');
+    if (file === '..' || file.startsWith('../') || path.isAbsolute(file)) throw new Error(`${shown(given)} is outside the repository`);
+    if (fs.existsSync(full) && fs.statSync(full).isDirectory()) {
+      const tracked = execFileSync('git', ['ls-files', '-z', '--', full], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      return tracked.split('\0').filter(Boolean);
+    }
+    return [file];
+  });
+}
+
+// A file's name as printed: as it is when it is plain, and otherwise in
+// quotes with anything that could pass for another line or steer a
+// terminal written out, so a name can't be taken for part of the report.
+function shown(file) {
+  if (/^[\w./@+-]+$/.test(file)) return file;
+  return JSON.stringify(file).replace(/[\u007f-\u009f\u2028\u2029]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 // The checks these files need, in the map's order, each with the files
@@ -37,7 +65,8 @@ function checksNeeded(files, map) {
 // A few files by name, and how many more.
 function some(files, most = 4) {
   const more = files.length - most;
-  return more > 0 ? `${files.slice(0, most).join(', ')} and ${more} more` : files.join(', ');
+  const names = files.map(shown);
+  return more > 0 ? `${names.slice(0, most).join(', ')} and ${more} more` : names.join(', ');
 }
 
 // What to print for these files.
@@ -62,8 +91,14 @@ function report(files, map) {
 
 if (require.main === module) {
   const paths = process.argv.slice(2);
-  let files = paths;
-  if (paths.length === 0) {
+  let files;
+  try {
+    files = paths.length > 0 ? repositoryPaths(paths) : null;
+  } catch (error) {
+    process.stderr.write(`${error.message}.\n`);
+    process.exitCode = 2;
+  }
+  if (files === null) {
     try {
       files = changedFiles();
     } catch (error) {
@@ -74,4 +109,4 @@ if (require.main === module) {
   if (process.exitCode !== 2) process.stdout.write(report(files, readMap()));
 }
 
-module.exports = { changedFiles, checksNeeded, report };
+module.exports = { changedFiles, checksNeeded, report, repositoryPaths, shown };

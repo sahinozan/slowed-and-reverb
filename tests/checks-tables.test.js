@@ -17,6 +17,25 @@ const { root } = require('./helpers/load-script');
 const source = fs.readFileSync(path.join(root, 'checks.json'), 'utf8');
 const map = readMap(source);
 
+// The lines of a Markdown text that are rows of the page's tables: a row
+// whose first cell is one of the tables' headings, a check's name, or a
+// rule's paths. Markdown reads a table with or without its first bar, and
+// moved in by up to three spaces.
+function tableCopies(text, checkMap) {
+  const firsts = new Set([
+    'Check',
+    'A change to',
+    'any other path',
+    ...Object.keys(checkMap.checks).map((name) => `\`${name}\``),
+    ...checkMap.rules.map((rule) => rule.paths.map((pattern) => `\`${pattern}\``).join(', '))
+  ]);
+  return text.split('\n').filter((line) => {
+    if (!/^ {0,3}\S/.test(line) || !line.includes('|')) return false;
+    const cells = line.trim().replace(/^\|/, '').split('|');
+    return cells.length > 1 && firsts.has(cells[0].trim());
+  });
+}
+
 // The map with one change.
 function changed(change) {
   const copy = JSON.parse(source);
@@ -78,8 +97,22 @@ describe('what is made from the map of checks', () => {
     assert.match(agents, /`npm run checks:for`/);
     assert.match(agents, /`docs\/checks\.md`/);
     assert.ok(!agents.includes(START) && !agents.includes(END) && !agents.includes(PAGE_MADE));
-    assert.doesNotMatch(agents, /^\| `repo` \|/m);
-    assert.doesNotMatch(agents, /^\| A change to \|/m);
+    assert.deepEqual(tableCopies(agents, map), []);
+
+    // The page's tables put back into it are found: as they are, without
+    // their first bar, and moved in by the spaces Markdown still reads as a
+    // table.
+    const page = checksPage(map).split('\n');
+    const rows = page.filter((line) => line.startsWith('|') && !line.startsWith('| ---'));
+    assert.equal(tableCopies(`${agents}\n${page.join('\n')}\n`, map).length, rows.length);
+    assert.equal(tableCopies(`${agents}\n${page.map((line) => ` ${line}`).join('\n')}\n`, map).length, rows.length);
+    assert.equal(tableCopies(`${agents}\n${page.map((line) => `   ${line.replace(/^\| /, '')}`).join('\n')}\n`, map).length, rows.length);
+    // One row is enough, and four spaces make it code, not a table.
+    assert.deepEqual(tableCopies('| `listen` | by hand | Listen. |\n', map), ['| `listen` | by hand | Listen. |']);
+    assert.deepEqual(tableCopies('`extension/popup.css` | `extension`\n', map), ['`extension/popup.css` | `extension`']);
+    assert.deepEqual(tableCopies('    | `listen` | by hand | Listen. |\n', map), []);
+    // Its other tables and its prose aren't taken for copies.
+    assert.deepEqual(tableCopies('| Files | Source | Command |\n| `dist/` | `extension/` | `npm run package` |\nThe `listen` check.\n', map), []);
   });
 
   test('the release checklist has an item for each check done by hand when its condition holds', () => {
