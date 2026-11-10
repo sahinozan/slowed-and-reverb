@@ -199,11 +199,11 @@ function extensionFiles() {
 }
 
 // The extension's files the workflow doesn't run for: the popup's page with
-// its script and styles, and the toolbar's icons. The suites ask the
-// background script for what the popup's message would (harness.js), so
-// they never load these, and a change to them can't change a recording.
-// Every other file of the extension can reach the sound.
-const NOT_RECORDED = [/^extension\/popup\.(?:css|html|js)$/, /^extension\/assets\//];
+// its script and styles, and the toolbar's icons, which are pictures. The
+// suites ask the background script for what the popup's message would
+// (harness.js), so they never load the popup's files. Every other file of
+// the extension can reach the sound, a script put among the icons included.
+const NOT_RECORDED = [/^extension\/popup\.(?:css|html|js)$/, /^extension\/assets\/[^/]+\.(?:png|svg)$/];
 
 // What is wrong with how the workflow's paths split the extension's files:
 // one that can reach the sound and isn't in them, a new file included, or
@@ -221,31 +221,50 @@ function extensionPathProblems(files, filters) {
   return problems;
 }
 
-// The lines of these files that match, as "file:line".
+// The lines of these files that match, as "file:line". A line that is only
+// a comment is left out: saying something about the popup opens nothing.
+// Names are read as they are written, so one put together while the code
+// runs isn't seen.
 function linesNaming(sources, pattern) {
   return Object.entries(sources).flatMap(([file, text]) =>
     text.split('\n').flatMap((line, index) => {
+      if (/^\s*(?:\/\/|\/\*|\*)/.test(line)) return [];
       const match = pattern.exec(line);
-      return match ? [{ where: `${file}:${index + 1}`, name: match[0] }] : [];
+      return match ? [{ where: `${file}:${index + 1}`, name: match[0], line: line.trim() }] : [];
     })
   );
 }
+
+// The popup's page by its name, the browser's call that opens it, and the
+// manifest's key that holds its name.
+const POPUP_PAGE = /popup\.html|openPopup|default_popup/;
 
 // Where the suites' own files name the popup's page or ask the browser to
 // open it. They may patch popup.js in their copy of the build
 // (extension-copy.js); they may not load it.
 function popupUses(sources) {
-  return linesNaming(sources, /popup\.html|openPopup/).map(
+  return linesNaming(sources, POPUP_PAGE).map(
     ({ where }) => `${where} names the popup's page; if the suites open the popup, its files belong in the audio workflow's paths`
   );
 }
 
+// The only lines of the extension's other files that may name the popup's
+// page: the manifest gives it to the toolbar's button, and the background
+// script checks that a message came from it. Neither opens it.
+const POPUP_PAGE_NAMED = ['"default_popup": "popup.html",', "url.pathname === '/popup.html'"];
+
 // Where the extension's other files name the popup's script or styles,
-// which only the popup's page may load.
+// which only the popup's page may load, or name its page in any other line
+// than those two, as a script that opened the popup by itself would.
 function popupLoads(sources) {
-  return linesNaming(sources, /popup\.(?:css|js)\b/).map(
-    ({ where, name }) => `${where} names ${name}; if it runs outside the popup's page, the popup's files belong in the audio workflow's paths`
-  );
+  return [
+    ...linesNaming(sources, /popup\.(?:css|js)\b/).map(
+      ({ where, name }) => `${where} names ${name}; if it runs outside the popup's page, the popup's files belong in the audio workflow's paths`
+    ),
+    ...linesNaming(sources, POPUP_PAGE)
+      .filter(({ line }) => !POPUP_PAGE_NAMED.includes(line))
+      .map(({ where }) => `${where} names the popup's page; if the extension opens the popup by itself, its files belong in the audio workflow's paths`)
+  ];
 }
 
 const job = jobText('linux');
@@ -407,7 +426,8 @@ describe('the audio workflow', () => {
     }
     assert.deepEqual(extensionPathProblems(files, FILTERS), []);
     // The reasons the popup's files are left out: the suites don't open the
-    // popup, and nothing but the popup's page loads its script and styles.
+    // popup, the extension doesn't open it by itself, and nothing but the
+    // popup's page loads its script and styles.
     const sources = Object.fromEntries(suiteModules().map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]));
     assert.deepEqual(popupUses(sources), []);
     const others = Object.fromEntries(
@@ -427,6 +447,10 @@ describe('the audio workflow', () => {
     assert.deepEqual(extensionPathProblems([...files, 'extension/pitch-main.js'], FILTERS), [
       "extension/pitch-main.js isn't the popup's or an icon, so it can reach the sound, but the audio workflow doesn't run for it"
     ]);
+    // Only pictures count as icons.
+    assert.deepEqual(extensionPathProblems([...files, 'extension/assets/helper.js', 'extension/assets/icon64.png'], FILTERS), [
+      "extension/assets/helper.js isn't the popup's or an icon, so it can reach the sound, but the audio workflow doesn't run for it"
+    ]);
     // The whole folder again, as it was: the popup's files and every icon.
     const whole = extensionPathProblems(files, [...FILTERS, 'extension/**']);
     assert.equal(whole.length, files.filter((file) => NOT_RECORDED.some((pattern) => pattern.test(file))).length);
@@ -434,25 +458,47 @@ describe('the audio workflow', () => {
     assert.ok(whole.length > 3);
   });
 
-  test("finds a suite that opens the popup, or a script that loads the popup's files", () => {
+  test("finds a suite that opens the popup, or a script that loads the popup's files or opens it", () => {
+    const suites = "if the suites open the popup, its files belong in the audio workflow's paths";
     assert.deepEqual(
       popupUses({
         'e2e/audio-capture/harness.js': "// Opens the page.\nawait page.goto(`chrome-extension://${id}/popup.html`);\n",
-        'e2e/extension-copy.js': "await worker.evaluate(() => chrome.action.openPopup());\n['popup.js', 'youTubePermissionFor']\n"
+        'e2e/extension-copy.js': "await worker.evaluate(() => chrome.action.openPopup());\n['popup.js', 'youTubePermissionFor']\n",
+        'e2e/audio-capture/browsers.js': 'await page.goto(new URL(manifest.action.default_popup, base).href);\n'
       }),
       [
-        "e2e/audio-capture/harness.js:2 names the popup's page; if the suites open the popup, its files belong in the audio workflow's paths",
-        "e2e/extension-copy.js:1 names the popup's page; if the suites open the popup, its files belong in the audio workflow's paths"
+        `e2e/audio-capture/harness.js:2 names the popup's page; ${suites}`,
+        `e2e/extension-copy.js:1 names the popup's page; ${suites}`,
+        `e2e/audio-capture/browsers.js:1 names the popup's page; ${suites}`
       ]
     );
+    // A comment about the popup opens nothing.
+    assert.deepEqual(
+      popupUses({ 'e2e/audio-capture/harness.js': '// The suites do not open popup.html.\n  /* Nor call openPopup. */\n   * popup.html\n' }),
+      []
+    );
+
+    const outside = "if it runs outside the popup's page, the popup's files belong in the audio workflow's paths";
+    const opens = "if the extension opens the popup by itself, its files belong in the audio workflow's paths";
     assert.deepEqual(
       popupLoads({
-        'extension/background.js': "await api.scripting.executeScript({ target: { tabId }, files: ['popup.js'] });\n",
-        'extension/manifest.json': '{ "action": { "default_popup": "popup.html" }, "web_accessible_resources": ["popup.css"] }\n'
+        'extension/background.js': [
+          "await api.scripting.executeScript({ target: { tabId }, files: ['popup.js'] });",
+          "await api.tabs.create({ url: api.runtime.getURL('popup.html'), active: false });",
+          'await api.action.openPopup();',
+          // The two lines that may name the page, and a comment.
+          "      url.pathname === '/popup.html'",
+          '// The interface lives in popup.js, which popup.html loads.'
+        ].join('\n'),
+        'extension/manifest.json': '{\n    "default_popup": "popup.html",\n  "web_accessible_resources": ["popup.css"]\n}\n',
+        'extension/content.js': 'location.href = api.runtime.getManifest().action.default_popup;\n'
       }),
       [
-        "extension/background.js:1 names popup.js; if it runs outside the popup's page, the popup's files belong in the audio workflow's paths",
-        "extension/manifest.json:1 names popup.css; if it runs outside the popup's page, the popup's files belong in the audio workflow's paths"
+        `extension/background.js:1 names popup.js; ${outside}`,
+        `extension/manifest.json:3 names popup.css; ${outside}`,
+        `extension/background.js:2 names the popup's page; ${opens}`,
+        `extension/background.js:3 names the popup's page; ${opens}`,
+        `extension/content.js:1 names the popup's page; ${opens}`
       ]
     );
   });

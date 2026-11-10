@@ -21,9 +21,10 @@ on:
       # The files of the extension that can reach the sound the suites
       # record: the background script, the content scripts, the engines,
       # the settings they load and the manifest, which decides what is
-      # injected where. Not the popup's files or the icons: the suites
-      # drive the background script themselves and never open the popup
-      # (tests/audio-workflow.test.js checks both).
+      # injected where. Not the popup's files, which the suites never load
+      # (they drive the background script themselves, and
+      # tests/audio-workflow.test.js checks that nothing opens the popup),
+      # or the icons, which are the pictures on the toolbar's button.
       - 'extension/background.js'
       - 'extension/content.js'
       - 'extension/manifest.json'

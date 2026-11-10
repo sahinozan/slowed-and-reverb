@@ -52,8 +52,9 @@ covers the features and development commands in full.
   script, the background script, `settings.js` (the content and background
   scripts load it), the manifest, the suite or what the suite runs on, and
   not for the popup's files or the icons: the suites drive the background
-  script themselves and never open the popup, so a change there can't
-  change what they record. Listen to how the effect sounds (reverb,
+  script themselves and never open the popup, so a change to its files
+  can't change what they record, and the icons are only the pictures on the
+  toolbar's button. Listen to how the effect sounds (reverb,
   echo, EQ, width, saturation, with music) after any change that can affect
   it, such as the audio graph's wiring, an effect's code, gains, fades,
   presets or defaults, or what the popup sends to the tab and how often,
