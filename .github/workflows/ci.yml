@@ -37,9 +37,10 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      # This job installs nothing. Left on, setup-node's automatic npm cache
-      # (package.json names npm in packageManager) saved an empty cache under
-      # the lockfile's key before the jobs that install could save theirs.
+      # This job installs nothing, so setup-node's automatic npm cache
+      # (package.json names npm in packageManager) is off: it would save an
+      # empty cache under the lockfile's key before the jobs that install
+      # can save theirs.
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -147,8 +148,8 @@ jobs:
     needs: classify
     if: needs.classify.outputs.browser == 'true'
     runs-on: ${{ matrix.os }}
-    # Installing the sound server for the website's demo has taken up to 13
-    # minutes in the audio workflow; its step stops after 15.
+    # Leaves room for the step that installs the sound server for the
+    # website's demo, which stops after 15.
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -183,17 +184,16 @@ jobs:
       - name: Install exact dependencies
         run: npm ci
 
-      # Unpacking Chromium takes minutes on Windows, so keep the download in
-      # a cache keyed on the Playwright version; a bump downloads it again.
-      # GitHub's Azure mirror for Ubuntu sent the sound server's packages at
-      # 26 kB/s, so installing them ran out of the sink step's 15 minutes on
-      # main; this takes them from Ubuntu's own archive, as the audio
-      # workflow does.
+      # Before any step that installs with APT: GitHub's Azure mirror for
+      # Ubuntu can be too slow for the sink step's 15 minutes, so the
+      # packages come from Ubuntu's own archive, as in the audio workflow.
       - name: Download Ubuntu packages from Ubuntu's archive
         if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bash scripts/ci-package-downloads.sh
 
+      # Unpacking Chromium takes minutes on Windows, so keep the download in
+      # a cache keyed on the Playwright version; a bump downloads it again.
       - name: Read the Playwright version
         id: playwright
         shell: bash
@@ -220,11 +220,10 @@ jobs:
       - name: Run extension browser smoke tests
         run: npm run test:e2e
 
-      # On GitHub's Ubuntu runners Firefox has sometimes not started within
-      # 30 s, its main process waiting on the disk (in disk sleep, using no
-      # CPU) when it was checked. Which file it waited for isn't known. As
-      # an experiment, this reads Firefox's install once first, so it is in
-      # memory, and logs how long the disk took. It can't stop the tests.
+      # An experiment: on GitHub's Ubuntu runners Firefox can be slow to
+      # start while it waits on the disk. This reads Firefox's install once
+      # first, so it is in memory, and logs how long the disk took. It can't
+      # stop the tests.
       - name: Read Firefox's files into memory
         if: runner.os == 'Linux'
         continue-on-error: true
@@ -246,7 +245,7 @@ jobs:
         run: npm run test:firefox
 
       # A virtual output device for the website's demo, as in the audio
-      # workflow; started only now, so the tests above run as before.
+      # workflow. It starts only here, so the tests above run without one.
       - name: Start a PulseAudio null sink
         if: runner.os == 'Linux'
         timeout-minutes: 15
