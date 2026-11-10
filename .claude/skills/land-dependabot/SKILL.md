@@ -37,8 +37,7 @@ Take one at a time: each merge changes `main` under the others.
    made in a pull request with the analysis in it. Don't use
    `npm audit fix`, overrides or downgrades to make it pass.
 6. **If a run fails**, keep its evidence and explain it before running
-   anything again. A failure the update causes is a reason to leave the
-   pull request open and say why, not to change the tests.
+   anything again, and tell the owner what the update changed.
 7. **Ask the owner** for permission to merge, with what ran and on which
    commit. Merge only after a yes in this session, with every review
    conversation resolved. Pull requests are squash-merged, so its title and

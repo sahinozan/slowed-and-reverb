@@ -23,7 +23,7 @@ write them all: the manifest, `package.json` and `package-lock.json`,
 `VERSION` in the four scripts that carry one, the footer of every
 `site/*.html` page, and a new entry in `site/changelog.html`. The list of
 places is `PLACES` in `scripts/version-set.js`, which the release's check
-reads too. The privacy policy isn't one of them: it changes only when what
+reads too, so a new place goes there. The privacy policy isn't one of them: it changes only when what
 the extension stores or sends does. Then the command prints what is left
 to do by hand:
 
@@ -33,8 +33,9 @@ to do by hand:
 - the Firefox release notes in `store-assets/LISTING.md`.
 
 The Chrome store's summary is the manifest's `description` (132 characters
-at most), so this is the only time it can change. If it does, change it in
-`store-assets/LISTING.md` too.
+at most), so this is the only time it can change. If it does, change the
+`description` in `extension/manifest.json` and in `package.json`, which a
+test keeps equal, and the summary in `store-assets/LISTING.md`.
 
 Then run `npm run checks:for`, do what it lists, and open the pull request as
 `AGENTS.md` ("Git") says.
@@ -56,14 +57,15 @@ Linux, Playwright's Chromium and Firefox.
 - Before anything else it checks that everything the bump touches shows the
   new version.
 - It fails if a test or suite failed, was canceled, skipped or left to do, or
-  if a test file stopped early or has no tests of its own. It reads this
-  from the results a second reporter (`scripts/node-test-results.js`) writes
-  to a file of its own in the logs, not from what the tests print.
+  if a test file stopped early or has no tests or suites of its own. It
+  reads this from the results a second reporter
+  (`scripts/node-test-results.js`) writes to a file of its own in the logs,
+  not from what the tests print.
 - When it passes, it writes `dist/packages/<version>/` in the main checkout,
   next to the earlier releases: the two packages, Firefox's source archive,
   `firefox-privacy-policy.txt`, a draft `RELEASE-<version>.txt` and each
-  check's log in a `logs` folder. It never replaces a version folder that is there,
-  even an empty one.
+  check's log in a `logs` folder. It never replaces a version folder that
+  is there, even an empty one.
 - When it fails, it names the scratch folder with its logs. Read them and
   explain the failure before running anything again. A fix goes through a
   pull request, and the release is built from the new commit.

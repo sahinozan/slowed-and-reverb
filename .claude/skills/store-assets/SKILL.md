@@ -18,20 +18,21 @@ is the owner's; never do it.
    and `site/assets/fonts/fraunces.woff2`. The icons, the Chrome store icon
    and the mark in the popup's header are drawn by `scripts/render-icons.js`.
 2. **Make them again**, on a Mac (the body text uses fonts that ship with
-   macOS):
+   macOS), in this order. The screenshots show the popup, and the popup
+   shows the mark, so the icons come first:
 
    ```sh
+   npm run icons          # when the drawing changed: the icons, the store icon, the popup's header mark
+   npm run site:popup     # after npm run icons, which writes extension/popup.html
    npm run store:assets   # screenshots, Firefox's larger ones, promo tile, marquee, site/assets/og-card.png
-   npm run icons          # the icons, the store icon, the popup's header mark
    ```
 
-   Both start Playwright's Chromium. Run them when no browser tests are
-   running.
+   `npm run icons` and `npm run store:assets` start Playwright's Chromium.
 3. **New page captures** are full-screen 5120 × 2880 screenshots of a
    maximized browser window, signed out or with no personal details
-   showing, with the popup closed. Taking them is the owner's. Put them in
-   a new dated folder in `store-assets/originals/` with their original
-   names and SHA-256 checksums, point `CAPTURES` at the top of
+   showing, with the popup closed. Put them in a new dated folder in
+   `store-assets/originals/` with their original names and SHA-256
+   checksums, point `CAPTURES` at the top of
    `scripts/render-store-assets.js` at them, and delete the folder they
    replace.
 4. **Look at each new image at the size the store shows it**, not only at

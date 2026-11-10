@@ -31,16 +31,49 @@ function parts(text) {
   assert.ok(found, 'a skill starts with its name and description between two --- lines');
   const fields = found[1].split('\n').map((line) => /^([a-z-]+): (\S.*)$/.exec(line));
   assert.ok(fields.every(Boolean), 'each line between the --- lines is a name, a colon and a value on one line');
+  const names = fields.map(([, name]) => name);
+  assert.equal(new Set(names).size, names.length, 'a name is given once');
   return { fields: Object.fromEntries(fields.map(([, name, value]) => [name, value])), body: found[2] };
 }
 
-const skills = NAMES.map((name) => ({ name, file: `${SKILLS}/${name}/SKILL.md`, ...parts(read(`${SKILLS}/${name}/SKILL.md`)) }));
-
-// What a skill names in code: `like this`, and each line of a fenced block.
-const named = (body) => [
+// What a skill's text names in code: `like this`, and each line of a
+// fenced block.
+const coded = (body) => [
   ...[...body.matchAll(/```\w*\n([\s\S]*?)```/g)].flatMap((block) => block[1].split('\n')),
   ...[...body.replace(/```[\s\S]*?```/g, '').matchAll(/`([^`\n]+)`/g)].map((match) => match[1])
 ].map((text) => text.trim()).filter(Boolean);
+
+// What a build, a run or a release writes isn't in the repository.
+const MADE = /^(dist|test-results)\/|^(summary\.json|environment\.json|summary\.md|firefox-privacy-policy\.txt)$/;
+const FILE = /\.(json|js|md|html|css|yml|txt|png|svg|woff2|sh)$/;
+
+// What is wrong with what a skill points at: a command the package
+// doesn't have, a file that isn't in the repository, a heading its file
+// doesn't have. The description is plain text, so its commands and files
+// are found as words; the text after it gives them in code.
+function problems({ fields, body }, has = (file) => fs.existsSync(path.join(root, file))) {
+  const found = [];
+  const words = fields.description.match(/[\w.@-]+(?:\/[\w.*-]+)*/g).map((word) => word.replace(/\.$/, ''));
+  const texts = [fields.description, ...coded(body)];
+  for (const [, command] of texts.flatMap((text) => [...text.matchAll(/\bnpm run ([\w:-]+)/g)])) {
+    if (!scripts[command]) found.push(`npm run ${command} is not one of package.json's scripts`);
+  }
+  const files = [...words, ...coded(body)].filter((text) => /^[\w.*/-]+$/.test(text) && (text.includes('/') || FILE.test(text)) && !MADE.test(text));
+  for (const given of files) {
+    const pattern = given.endsWith('/') ? `${given}**` : given;
+    const there = tracked.filter((file) => matches(pattern, file));
+    if (there.length === 0 || (there.length === 1 && there[0] === given && !has(given))) found.push(`${given} isn't in the repository`);
+  }
+  for (const [, file, heading] of body.matchAll(/`([\w./-]+\.md)`\s+\("([^"]+)"\)/g)) {
+    const headings = tracked.includes(file) ? read(file).split('\n').filter((line) => /^#{1,6} /.test(line)).map((line) => line.replace(/^#+ /, '')) : [];
+    if (!headings.includes(heading)) found.push(`${file} has no heading "${heading}"`);
+  }
+  return found;
+}
+
+const skills = NAMES.map((name) => ({ name, file: `${SKILLS}/${name}/SKILL.md`, text: read(`${SKILLS}/${name}/SKILL.md`) }))
+  .map((skill) => ({ ...skill, ...parts(skill.text) }));
+const skill = (wanted) => skills.find(({ name }) => name === wanted);
 
 describe('the skills for coding agents', () => {
   test('are the five, each a folder with one SKILL.md', () => {
@@ -57,10 +90,16 @@ describe('the skills for coding agents', () => {
       // Says what it is for and when to use it, within what the tools show.
       assert.ok(fields.description.length >= 80 && fields.description.length <= 1024, `${name}: ${fields.description.length} characters`);
       assert.match(fields.description, /\bUse when\b/, name);
-      // A colon followed by a space would end the value for a stricter reader.
+      // A colon followed by a space, or a # after one, would end the
+      // value for a stricter reader, and so would these at its start.
       assert.doesNotMatch(fields.description, /: | #|^["'[{>|*&!%@`-]/, name);
       assert.match(body, /^\n# \S/, name);
     }
+    // A name given twice, or a value on a line of its own, isn't read.
+    const { text } = skill('release');
+    assert.throws(() => parts(text.replace('\ndescription: ', '\nname: release\ndescription: ')), /a name is given once/);
+    assert.throws(() => parts(text.replace('\ndescription: ', '\ndescription:\n  ')), /on one line/);
+    assert.throws(() => parts(text.replace(/^---\n/, '')), /between two --- lines/);
   });
 
   test('reach Codex through one link, not a second copy', () => {
@@ -75,52 +114,59 @@ describe('the skills for coding agents', () => {
     assert.deepEqual(tracked.filter((file) => file.startsWith('.agents/')), [LINK]);
   });
 
-  test('name only commands the package has', () => {
+  test('name only commands, files and headings that are there', () => {
+    for (const each of skills) assert.deepEqual(problems(each), [], each.name);
+    // What is looked at: commands, files with and without a folder, and
+    // headings, in every skill.
     for (const { name, body } of skills) {
-      const commands = named(body).flatMap((text) => [...text.matchAll(/\bnpm run ([\w:-]+)/g)].map((match) => match[1]));
-      assert.ok(commands.length > 0, name);
-      for (const command of commands) assert.ok(scripts[command], `${name}: npm run ${command} is not one of package.json's scripts`);
-      // Which checks a change needs is asked of the map, not repeated.
-      assert.ok(commands.includes('checks:for'), `${name} doesn't send its reader to npm run checks:for`);
+      assert.ok(coded(body).some((text) => /\bnpm run [\w:-]+/.test(text)), name);
+      assert.ok(coded(body).some((text) => tracked.includes(text)), name);
     }
+    assert.ok(skills.flatMap(({ body }) => [...body.matchAll(/`[\w./-]+\.md`\s+\("[^"]+"\)/g)]).length >= 5);
   });
 
-  test('name only files that are there', () => {
-    // What a build, a run or a release writes isn't tracked.
-    const made = /^(dist|test-results)\//;
-    for (const { name, body } of skills) {
-      const paths = named(body).filter((text) => /^[\w.*/-]+$/.test(text) && (text.includes('/') || /^[A-Z][A-Z-]*\.md$/.test(text)) && !made.test(text));
-      assert.ok(paths.length > 0, name);
-      for (const given of paths) {
-        const pattern = given.endsWith('/') ? `${given}**` : given;
-        assert.ok(tracked.some((file) => matches(pattern, file)), `${name} names ${given}, which isn't in the repository`);
-      }
-    }
+  test('a skill that names something that isn\'t there is caught', () => {
+    const changed = (name, from, to) => {
+      const { text } = skill(name);
+      assert.ok(text.includes(from), `${name} doesn't have ${from}`);
+      return parts(text.replace(from, to));
+    };
+    const cases = [
+      // In the text after the description: a command, a file in a
+      // folder, a file at the root, a folder, a pattern, a heading.
+      [changed('release', '`npm run checks:for`', '`npm run checks:four`'), "npm run checks:four is not one of package.json's scripts"],
+      [changed('release', 'npm run release -- <the commit on main>', 'npm run publish -- <the commit on main>'), "npm run publish is not one of package.json's scripts"],
+      [changed('release', '`scripts/version-set.js`', '`scripts/version-sets.js`'), "scripts/version-sets.js isn't in the repository"],
+      [changed('land-dependabot', '`audit-exceptions.json`', '`audit-exemptions.json`'), "audit-exemptions.json isn't in the repository"],
+      [changed('store-assets', '`store-assets/originals/`', '`store-assets/captures/`'), "store-assets/captures/ isn't in the repository"],
+      [changed('release', '`site/*.html`', '`site/*.htm`'), "site/*.htm isn't in the repository"],
+      [changed('release', '`AGENTS.md` ("Git")', '`AGENTS.md` ("Merging")'), 'AGENTS.md has no heading "Merging"'],
+      [changed('release', '`AGENTS.md` ("Git")', '`docs/git.md` ("Git")'), "docs/git.md isn't in the repository"],
+      // In the description, where they are plain words.
+      [changed('land-dependabot', 'package.json and package-lock.json', 'package.json and package-locks.json'), "package-locks.json isn't in the repository"],
+      [changed('popup-change', '(extension/settings.js).', '(extension/setting.js).'), "extension/setting.js isn't in the repository"],
+      [changed('release', 'with npm run release,', 'with npm run publish,'), "npm run publish is not one of package.json's scripts"]
+    ];
+    for (const [changedSkill, problem] of cases) assert.ok(problems(changedSkill).includes(problem), `${problem}: ${problems(changedSkill).join('; ')}`);
+    // A file git still lists that is gone from the folder.
+    assert.deepEqual(problems(skill('release'), (file) => file !== 'scripts/release.js'), ["scripts/release.js isn't in the repository"]);
   });
 
-  test('name only headings that are there', () => {
-    let count = 0;
-    for (const { name, body } of skills) {
-      for (const [, file, heading] of body.matchAll(/`([\w./-]+\.md)`\s+\("([^"]+)"\)/g)) {
-        count += 1;
-        assert.ok(read(file).split('\n').some((line) => /^#{1,6} /.test(line) && line.replace(/^#+ /, '') === heading), `${name}: ${file} has no heading "${heading}"`);
-      }
-    }
-    assert.ok(count >= 5, `only ${count} headings were found to check`);
+  test('send their reader to npm run checks:for for which checks a change needs', () => {
+    for (const { name, body } of skills) assert.ok(coded(body).some((text) => /^npm run checks:for\b/.test(text)), name);
   });
 
   test('the audio run uses the map\'s commands, and asks before the one that plays sound', () => {
-    const { body } = skills.find(({ name }) => name === 'mac-audio-run');
+    const { body } = skill('mac-audio-run');
     const commands = readMap().checks['audio-mac'].run;
     assert.deepEqual(commands, ['AUDIO_REGRESSION_MUTE=1 npm run test:audio:chromium', 'npm run test:audio:firefox']);
-    for (const command of commands) assert.ok(named(body).includes(command), command);
+    for (const command of commands) assert.ok(coded(body).includes(command), command);
     assert.ok(body.indexOf('Ask the owner') !== -1 && body.indexOf('Ask the owner') < body.indexOf('npm run test:audio:firefox\n```'), 'the question comes before the Firefox run');
   });
 
   test('leave the uploads and the merges to the owner', () => {
-    const body = (wanted) => skills.find(({ name }) => name === wanted).body;
-    assert.match(body('release'), /Never upload to a store/);
-    assert.match(body('store-assets'), /Uploading to a store\s+is the owner's; never do it/);
-    assert.match(body('land-dependabot'), /Ask the owner\*\* for permission to merge/);
+    assert.match(skill('release').body, /Never upload to a store/);
+    assert.match(skill('store-assets').body, /Uploading to a store\s+is the owner's; never do it/);
+    assert.match(skill('land-dependabot').body, /Ask the owner\*\* for permission to merge/);
   });
 });

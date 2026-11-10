@@ -1,6 +1,6 @@
 ---
 name: popup-change
-description: Steps for changing the extension's popup (extension/popup.html, popup.css, popup.js) or the settings it shows (extension/settings.js). Covers the website's copy, the layout tests and their states, rendering the popup to look at it, and the checks by hand a popup change can need. Use when adding or changing a control, a setting, a notice, a panel, a theme, the popup's text or its styles.
+description: Steps for changing the extension's popup (extension/popup.html, extension/popup.css, extension/popup.js) or the settings it shows (extension/settings.js). Covers the website's copy, the layout tests and their states, rendering the popup to look at it, and the checks by hand a popup change can need. Use when adding or changing a control, a setting, a notice, a panel, a theme, the popup's text or its styles.
 ---
 
 # Changing the popup
@@ -14,16 +14,19 @@ are in `AGENTS.md` ("Rules"). These are the steps around a change.
    the builds. The mark in the popup's header, between `<!-- icon:start -->`
    and `<!-- icon:end -->`, is made by `npm run icons` from
    `scripts/render-icons.js`.
-2. **Copy the popup into the website:** `npm run site:popup`. In Claude Code
-   and Codex a hook runs it after each edit to the popup's files or to
-   `extension/settings.js`; run it yourself after a change made any other
-   way. Commit `site/popup/` with the source. The tests fail while the copy
-   is out of date.
-3. **A new setting** goes in `extension/settings.js`, in the copies of the
-   defaults and ranges in `extension/youtube-main.js`,
-   `extension/spotify-main.js` and `extension/spotify-bridge.js` (a test
-   keeps them equal), in the popup's controls, and in the audio graphs of
-   both engines.
+2. **Copy the popup into the website:** `npm run site:popup`. Where the
+   agents' hooks are loaded, one runs it after each edit to the popup's
+   files or to `extension/settings.js` and says which files it changed;
+   `AGENTS.md` ("Generated files") says where that is, which for Claude
+   Code is only a session started at the checkout's root. Run it yourself
+   when no hook said so, or after a change made any other way. Commit
+   `site/popup/` with the source. The tests fail while the copy is out of
+   date.
+3. **A new setting** goes in `extension/settings.js`; in the copies of the
+   defaults and ranges in `extension/youtube-main.js` and
+   `extension/spotify-main.js`, and of the defaults in
+   `extension/spotify-bridge.js` (a test keeps the copies equal); in the
+   popup's controls; and in the audio graphs of both engines.
 4. **A new state that changes the layout** (a notice, a panel, a tab, a long
    name) gets an entry in `STATES` in `e2e/ui/popup-layout.spec.js`. A
    layout defect you fix gets a control there, so the test fails when the
