@@ -18,7 +18,19 @@ on:
       - 'e2e/extension-copy.js'
       # Both suites start Firefox through it.
       - 'e2e/firefox-launch.js'
-      - 'extension/**'
+      # The files of the extension that can reach the sound the suites
+      # record: the background script, the content scripts, the engines,
+      # the settings they load and the manifest, which decides what is
+      # injected where. Not the popup's files or the icons: the suites
+      # drive the background script themselves and never open the popup
+      # (tests/audio-workflow.test.js checks both).
+      - 'extension/background.js'
+      - 'extension/content.js'
+      - 'extension/manifest.json'
+      - 'extension/settings.js'
+      - 'extension/spotify-bridge.js'
+      - 'extension/spotify-main.js'
+      - 'extension/youtube-main.js'
       - 'package.json'
       - 'package-lock.json'
       # The suites' server reads its request targets with this.

@@ -47,11 +47,18 @@ covers the features and development commands in full.
   request; a run that passes later doesn't cancel it, and an accepted
   failure still needs a passing run before the merge. A change only to
   documentation, such as the suite's README, doesn't need the runs. The
-  audio workflow isn't a required check, so this is followed by hand. Listen to how the effect sounds (reverb,
+  audio workflow isn't a required check, so this is followed by hand. It
+  starts by itself for a pull request that changes an engine, a content
+  script, the background script, `settings.js` (the content and background
+  scripts load it), the manifest, the suite or what the suite runs on, and
+  not for the popup's files or the icons: the suites drive the background
+  script themselves and never open the popup, so a change there can't
+  change what they record. Listen to how the effect sounds (reverb,
   echo, EQ, width, saturation, with music) after any change that can affect
   it, such as the audio graph's wiring, an effect's code, gains, fades,
-  presets or defaults, not only after a change of values: the suite keeps
-  echo, saturation and EQ neutral. `npm run test:audio-trial:chromium` and
+  presets or defaults, or what the popup sends to the tab and how often,
+  not only after a change of values: the suite keeps echo, saturation and
+  EQ neutral. `npm run test:audio-trial:chromium` and
   `npm run test:audio-trial:firefox` are the experiment the suite is built
   on. All four are described in `e2e/audio-capture/README.md`. They aren't
   part of `npm run check`, CI's required check or releases, and they need a

@@ -5,12 +5,15 @@
 // time to upload the evidence whichever step runs out of time, judged by
 // GitHub's rules for which steps run after a failure, that each job runs
 // its browser's suite and then its trial, that the nightly runs ask for the
-// Firefox releases BASELINE.md needs, and that the workflow runs for a
-// change to any file the audio suites load.
+// Firefox releases BASELINE.md needs, that the workflow runs for a change to
+// any file the audio suites load, and that of the extension's files it runs
+// for those that can reach the sound and leaves out the popup's and the
+// icons, which the suites never open.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { describe, test } = require('node:test');
 
 const { root } = require('./helpers/load-script');
@@ -164,6 +167,87 @@ function stepRuleProblems(text) {
   return problems;
 }
 
+// The workflow's paths.
+const FILTERS = [...workflow.matchAll(/^ {6}- '([^']+)'$/gm)].map((match) => match[1]);
+
+function covered(file, filters = FILTERS) {
+  return filters.some((filter) => (filter.endsWith('/**') ? file.startsWith(filter.slice(0, -2)) : file === filter));
+}
+
+// Every local module reached from the suites' entry points.
+function suiteModules() {
+  const entries = ['chromium-regression.js', 'firefox-regression.js', 'chromium-trial.js', 'firefox-trial.js'];
+  const seen = new Set();
+  const visit = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    const source = fs.readFileSync(path.join(root, file), 'utf8');
+    for (const [, request] of source.matchAll(/require\('(\.{1,2}\/[^']+)'\)/g)) {
+      let target = path.relative(root, path.resolve(path.dirname(path.join(root, file)), request));
+      if (!target.endsWith('.js') && !target.endsWith('.json')) target += '.js';
+      visit(target.split(path.sep).join('/'));
+    }
+  };
+  for (const entry of entries) visit(`e2e/audio-capture/${entry}`);
+  return [...seen];
+}
+
+// The extension's files git tracks, so a file the system leaves in the
+// folder doesn't count.
+function extensionFiles() {
+  return execFileSync('git', ['ls-files', '-z', '--', 'extension'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
+}
+
+// The extension's files the workflow doesn't run for: the popup's page with
+// its script and styles, and the toolbar's icons. The suites ask the
+// background script for what the popup's message would (harness.js), so
+// they never load these, and a change to them can't change a recording.
+// Every other file of the extension can reach the sound.
+const NOT_RECORDED = [/^extension\/popup\.(?:css|html|js)$/, /^extension\/assets\//];
+
+// What is wrong with how the workflow's paths split the extension's files:
+// one that can reach the sound and isn't in them, a new file included, or
+// one the suites never load that is.
+function extensionPathProblems(files, filters) {
+  const problems = [];
+  for (const file of files) {
+    const left = NOT_RECORDED.some((pattern) => pattern.test(file));
+    const runs = covered(file, filters);
+    if (left && runs) problems.push(`the audio workflow runs for ${file}, which the suites never load`);
+    if (!left && !runs) {
+      problems.push(`${file} isn't the popup's or an icon, so it can reach the sound, but the audio workflow doesn't run for it`);
+    }
+  }
+  return problems;
+}
+
+// The lines of these files that match, as "file:line".
+function linesNaming(sources, pattern) {
+  return Object.entries(sources).flatMap(([file, text]) =>
+    text.split('\n').flatMap((line, index) => {
+      const match = pattern.exec(line);
+      return match ? [{ where: `${file}:${index + 1}`, name: match[0] }] : [];
+    })
+  );
+}
+
+// Where the suites' own files name the popup's page or ask the browser to
+// open it. They may patch popup.js in their copy of the build
+// (extension-copy.js); they may not load it.
+function popupUses(sources) {
+  return linesNaming(sources, /popup\.html|openPopup/).map(
+    ({ where }) => `${where} names the popup's page; if the suites open the popup, its files belong in the audio workflow's paths`
+  );
+}
+
+// Where the extension's other files name the popup's script or styles,
+// which only the popup's page may load.
+function popupLoads(sources) {
+  return linesNaming(sources, /popup\.(?:css|js)\b/).map(
+    ({ where, name }) => `${where} names ${name}; if it runs outside the popup's page, the popup's files belong in the audio workflow's paths`
+  );
+}
+
 const job = jobText('linux');
 const SETUP = { chromium: 24, firefox: 14 };
 
@@ -308,27 +392,68 @@ describe('the audio workflow', () => {
   });
 
   test('runs for a change to any file the audio suites load or the workflow runs', () => {
-    const filters = [...workflow.matchAll(/^ {6}- '([^']+)'$/gm)].map((match) => match[1]);
-    const covered = (file) =>
-      filters.some((filter) => (filter.endsWith('/**') ? file.startsWith(filter.slice(0, -2)) : file === filter));
-    // Every local module reached from the suites' entry points.
-    const entries = ['chromium-regression.js', 'firefox-regression.js', 'chromium-trial.js', 'firefox-trial.js'];
-    const seen = new Set();
-    const visit = (file) => {
-      if (seen.has(file)) return;
-      seen.add(file);
-      const source = fs.readFileSync(path.join(root, file), 'utf8');
-      for (const [, request] of source.matchAll(/require\('(\.{1,2}\/[^']+)'\)/g)) {
-        let target = path.relative(root, path.resolve(path.dirname(path.join(root, file)), request));
-        if (!target.endsWith('.js') && !target.endsWith('.json')) target += '.js';
-        visit(target.split(path.sep).join('/'));
-      }
-    };
-    for (const entry of entries) visit(`e2e/audio-capture/${entry}`);
+    const seen = new Set(suiteModules());
     assert.ok(seen.has('e2e/firefox-launch.js'));
     // And every script a step runs.
     const scripts = [...workflow.matchAll(/\b(scripts\/[\w.-]+\.(?:js|sh))\b/g)].map((match) => match[1]);
     assert.ok(scripts.includes('scripts/firefox-release.js'));
     for (const file of [...seen, ...scripts]) assert.ok(covered(file), `${file} is used by the audio workflow but not in its paths`);
+  });
+
+  test("runs for the extension's files that can reach the sound, and not for the popup's or the icons", () => {
+    const files = extensionFiles();
+    for (const file of ['extension/settings.js', 'extension/manifest.json', 'extension/popup.js', 'extension/assets/icon128.png']) {
+      assert.ok(files.includes(file), `git ls-files didn't list ${file}`);
+    }
+    assert.deepEqual(extensionPathProblems(files, FILTERS), []);
+    // The reasons the popup's files are left out: the suites don't open the
+    // popup, and nothing but the popup's page loads its script and styles.
+    const sources = Object.fromEntries(suiteModules().map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]));
+    assert.deepEqual(popupUses(sources), []);
+    const others = Object.fromEntries(
+      files
+        .filter((file) => /\.(?:js|json)$/.test(file) && file !== 'extension/popup.js')
+        .map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')])
+    );
+    assert.deepEqual(popupLoads(others), []);
+  });
+
+  test("finds a file of the extension on the wrong side of the workflow's paths", () => {
+    const files = extensionFiles();
+    // A file that reaches the sound taken out, and a new file nobody placed.
+    assert.deepEqual(extensionPathProblems(files, FILTERS.filter((filter) => filter !== 'extension/settings.js')), [
+      "extension/settings.js isn't the popup's or an icon, so it can reach the sound, but the audio workflow doesn't run for it"
+    ]);
+    assert.deepEqual(extensionPathProblems([...files, 'extension/pitch-main.js'], FILTERS), [
+      "extension/pitch-main.js isn't the popup's or an icon, so it can reach the sound, but the audio workflow doesn't run for it"
+    ]);
+    // The whole folder again, as it was: the popup's files and every icon.
+    const whole = extensionPathProblems(files, [...FILTERS, 'extension/**']);
+    assert.equal(whole.length, files.filter((file) => NOT_RECORDED.some((pattern) => pattern.test(file))).length);
+    assert.ok(whole.includes("the audio workflow runs for extension/popup.css, which the suites never load"), whole.join('\n'));
+    assert.ok(whole.length > 3);
+  });
+
+  test("finds a suite that opens the popup, or a script that loads the popup's files", () => {
+    assert.deepEqual(
+      popupUses({
+        'e2e/audio-capture/harness.js': "// Opens the page.\nawait page.goto(`chrome-extension://${id}/popup.html`);\n",
+        'e2e/extension-copy.js': "await worker.evaluate(() => chrome.action.openPopup());\n['popup.js', 'youTubePermissionFor']\n"
+      }),
+      [
+        "e2e/audio-capture/harness.js:2 names the popup's page; if the suites open the popup, its files belong in the audio workflow's paths",
+        "e2e/extension-copy.js:1 names the popup's page; if the suites open the popup, its files belong in the audio workflow's paths"
+      ]
+    );
+    assert.deepEqual(
+      popupLoads({
+        'extension/background.js': "await api.scripting.executeScript({ target: { tabId }, files: ['popup.js'] });\n",
+        'extension/manifest.json': '{ "action": { "default_popup": "popup.html" }, "web_accessible_resources": ["popup.css"] }\n'
+      }),
+      [
+        "extension/background.js:1 names popup.js; if it runs outside the popup's page, the popup's files belong in the audio workflow's paths",
+        "extension/manifest.json:1 names popup.css; if it runs outside the popup's page, the popup's files belong in the audio workflow's paths"
+      ]
+    );
   });
 });

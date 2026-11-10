@@ -120,6 +120,24 @@ request's runs) isn't counted, even if the commit is merged later.
   but no longer need a runner of their own; and nightly runs build the
   hosted count without anyone starting them. The change touches what the
   workflow runs for, so every setup's count starts again after its merge.
+- **November 10, 2026:** of the extension's files, the workflow now runs
+  only for those that can reach the sound a run records: the background
+  script, the content scripts (`content.js`, `spotify-bridge.js`), the
+  engines, `settings.js` and the manifest. It no longer runs for the
+  popup's files (`popup.html`, `popup.js`, `popup.css`) or the icons
+  (`extension/assets/`), so a merge that changes only those no longer
+  starts the counts again. Why: the suites ask the background script for
+  what the popup's message would and never open the popup, and nothing but
+  the popup's page loads its script and styles, so such a change can't
+  change a recording, and the runs before and after it measure the same
+  thing. `settings.js` stays because the background script and every
+  injection of `content.js` load it, and the manifest because it decides
+  what is injected where. A test fails if the suites start opening the
+  popup or a new file of the extension is in neither group
+  (`tests/audio-workflow.test.js`). The owner asked the agent session
+  planning the work to decide this, and it did, on that day. The change
+  touches the workflow's own file, so every setup's count starts again
+  after its merge.
 
 ## Records
 
