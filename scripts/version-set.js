@@ -157,11 +157,17 @@ const changelogEntry = {
   problem(file, text, version) {
     const start = text.indexOf(`<h2>${version} `);
     if (start < 0) return `${file} has no entry for ${version}`;
+    // The entry's pieces after its heading, up to the tag that ends it: a
+    // comment, a tag, or the words between them. Read in order, so that what
+    // looks like a tag inside a comment or an attribute isn't taken for one.
     const body = text.slice(start).replace(/^<h2>[\s\S]*?<\/h2>/, '');
-    const entry = body.slice(0, /<\/section>|<h2>/.exec(body)?.index);
-    // The entry's pieces: a comment, a tag, or the words between them.
-    const words = [...entry.matchAll(/<!--[\s\S]*?-->|<[^>]*>|([^<]+)/g)].some((piece) => piece[1]?.trim());
-    return NOTES_COMMENT.test(entry) || !words ? changelogNotesProblem(file, version) : null;
+    let [words, placeholder] = [false, false];
+    for (const [piece] of body.matchAll(/<!--[\s\S]*?-->|<(?:[^>"']|"[^"]*"|'[^']*')*>|[^<]+|</g)) {
+      if (piece.startsWith('<!--')) placeholder ||= NOTES_COMMENT.test(piece);
+      else if (/^<(\/section|h2)\b/i.test(piece)) break;
+      else if (!piece.startsWith('<')) words ||= piece.trim() !== '';
+    }
+    return placeholder || !words ? changelogNotesProblem(file, version) : null;
   },
   write(file, text, version, { today }) {
     // An entry someone wrote ahead of the bump stays as it is.
@@ -184,16 +190,21 @@ const changelogEntry = {
   }
 };
 
-// A paragraph's words on lines of at most width characters.
-function wrapWords(paragraph, width) {
+// A paragraph's words on lines of at most width characters, ended by eol.
+function wrapWords(paragraph, width, eol) {
   const lines = [];
   for (const word of paragraph.split(/\s+/).filter(Boolean)) {
     const last = lines.length - 1;
     if (last >= 0 && lines[last].length + 1 + word.length <= width) lines[last] += ` ${word}`;
     else lines.push(word);
   }
-  return lines.join('\n');
+  return lines.join(eol);
 }
+
+// The empty line between two paragraphs, which may hold spaces.
+const BLANK_LINE = /\r?\n[ \t]*\r?\n/;
+// A line that starts a heading, a quote, a list item, code or a table.
+const MARKDOWN_BLOCK = /^[ \t]*(#|>|[-*+][ \t]|\d+\.[ \t]|```|\|)/m;
 
 // "a, b and c", or with oxford "a, b, and c".
 function listed(items, oxford) {
@@ -225,10 +236,15 @@ function policyVersions(file, [wordsBefore, wordsAfter], list, width) {
       const [before, after] = [text.slice(0, found.index), text.slice(found.index + found[0].length)];
       const written = `${found[1]}${list([...versions, version])}${found[3]}`;
       if (!width) return before + written + after;
-      const [gapBefore, gapAfter] = [before.lastIndexOf('\n\n'), after.indexOf('\n\n')];
-      const start = gapBefore < 0 ? 0 : gapBefore + 2;
-      const end = gapAfter < 0 ? after.length : gapAfter;
-      return before.slice(0, start) + wrapWords(before.slice(start) + written + after.slice(0, end), width) + after.slice(end);
+      const breaks = [...before.matchAll(new RegExp(BLANK_LINE, 'g'))];
+      const start = breaks.length ? breaks.at(-1).index + breaks.at(-1)[0].length : 0;
+      const end = BLANK_LINE.exec(after)?.index ?? after.length;
+      const paragraph = before.slice(start) + written + after.slice(0, end);
+      if (MARKDOWN_BLOCK.test(paragraph)) {
+        throw new VersionError(`${file}: the versions aren't named in a plain paragraph, so it can't be wrapped again`);
+      }
+      const wrapped = wrapWords(paragraph, width, text.includes('\r\n') ? '\r\n' : '\n');
+      return before.slice(0, start) + wrapped + /\s*$/.exec(paragraph)[0] + after.slice(end);
     }
   };
 }
@@ -289,20 +305,33 @@ function listProblems(problems) {
 
 // Puts each new text in place of its file in directory, all of them or none.
 // Everything is written first, to a folder of its own beside them: each new
-// text, and a copy of each file as it is. Only then are the files replaced,
-// by renaming, which writes no data, so a disk that has stopped taking writes
-// is found out before any file is touched. If a rename fails, the copies are
-// renamed back; if that fails too, the folder is kept and named, with every
-// file as it was in it.
+// text, with its file's permissions, and a copy of each file as it is. Only
+// then are the files replaced, by renaming, which writes no data, so a disk
+// that has stopped taking writes is found out before any file is touched. If
+// a rename fails, each file already replaced is renamed back from its copy;
+// one that can't be is named in the error, and the folder is kept with its
+// copy in it. Returns the folder if it couldn't be removed afterward, which
+// doesn't undo a bump that was written, or null.
 function replaceFiles(directory, changed, io) {
   let stage;
   const replaced = [];
+  const leftover = () => {
+    try {
+      io.rmSync(stage, { recursive: true, force: true });
+      return null;
+    } catch {
+      return stage;
+    }
+  };
   try {
     stage = io.mkdtempSync(path.join(directory, '.version-set-'));
     const staged = changed.map(([file, text], index) => {
       const item = { file, target: path.join(directory, file), next: path.join(stage, `${index}.new`), kept: path.join(stage, `${index}.old`) };
       io.copyFileSync(item.target, item.kept);
-      io.writeFileSync(item.next, text, { mode: io.statSync(item.target).mode });
+      io.writeFileSync(item.next, text);
+      // Set afterward: the permissions a file is created with are cut down
+      // by the umask.
+      io.chmodSync(item.next, io.statSync(item.target).mode & 0o7777);
       return item;
     });
     for (const item of staged) {
@@ -310,25 +339,36 @@ function replaceFiles(directory, changed, io) {
       replaced.push(item);
     }
   } catch (error) {
-    try {
-      for (const item of replaced) io.renameSync(item.kept, item.target);
-    } catch (restoring) {
-      const names = replaced.map((item) => `  ${item.file} (${path.basename(item.kept)})`).join('\n');
+    const stuck = replaced.filter((item) => {
+      try {
+        io.renameSync(item.kept, item.target);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    if (stuck.length) {
+      const names = stuck.map((item) => `  ${item.file} (kept as ${path.basename(item.kept)})`).join('\n');
       throw new Error(
-        `Writing stopped (${error.message}) and the files already changed couldn't be put back (${restoring.message}). ` +
-          `They are kept as they were in ${stage}:\n${names}`,
+        `Writing stopped (${error.message}), and these have the new version and couldn't be put back. ` +
+          `Each is kept as it was in ${stage}; copy it back by hand:\n${names}`,
         { cause: error }
       );
     }
-    if (stage) io.rmSync(stage, { recursive: true, force: true });
-    throw new VersionError(`The files couldn't be written: ${error.message}`, { cause: error });
+    const folder = stage && leftover();
+    throw new VersionError(`The files couldn't be written: ${error.message}${folder ? `\n${leftoverNote(folder)}` : ''}`, { cause: error });
   }
-  io.rmSync(stage, { recursive: true, force: true });
+  return leftover();
+}
+
+function leftoverNote(folder) {
+  return `The folder ${folder}, used while writing, couldn't be removed. Remove it by hand.`;
 }
 
 // Writes the bump to version in the repository at directory, or throws having
-// changed nothing. Returns the version it replaced, the files it changed and
-// whether the changelog's entry still needs its release notes.
+// changed nothing (replaceFiles has the one exception). Returns the version it
+// replaced, the files it changed, whether the changelog's entry still needs
+// its release notes, and the folder used for writing if it is still there.
 function setVersion({ directory = root, version, today = new Date(), io = fs }) {
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version ?? '')) {
     throw new VersionError(`Give the new version as three numbers, like 1.3.0${version ? `, not "${version}"` : ''}.`);
@@ -356,12 +396,12 @@ function setVersion({ directory = root, version, today = new Date(), io = fs }) 
   }
 
   const changed = [...texts].filter(([file, text]) => text !== read(file));
-  replaceFiles(directory, changed, io);
-  return { current, version, files: changed.map(([file]) => file), notesLeft: left.includes(notes) };
+  const leftover = replaceFiles(directory, changed, io);
+  return { current, version, files: changed.map(([file]) => file), notesLeft: left.includes(notes), leftover };
 }
 
 // What the command prints once the bump is written.
-function report({ current, version, files, notesLeft }) {
+function report({ current, version, files, notesLeft, leftover }) {
   const steps = [
     notesLeft
       ? `Write the release notes in site/changelog.html, in place of the ${NOTES_MARKER} comment in the entry for ${version}. ` +
@@ -379,7 +419,8 @@ function report({ current, version, files, notesLeft }) {
     'Left to do by hand:',
     ...steps.map((step, index) => `  ${index + 1}. ${step}`),
     '',
-    'Building the packages comes after the merge: npm run release -- <commit> (AGENTS.md, "Releases").'
+    'Building the packages comes after the merge: npm run release -- <commit> (AGENTS.md, "Releases").',
+    ...(leftover ? ['', leftoverNote(leftover)] : [])
   ].join('\n');
 }
 

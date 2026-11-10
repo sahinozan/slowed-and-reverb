@@ -168,8 +168,8 @@ entries of `package-lock.json`, `VERSION` in `extension/content.js`,
 entry in `site/changelog.html`, and the version line in `PRIVACY.md` and
 `site/privacy.html`. `npm run version:set -- X.Y.Z` writes all of these, or
 nothing if it can't write them all, and prints what is left to do by hand:
-the release notes, in place of the TODO in the changelog entry it adds (the
-tests fail until they are written), and the Firefox release notes in
+the release notes, in place of the TODO comment in the changelog entry it
+adds (the tests fail until they are written), and the Firefox release notes in
 `store-assets/LISTING.md`. What a bump touches is listed once, as `PLACES`
 in `scripts/version-set.js`, which the release's check reads too, so a new
 place goes there. The scripts compare their own `VERSION`s rather than the
