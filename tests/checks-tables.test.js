@@ -1,0 +1,136 @@
+'use strict';
+
+// Checks that the tables made from checks.json, in AGENTS.md and
+// RELEASE-CHECKLIST.md, are up to date, and what they are made of.
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { describe, test } = require('node:test');
+const { readMap } = require('../scripts/classify-ci-changes');
+const { END, START, agentsTables, checklistItems, renderAll, withTables } = require('../scripts/render-checks-tables');
+
+const { root } = require('./helpers/load-script');
+
+const source = fs.readFileSync(path.join(root, 'checks.json'), 'utf8');
+const map = readMap(source);
+
+// The map with one change.
+function changed(change) {
+  const copy = JSON.parse(source);
+  change(copy);
+  return readMap(JSON.stringify(copy));
+}
+
+describe('the tables made from the map of checks', () => {
+  test('are up to date in AGENTS.md and RELEASE-CHECKLIST.md', () => {
+    const files = renderAll(map);
+    assert.deepEqual(files.map(({ file }) => file), ['AGENTS.md', 'RELEASE-CHECKLIST.md']);
+    for (const { file, before, after } of files) {
+      // Compared as a yes or no: a failed comparison of the texts would
+      // print both files whole.
+      assert.ok(after === before, `${file} is out of date; run npm run checks:tables`);
+    }
+  });
+
+  test('a change to the map leaves them out of date', () => {
+    const later = renderAll(changed((copy) => copy.rules.find((rule) => rule.paths.includes('extension/popup.css')).needs.push('listen')));
+    for (const { file, before, after } of later) assert.ok(after !== before, `${file} didn't follow the map`);
+    const renamed = renderAll(changed((copy) => (copy.checks.ui.about = 'The popup.')));
+    assert.ok(renamed[0].after !== renamed[0].before);
+    // The checklist has only the checks a person does when their condition
+    // holds.
+    assert.ok(renamed[1].after === renamed[1].before);
+  });
+
+  test('AGENTS.md lists every check, and what each rule needs, in the map\'s order', () => {
+    const lines = agentsTables(map).split('\n');
+    const names = Object.keys(map.checks);
+    assert.deepEqual(
+      lines.slice(2, 2 + names.length).map((line) => /^\| `([\w-]+)` \| /.exec(line)?.[1]),
+      names
+    );
+    assert.equal(lines[2 + names.length], '');
+    assert.equal(lines[3 + names.length], '| A change to | Needs, besides `repo` |');
+    const rows = lines.slice(5 + names.length);
+    assert.equal(rows.length, map.rules.length + 1);
+    map.rules.forEach((rule, index) => {
+      const [, paths, needs] = /^\| (.*) \| (.*) \|$/.exec(rows[index]);
+      assert.equal(paths, rule.paths.map((pattern) => `\`${pattern}\``).join(', '));
+      const more = rule.needs.filter((name) => name !== 'repo');
+      assert.equal(needs, more.length ? more.map((name) => `\`${name}\``).join(', ') : 'nothing more');
+    });
+    assert.equal(rows.at(-1), '| any other path | `extension`, `ui`, `site`, and a rule in `checks.json` |');
+    assert.match(lines[2], /^\| `repo` \| CI's required check \| `npm run check`\. /);
+    assert.ok(lines.some((line) => line.startsWith('| `audio-hosted` | its own workflow (`audio-capture-trial.yml`) | ')));
+    assert.ok(lines.some((line) => line.startsWith("| `firefox-frame-look` | by hand, when the popup's frame changed in CSS | ")));
+  });
+
+  test('the release checklist has an item for each check done by hand when its condition holds', () => {
+    const items = checklistItems(map).split('\n');
+    const conditional = Object.entries(map.checks).filter(([, check]) => check.by === 'hand' && check.when);
+    assert.deepEqual(conditional.map(([name]) => name), ['listen', 'firefox-frame-look', 'permission-steps', 'store-art-look']);
+    assert.equal(items.length, conditional.length);
+    assert.match(items[0], /^- \[ \] \*\*A change can affect how the effect sounds\*\* \(the audio graph's wiring, /);
+    assert.match(items[0], /\(the limiter stage\)\. It can happen in a change to `extension\/spotify-main\.js`, /);
+    assert.equal(
+      items[1],
+      "- [ ] **The popup's frame changed in CSS**. Look at the real popup in Firefox, with its rounded panel corners. It can happen in a change to `extension/popup.css`."
+    );
+    assert.match(items[2], /^- \[ \] \*\*The permission code changed\*\* \(the manifest's permissions, .*`extension\/manifest\.json`/);
+    assert.match(items[3], /^- \[ \] \*\*There is new store art\*\*\. .* It can happen in a change to `store-assets\/\*\*`\.$/);
+  });
+
+  test('writes only between the two marker lines, which have to be there once each', () => {
+    const text = `Before.\n\n${START}\nold\nold\n${END}\n\nAfter.\n`;
+    assert.equal(withTables(text, 'new'), `Before.\n\n${START}\nnew\n${END}\n\nAfter.\n`);
+    assert.equal(withTables(withTables(text, 'new'), 'new'), withTables(text, 'new'));
+    // A file that doesn't end with a line break keeps that.
+    assert.equal(withTables(`${START}\nold\n${END}`, 'new'), `${START}\nnew\n${END}`);
+    for (const broken of [
+      'No markers.\n',
+      `${START}\nold\n`,
+      `old\n${END}\n`,
+      `${END}\nold\n${START}\n`,
+      `${START}\nold\n${END}\n${START}\nold\n${END}\n`,
+      // A marker that isn't a line by itself, or with another kind of line end.
+      `See ${START}\nold\n${END}\n`,
+      `${START}\nold\n${END} and more\n`,
+      `${START}\r\nold\r\n${END}\r\n`
+    ]) {
+      assert.throws(() => withTables(broken, 'new'), /expected the two marker lines, once each and in order/, broken);
+    }
+  });
+
+  test('keeps any text the map may hold on one line of a table or a list', () => {
+    const odd = changed((copy) => {
+      copy.checks.listen.when = 'the sound(effect) changed\n  or a | bar';
+      copy.checks.listen.steps = 'Listen.\nThen listen again.';
+      copy.checks.ui.about = 'The popup,\nand a | bar.';
+    });
+    const tables = agentsTables(odd).split('\n');
+    assert.equal(tables.length, agentsTables(map).split('\n').length);
+    assert.ok(tables.includes('| `ui` | CI\'s required check | `npm run test:ui`. The popup, and a \\| bar. |'));
+    assert.ok(tables.some((line) => line.startsWith('| `listen` | by hand, when the sound(effect) changed or a \\| bar | ')));
+    const items = checklistItems(odd).split('\n');
+    assert.equal(items.length, checklistItems(map).split('\n').length);
+    assert.match(items[0], /^- \[ \] \*\*The sound\(effect\) changed or a \| bar\*\*\. Listen\. Then listen again\. It can happen in a change to /);
+  });
+
+  // Run with --check, which writes nothing: a test shouldn't put the files
+  // right while another is failing because they are out of date.
+  test('the command can say whether the files are up to date without writing them', () => {
+    const script = path.join(root, 'scripts', 'render-checks-tables.js');
+    const before = renderAll(map).map(({ before }) => before);
+    const result = spawnSync(process.execPath, [script, '--check'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stdout, 'AGENTS.md: already up to date\nRELEASE-CHECKLIST.md: already up to date\n');
+    assert.ok(renderAll(map).every(({ before: now }, index) => now === before[index]));
+    const unexpected = spawnSync(process.execPath, [script, '--force'], { encoding: 'utf8' });
+    assert.equal(unexpected.status, 2);
+    assert.equal(unexpected.stdout, '');
+    const { scripts } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    assert.equal(scripts['checks:tables'], 'node scripts/render-checks-tables.js');
+  });
+});

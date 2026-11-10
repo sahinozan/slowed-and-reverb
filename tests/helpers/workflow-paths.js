@@ -16,10 +16,12 @@ function trackedFiles(folder = '.') {
 
 // The paths: of one of a workflow's triggers, as written. It is read
 // strictly: the trigger has to be there, with one paths: list of
-// single-quoted patterns below it and no paths-ignore:. Anything else
-// throws, so a path this didn't see (an item quoted another way, a list
-// written on one line) can't start or stop the workflow unnoticed.
-function workflowPaths(text, trigger) {
+// single-quoted patterns below it, no paths-ignore:, and no other key but
+// those named in `also` (a filter on branches or on the kind of event
+// would narrow what starts the workflow too). Anything else throws, so a
+// path this didn't see (an item quoted another way, a list written on one
+// line) can't start or stop the workflow unnoticed.
+function workflowPaths(text, trigger, { also = [] } = {}) {
   const lines = text.split('\n');
   const on = lines.indexOf('on:');
   if (on === -1) throw new Error("the workflow has no on: block this can read");
@@ -39,6 +41,8 @@ function workflowPaths(text, trigger) {
   if (at === -1 || own.filter((line) => /^ {4}paths\b/.test(line)).length !== 1) {
     throw new Error(`${trigger} needs one paths: list, written as a list below its key`);
   }
+  const other = own.find((line) => /^ {4}\S/.test(line) && !line.startsWith('    #') && line !== '    paths:' && !also.includes(line.trim()));
+  if (other) throw new Error(`${trigger} has "${other.trim()}", which can narrow what starts the workflow`);
   const found = [];
   for (const line of own.slice(at + 1)) {
     if (line.trim() === '' || /^\s*#/.test(line)) continue;

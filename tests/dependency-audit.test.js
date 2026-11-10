@@ -750,7 +750,8 @@ describe('dependency audit workflow', () => {
   }
 
   // The files listed under an event's paths:, as written.
-  const paths = (trigger) => workflowPaths(workflow, trigger);
+  // A push runs it on main only; a pull request has no other filter.
+  const paths = (trigger) => workflowPaths(workflow, trigger, { also: trigger === 'push' ? ['branches: [main]'] : [] });
 
   test('runs the audit weekly, by hand and for dependency changes, with read-only access', () => {
     assert.match(workflow, /^ {2}schedule:\n {4}- cron: '[^']+'$/m);
@@ -765,6 +766,11 @@ describe('dependency audit workflow', () => {
     }
     assert.equal(workflow.match(/^ {4}paths:$/gm).length, 2);
     assert.doesNotMatch(workflow, /paths-ignore|pull_request_target/);
+    // A filter that would keep pull requests from starting it is found.
+    assert.throws(
+      () => workflowPaths(workflow.replace('  pull_request:\n', '  pull_request:\n    branches: [never-a-real-target]\n'), 'pull_request'),
+      /pull_request has "branches: \[never-a-real-target\]", which can narrow what starts the workflow/
+    );
     // A path taken out of the workflow is found.
     assert.deepEqual(workflowPathProblems(files, paths('push').filter((file) => file !== '.npmrc'), map, 'dependency-audit'), [
       "checks.json gives .npmrc dependency-audit, but it isn't in the workflow's paths",

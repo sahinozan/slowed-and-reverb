@@ -225,7 +225,12 @@
     },
     {
       "about": "Not sorted yet. Nothing shows the browser tests use these, but CI ran them for these before this map, as for any path it didn't know, and still does.",
-      "paths": [".claude/launch.json", "scripts/check-whitespace.js", "scripts/node-test-results.js"],
+      "paths": [
+        ".claude/launch.json",
+        "scripts/check-whitespace.js",
+        "scripts/node-test-results.js",
+        "scripts/render-checks-tables.js"
+      ],
       "needs": ["repo", "extension", "ui", "site"]
     }
   ]

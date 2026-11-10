@@ -454,6 +454,9 @@ describe('the audio workflow', () => {
     refused(workflow.replace('    paths:\n', "    paths-ignore:\n      - 'site/**'\n    paths:\n"), /has a paths-ignore/);
     refused(workflow.replace('  pull_request:\n', '  push:\n'), /doesn't start for pull_request/);
     refused(workflow.replace(/ {4}paths:\n(?: {6}.*\n)+/, '    paths:\n'), /paths: list is empty/);
+    // The same list, narrowed by another filter on the event.
+    refused(workflow.replace('    paths:\n', '    branches: [release]\n    paths:\n'), /pull_request has "branches: \[release\]", which can narrow/);
+    refused(workflow.replace('    paths:\n', '    types: [labeled]\n    paths:\n'), /pull_request has "types: \[labeled\]"/);
     // A single-quoted exclusion is read, and then isn't a pattern the map reads.
     const excluded = workflowPaths(workflow.replace(list, `${list}      - '!extension/settings.js'\n`), 'pull_request');
     assert.equal(excluded.at(-1), '!extension/settings.js');

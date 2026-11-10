@@ -140,6 +140,7 @@ npm run release -- <commit> # build, check and record a release's store packages
 npm run site:popup        # copy the current popup into the website after popup changes
 npm run site:serve        # preview the website locally, served like Cloudflare
 npm run site:stamp        # refresh the website's stylesheet and script version stamps
+npm run checks:tables     # write the tables of which checks a change needs, from checks.json, into AGENTS.md and RELEASE-CHECKLIST.md
 ```
 
 The public website lives in [site/](site/README.md): static HTML, CSS, and a
