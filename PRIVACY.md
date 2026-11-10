@@ -2,12 +2,11 @@
 
 Effective date: October 16, 2026
 
-Last updated: October 28, 2026
+Last updated: November 10, 2026
 
-This policy applies to versions `1.0.0`, `1.0.1`, `1.1.0`, `1.1.1`, `1.2.0`,
-and `1.2.1` of the Slowed & Reverb browser extension for Chromium-based
-browsers and Firefox. The rating reminder and its day count described below
-are in version `1.1.0` and later.
+This policy applies to version `1.0.0` and later of the Slowed & Reverb
+browser extension for Chromium-based browsers and Firefox. The rating reminder
+and its day count described below are in version `1.1.0` and later.
 
 ## Summary
 

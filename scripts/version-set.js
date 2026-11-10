@@ -53,10 +53,6 @@ function compareVersions(a, b) {
   return left.map((part, index) => part - right[index]).find((difference) => difference !== 0) ?? 0;
 }
 
-function versionsIn(text) {
-  return text?.match(/\d+\.\d+\.\d+/g) ?? [];
-}
-
 // The website's pages, which each show the version in their footer.
 function sitePages(directory) {
   return fs
@@ -190,65 +186,6 @@ const changelogEntry = {
   }
 };
 
-// A paragraph's words on lines of at most width characters, ended by eol.
-function wrapWords(paragraph, width, eol) {
-  const lines = [];
-  for (const word of paragraph.split(/\s+/).filter(Boolean)) {
-    const last = lines.length - 1;
-    if (last >= 0 && lines[last].length + 1 + word.length <= width) lines[last] += ` ${word}`;
-    else lines.push(word);
-  }
-  return lines.join(eol);
-}
-
-// The empty line between two paragraphs, which may hold spaces.
-const BLANK_LINE = /\r?\n[ \t]*\r?\n/;
-// A line that starts a heading, a quote, a list item, code or a table.
-const MARKDOWN_BLOCK = /^[ \t]*(#|>|[-*+][ \t]|\d+\.[ \t]|```|\|)/m;
-
-// "a, b and c", or with oxford "a, b, and c".
-function listed(items, oxford) {
-  if (items.length < 3) return items.join(' and ');
-  return `${items.slice(0, -1).join(', ')}${oxford ? ',' : ''} and ${items[items.length - 1]}`;
-}
-
-// A list of versions as either policy writes it, and nothing else, so that
-// what is taken for the list can't reach past it into the rest of the policy.
-const VERSION_LIST = '((?:[\\d.,`\\s]|and)+?)';
-
-// The sentence of a privacy policy that names the versions it covers, found
-// by the words before and after its list, however the line is broken. It gets
-// the new version at the end of the list, written by list(versions); with
-// width, the paragraph around it is wrapped again to that many characters.
-function policyVersions(file, [wordsBefore, wordsAfter], list, width) {
-  const spaced = (words) => words.split(' ').join('\\s+');
-  const sentence = new RegExp(`(${spaced(wordsBefore)}\\s+)${VERSION_LIST}(\\s+${spaced(wordsAfter)}\\b)`);
-  return {
-    files: () => [file],
-    problem(_, text, version) {
-      return versionsIn(sentence.exec(text)?.[2]).includes(version) ? null : `${file}'s versions line doesn't list ${version}`;
-    },
-    write(_, text, version) {
-      const found = sentence.exec(text);
-      const versions = versionsIn(found?.[2]);
-      if (!versions.length) throw new VersionError(`${file} has no line naming the versions the policy covers`);
-      if (versions.includes(version)) return text;
-      const [before, after] = [text.slice(0, found.index), text.slice(found.index + found[0].length)];
-      const written = `${found[1]}${list([...versions, version])}${found[3]}`;
-      if (!width) return before + written + after;
-      const breaks = [...before.matchAll(new RegExp(BLANK_LINE, 'g'))];
-      const start = breaks.length ? breaks.at(-1).index + breaks.at(-1)[0].length : 0;
-      const end = BLANK_LINE.exec(after)?.index ?? after.length;
-      const paragraph = before.slice(start) + written + after.slice(0, end);
-      if (MARKDOWN_BLOCK.test(paragraph)) {
-        throw new VersionError(`${file}: the versions aren't named in a plain paragraph, so it can't be wrapped again`);
-      }
-      const wrapped = wrapWords(paragraph, width, text.includes('\r\n') ? '\r\n' : '\n');
-      return before.slice(0, start) + wrapped + /\s*$/.exec(paragraph)[0] + after.slice(end);
-    }
-  };
-}
-
 // Everything a version bump touches (AGENTS.md, "Releases"), each with how to
 // check it and how to write it:
 //
@@ -270,11 +207,10 @@ const PLACES = [
   versionLiteral('extension/spotify-main.js'),
   versionLiteral('extension/youtube-main.js'),
   footers,
-  changelogEntry,
-  // The policy names every version it covers, in the repository and on the
-  // website. PRIVACY.md is wrapped by hand, to 78 characters in this paragraph.
-  policyVersions('PRIVACY.md', ['applies to versions', 'of the'], (versions) => listed(versions.map((version) => `\`${version}\``), true), 78),
-  policyVersions('site/privacy.html', ['covers versions', 'of Slowed'], (versions) => listed(versions, false))
+  changelogEntry
+  // The privacy policy isn't a place: it covers "version 1.0.0 and later", so
+  // a bump leaves its words alone (a test keeps a list of versions out of
+  // it). Its page on the website is one of the footers.
 ];
 
 // The files a version bump touches.

@@ -85,8 +85,7 @@ describe('The check of a version bump', () => {
     'extension/youtube-main.js': `  const VERSION = '${version}';`,
     'site/index.html': footer(version),
     'site/changelog.html': `<section><h2>${version} <time datetime="2026-10-20">October 20, 2026</time></h2><ul><li>A fix.</li></ul></section>${footer(version)}`,
-    'site/privacy.html': `This policy covers versions 1.0.0, 1.1.1 and ${version} of Slowed &amp; Reverb.${footer(version)}`,
-    'PRIVACY.md': `This policy applies to versions \`1.0.0\`, \`1.1.1\`, and \`${version}\` of the\nextension.`
+    'site/privacy.html': `This policy covers version 1.0.0 and later of Slowed &amp; Reverb.${footer(version)}`
   });
 
   test('passes when everything shows the new version', () => {
@@ -98,7 +97,6 @@ describe('The check of a version bump', () => {
     const repo = repository('1.1.1');
     repo['package.json'] = JSON.stringify({ version: '1.1.2' });
     repo['extension/spotify-main.js'] = "  const VERSION = '1.1.2';";
-    repo['PRIVACY.md'] = 'This policy applies to versions `1.0.0`, `1.1.1`, and `1.1.12` of the\nextension.';
 
     assert.deepEqual(versionBumpProblems((file) => repo[file], somePages, '1.1.2'), [
       'extension/manifest.json has version 1.1.1',
@@ -109,9 +107,7 @@ describe('The check of a version bump', () => {
       "site/index.html doesn't show 1.1.2 in its footer",
       "site/changelog.html doesn't show 1.1.2 in its footer",
       "site/privacy.html doesn't show 1.1.2 in its footer",
-      'site/changelog.html has no entry for 1.1.2',
-      "PRIVACY.md's versions line doesn't list 1.1.2",
-      "site/privacy.html's versions line doesn't list 1.1.2"
+      'site/changelog.html has no entry for 1.1.2'
     ]);
   });
 
@@ -230,7 +226,6 @@ describe('One list of places', () => {
     assert.deepEqual(
       [...files].sort(),
       [
-        'PRIVACY.md',
         'extension/content.js',
         'extension/manifest.json',
         'extension/spotify-bridge.js',
@@ -253,7 +248,7 @@ describe('npm run version:set', () => {
     assert.deepEqual(result, { current, version: next, files, notesLeft: true, leftover: null });
     assert.deepEqual(changedFiles(directory), files);
     // Nothing of the writing is left beside the files.
-    assert.deepEqual(fs.readdirSync(directory).sort(), ['PRIVACY.md', 'extension', 'package-lock.json', 'package.json', 'scripts', 'site']);
+    assert.deepEqual(fs.readdirSync(directory).sort(), ['extension', 'package-lock.json', 'package.json', 'scripts', 'site']);
     assert.deepEqual(versionBumpProblems(reader(directory), pages, next), [NOTES]);
 
     edit(directory, 'site/changelog.html', (text) => text.replace(TODO, '<li>A fix.</li>'));
@@ -279,13 +274,11 @@ describe('npm run version:set', () => {
     for (const file of ['content.js', 'spotify-bridge.js', 'spotify-main.js', 'youtube-main.js']) {
       assert.deepEqual(changedLines(`extension/${file}`), [`  const VERSION = '${next}';`]);
     }
-    for (const page of pages.filter((name) => !['changelog.html', 'privacy.html'].includes(name))) {
+    // The privacy policy's page is one of these: only its footer changes.
+    assert.ok(pages.includes('privacy.html'));
+    for (const page of pages.filter((name) => name !== 'changelog.html')) {
       assert.deepEqual(changedLines(`site/${page}`), [`    <span>Slowed &amp; Reverb ${next}</span>`]);
     }
-    const policyPage = changedLines('site/privacy.html');
-    assert.equal(policyPage.length, 2);
-    assert.match(policyPage[0], new RegExp(`^ +This policy covers versions [\\d., ]+, ${current} and ${next} of Slowed &amp; Reverb `));
-    assert.equal(policyPage[1], `    <span>Slowed &amp; Reverb ${next}</span>`);
   });
 
   test("adds the changelog's entry above the newest, with the day and a place for the release notes", (t) => {
@@ -331,113 +324,25 @@ describe('npm run version:set', () => {
     assert.doesNotMatch(report(result), /TODO/);
   });
 
-  test('adds the version to the policy in the repository and wraps its paragraph again', (t) => {
+  // The policy covers "version 1.0.0 and later", so a release that doesn't
+  // change what the extension stores or sends leaves it as it is, and the
+  // copy on Firefox Add-ons with it. A list of versions would bring the edit
+  // back with every release.
+  test("leaves the privacy policy's words alone, which name no version but the first and the rating reminder's", (t) => {
     const directory = copyRepository(t);
     setVersion({ directory, version: next, today });
-    const [before, after] = [unchanged('PRIVACY.md'), reader(directory)('PRIVACY.md')].map((text) => text.split('\n\n'));
-    assert.equal(after.length, before.length);
-    const changed = after.filter((paragraph, index) => paragraph !== before[index]);
-    assert.equal(changed.length, 1);
-    assert.match(changed[0], new RegExp(`\`${current}\`,\\s+and\\s+\`${next}\`\\s+of\\s+the\\s+Slowed`));
-    assert.ok(changed[0].split('\n').every((line) => line.length <= 78 && line === line.trim()));
-    // Apart from the new version, the paragraph has the words it had.
-    const words = (paragraph) => paragraph.split(/\s+/).join(' ');
-    const paragraph = before.find((text) => text.includes('applies to versions'));
-    assert.equal(words(changed[0]), words(paragraph).replace(`and \`${current}\``, `\`${current}\`, and \`${next}\``));
-  });
-
-  test('writes the lists of versions the way each policy does', () => {
-    // The policies' two places are the last of the list.
-    const edits = (texts) => versionEdits((file) => texts[file], [], '1.0.2', { today }, PLACES.slice(-2));
-    const two = edits({
-      'PRIVACY.md': '# Policy\n\nThis policy applies to versions `1.0.0` and `1.0.1` of the\nextension.\n\n## Summary\n',
-      'site/privacy.html': '<p>This policy covers versions 1.0.0 and 1.0.1 of Slowed &amp; Reverb.</p>'
-    });
-    assert.equal(
-      two.get('PRIVACY.md'),
-      '# Policy\n\nThis policy applies to versions `1.0.0`, `1.0.1`, and `1.0.2` of the\nextension.\n\n## Summary\n'
-    );
-    assert.equal(two.get('site/privacy.html'), '<p>This policy covers versions 1.0.0, 1.0.1 and 1.0.2 of Slowed &amp; Reverb.</p>');
-
-    const one = edits({
-      'PRIVACY.md': 'This policy applies to versions `1.0.1` of the extension.',
-      'site/privacy.html': 'This policy covers versions 1.0.1 of Slowed &amp; Reverb.'
-    });
-    assert.equal(one.get('PRIVACY.md'), 'This policy applies to versions `1.0.1` and `1.0.2` of the extension.');
-    assert.equal(one.get('site/privacy.html'), 'This policy covers versions 1.0.1 and 1.0.2 of Slowed &amp; Reverb.');
-  });
-
-  test('finds the policy sentence however its line is broken, and touches nothing outside its list', () => {
-    const edits = (texts) => versionEdits((file) => texts[file], [], '1.0.2', { today }, PLACES.slice(-2));
-    const rest = '\n\n## Summary\n\nThe extension reads nothing of the page.\n\n## Contact\n\nWrite to the owner of the project.\n';
-    const broken = edits({
-      'PRIVACY.md': `This policy applies to\nversions \`1.0.0\` and\n\`1.0.1\` of\nthe extension.${rest}`,
-      'site/privacy.html': `<p>\n  This policy covers\n  versions 1.0.0 and 1.0.1 of\n  Slowed &amp; Reverb.\n</p>${rest}`
-    });
-    assert.equal(broken.get('PRIVACY.md'), `This policy applies to versions \`1.0.0\`, \`1.0.1\`, and \`1.0.2\` of the\nextension.${rest}`);
-    assert.equal(
-      broken.get('site/privacy.html'),
-      `<p>\n  This policy covers\n  versions 1.0.0, 1.0.1 and 1.0.2 of\n  Slowed &amp; Reverb.\n</p>${rest}`
-    );
-
-    // A sentence that doesn't end the expected way is refused, not searched
-    // for its ending further down the policy.
-    for (const [file, text] of [
-      ['PRIVACY.md', `This policy applies to versions \`1.0.0\` and \`1.0.1\` for the extension.${rest}`],
-      ['site/privacy.html', `This policy covers versions 1.0.0 and 1.0.1.${rest} Thanks for the use of Slowed &amp; Reverb.`]
-    ]) {
-      const place = PLACES.slice(-2).find((policy) => policy.files()[0] === file);
-      assert.throws(() => place.write(file, text, '1.0.2'), (error) => error instanceof VersionError && /has no line naming the versions/.test(error.message));
-      assert.equal(place.problem(file, text, '1.0.1'), `${file}'s versions line doesn't list 1.0.1`);
-    }
-  });
-
-  test('wraps only the paragraph that names the versions, whatever ends the lines', () => {
-    const write = (text) => PLACES.at(-2).write('PRIVACY.md', text, '1.0.2');
-    const paragraph = 'This policy applies to versions `1.0.0` and `1.0.1` of the\nextension.';
-    const wrapped = 'This policy applies to versions `1.0.0`, `1.0.1`, and `1.0.2` of the\nextension.';
-    const around = (lines, text, gap = '\n\n') => ['# Policy', text, '## Summary', '- One thing.', '- Another.', ''].join(gap).replaceAll('\n', lines);
-
-    assert.equal(write(around('\n', paragraph)), around('\n', wrapped));
-    assert.equal(write(around('\r\n', paragraph)), around('\r\n', wrapped));
-    // An empty line that holds spaces still parts two paragraphs.
-    assert.equal(write(around('\n', paragraph, '\n  \t\n')), around('\n', wrapped, '\n  \t\n'));
-    // The policy's last paragraph keeps the end of the file.
-    assert.equal(write(`# Policy\n\n${paragraph}\n`), `# Policy\n\n${wrapped}\n`);
-    assert.equal(write(paragraph), wrapped);
-
-    // A heading or a list in the same paragraph would be folded into it.
-    for (const text of [`## Versions\n${paragraph}`, `${paragraph}\n- One thing.`, `> ${paragraph}`]) {
-      assert.throws(() => write(text), (error) => error instanceof VersionError && /aren't named in a plain paragraph/.test(error.message));
-    }
-  });
-
-  test('keeps the rest of both policies through many bumps in a row', (t) => {
-    const directory = copyRepository(t);
-    const paragraphs = (file) => reader(directory)(file).split('\n\n');
-    const others = (file, words) => paragraphs(file).filter((paragraph) => !paragraph.includes(words));
-    const before = { md: others('PRIVACY.md', 'applies to'), html: others('site/privacy.html', 'This policy covers') };
-    const versions = [];
-    for (let step = 1; step <= 12; step += 1) {
-      versions.push(`${major}.${minor}.${patch + step}`);
-      setVersion({ directory, version: versions.at(-1), today });
-      edit(directory, 'site/changelog.html', (text) => text.replace(/<!-- TODO[\s\S]*?-->/, '<li>A fix.</li>'));
-      assert.deepEqual(versionBumpProblems(reader(directory), pages, versions.at(-1)), []);
-    }
-
-    const footer = (version) => `<span>Slowed &amp; Reverb ${version}</span>`;
-    const after = { md: others('PRIVACY.md', 'applies to'), html: others('site/privacy.html', 'This policy covers') };
-    assert.ok(after.md.join('\n\n') === before.md.join('\n\n'), 'the rest of PRIVACY.md is as it was');
-    assert.ok(
-      after.html.join('\n\n') === before.html.join('\n\n').replace(footer(current), footer(versions.at(-1))),
-      'the rest of site/privacy.html is as it was, but for its footer'
-    );
-    const listedIn = (text) => text.match(/\d+\.\d+\.\d+/g);
-    const policy = paragraphs('PRIVACY.md').find((paragraph) => paragraph.includes('applies to'));
-    assert.deepEqual(listedIn(/applies\s+to\s+versions([\s\S]*?)\s+of\s+the\s+Slowed/.exec(policy)[1]).slice(-13), [current, ...versions]);
-    assert.ok(policy.split('\n').every((line) => line.length <= 78));
-    const page = reader(directory)('site/privacy.html');
-    assert.deepEqual(listedIn(/covers versions (.*?) of Slowed/.exec(page)[1]).slice(-13), [current, ...versions]);
+    assert.ok(!files.includes('PRIVACY.md'));
+    const versions = (text) => [...new Set(text.match(/\d+\.\d+\.\d+/g))].sort();
+    // Each copy's words, however its lines are broken.
+    const words = (text) => text.replace(/\s+/g, ' ');
+    const policy = words(reader(root)('PRIVACY.md'));
+    // The page's words are its article, which leaves out the icons' drawings
+    // and the footer.
+    const page = words(/<article[\s\S]*<\/article>/.exec(reader(directory)('site/privacy.html'))[0].replace(/<[^>]*>/g, ' '));
+    assert.deepEqual(versions(policy), ['1.0.0', '1.1.0']);
+    assert.deepEqual(versions(page), ['1.0.0', '1.1.0']);
+    assert.match(policy, /applies to version `1\.0\.0` and later of the/);
+    assert.match(page, /covers version 1\.0\.0 and later of Slowed/);
   });
 
   test("refuses a version that isn't higher than the current one, or isn't one", (t) => {
@@ -624,7 +529,7 @@ describe('npm run version:set', () => {
     const result = setVersion({ directory: written, version: next, today, io: stuck });
     assert.deepEqual(changedFiles(written), files);
     assert.deepEqual(stages(written).map((name) => path.join(written, name)), [result.leftover]);
-    assert.match(report(result), /^Changed .* in 14 files:\n/);
+    assert.match(report(result), new RegExp(`^Changed .* in ${files.length} files:\n`));
     assert.ok(report(result).endsWith(`\n\nThe folder ${result.leftover}, used while writing, couldn't be removed. Remove it by hand.`));
     assert.doesNotMatch(report({ ...result, leftover: null }), /couldn't be removed/);
 
@@ -642,7 +547,7 @@ describe('npm run version:set', () => {
 
   test('keeps the permissions each file has', (t) => {
     const directory = copyRepository(t);
-    const modes = { 'package.json': 0o664, 'PRIVACY.md': 0o600, 'extension/content.js': 0o755 };
+    const modes = { 'package.json': 0o664, 'site/privacy.html': 0o600, 'extension/content.js': 0o755 };
     for (const [file, mode] of Object.entries(modes)) fs.chmodSync(path.join(directory, file), mode);
     const before = files.map((file) => fs.statSync(path.join(directory, file)).mode);
 

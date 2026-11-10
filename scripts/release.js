@@ -198,7 +198,7 @@ function lineChanges(before, after) {
 function privacyNote(release) {
   const { previous, privacyChanges: changes } = release;
   if (!changes) return '';
-  if (changes.same) return ` It is the same as the ${previous} copy.`;
+  if (changes.same) return ` It is the same as the ${previous} copy, so there is nothing to paste.`;
   const starts = (lines) => listWords(lines.map((line) => `"${line.split(' ').slice(0, 6).join(' ')}…"`));
   const parts = ['changed', 'added', 'removed']
     .filter((kind) => changes[kind].length)
