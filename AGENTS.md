@@ -16,66 +16,20 @@ covers the features and development commands in full.
 - `scripts/`: build, render and site tools, run through `npm run`.
 - `tests/`: unit tests (`node --test`); `e2e/`: a Playwright smoke test for
   Chromium and a puppeteer-core test for Firefox.
+- `docs/`: `checks.md`, which checks a change needs, made from
+  `checks.json`.
 
 ## Checks
 
-Which checks a change needs is written once, in `checks.json`, and the two
-tables below are made from it. The first lists the checks. In the second,
-find the first row that matches each file you changed, a removed or renamed
-file's old path included: a change needs `repo` and the checks of every file
-it touches. CI decides its browser tests from the same map, and the audio and
-dependency audit workflows start for the paths it gives them (tests keep
-their `paths:` equal to it). To change the rule, change `checks.json`, then
-run `npm run checks:tables`.
-
-<!-- Made from checks.json by npm run checks:tables. Don't edit between these two lines. -->
-| Check | Run by | What to do |
-| --- | --- | --- |
-| `repo` | CI's required check | `npm run check`. Lint, the unit tests and Firefox's lint of the build. |
-| `extension` | CI's required check | `npm run test:e2e`, `npm run test:firefox`. The real extension in Chromium and in the installed Firefox. |
-| `ui` | CI's required check | `npm run test:ui`. The popup's layout in each state and the limiter stage, in Chromium and in Firefox's engine. |
-| `site` | CI's required check | `npm run test:ui`. The website and its demo, which the same command checks. |
-| `audio-hosted` | its own workflow (`audio-capture-trial.yml`) | Both jobs of the Audio suites workflow passed on the pull request's final commit, none skipped or canceled. GitHub starts it by itself. It isn't a required check, so look. |
-| `audio-mac` | by hand | `AUDIO_REGRESSION_MUTE=1 npm run test:audio:chromium`, `npm run test:audio:firefox`. The audio suites on this Mac, on the pull request's final commit, one at a time. Firefox plays the tone aloud, so ask first. |
-| `dependency-audit` | its own workflow (`dependency-audit.yml`) | `npm run audit:dependencies -- <folder>`. Read the `summary.md` it writes in the folder. The Dependency audit workflow runs it on the pull request too. It isn't a required check, so look. |
-| `listen` | by hand, when a change can affect how the effect sounds (the audio graph's wiring, an effect's code, gains, fades, presets or defaults, what the popup sends to the tab and how often, or a browser change to Web Audio) | Listen to how the effect sounds, with music, in both browsers. Its steps are in `RELEASE-CHECKLIST.md`, "When it applies". |
-| `firefox-frame-look` | by hand, when the popup's frame changed in CSS | Look at the real popup in Firefox, with its rounded panel corners. |
-| `permission-steps` | by hand, when the permission code changed (the manifest's permissions, or how the extension asks for access or handles it) | The permission and revoking steps, in each browser, also outside a release. Its steps are in `RELEASE-CHECKLIST.md`, "When it applies". |
-| `store-art-look` | by hand, when there is new store art | Look at each image at the size the store shows it (`store-assets/README.md`). |
-| `site-popup-sync` | by hand | `npm run site:popup`. Copy the popup into the website. The tests fail while the copy is out of date. |
-
-| A change to | Needs, besides `repo` |
-| --- | --- |
-| `.github/workflows/audio-capture-trial.yml` | `extension`, `ui`, `site`, `audio-hosted` |
-| `.github/workflows/dependency-audit.yml` | `extension`, `ui`, `site`, `dependency-audit` |
-| `.github/workflows/**`, `checks.json`, `scripts/classify-ci-changes.js` | `extension`, `ui`, `site` |
-| `**/*.md`, `LICENSE` | nothing more |
-| `.npmrc` | `extension`, `ui`, `site`, `dependency-audit` |
-| `.gitattributes` | `extension`, `ui`, `site` |
-| `.claude/launch.json`, `.github/**`, `.gitignore`, `eslint.config.js`, `scripts/check-whitespace.js`, `scripts/node-test-results.js`, `scripts/release.js`, `scripts/render-checks-tables.js`, `scripts/render-icons.js`, `scripts/render-store-assets.js`, `scripts/stamp-site-assets.js`, `scripts/sync-site-popup.js`, `tests/**`, `wrangler.jsonc` | nothing more |
-| `store-assets/**` | `store-art-look` |
-| `extension/spotify-main.js`, `extension/youtube-main.js` | `extension`, `ui`, `audio-hosted`, `audio-mac`, `listen` |
-| `extension/background.js`, `extension/content.js`, `extension/spotify-bridge.js` | `extension`, `audio-hosted`, `audio-mac`, `listen`, `permission-steps` |
-| `extension/settings.js` | `extension`, `ui`, `site`, `audio-hosted`, `listen`, `site-popup-sync` |
-| `extension/manifest.json` | `extension`, `audio-hosted`, `permission-steps` |
-| `extension/popup.html`, `extension/popup.js` | `extension`, `ui`, `site`, `listen`, `permission-steps`, `site-popup-sync` |
-| `extension/popup.css` | `extension`, `ui`, `site`, `firefox-frame-look`, `site-popup-sync` |
-| `extension/assets/*.png`, `extension/assets/*.svg` | `extension` |
-| `e2e/audio-capture/**` | `audio-hosted`, `audio-mac` |
-| `e2e/extension-copy.js`, `e2e/firefox-launch.js` | `extension`, `audio-hosted` |
-| `scripts/request-target.js` | `extension`, `ui`, `site`, `audio-hosted` |
-| `.nvmrc`, `package-lock.json`, `package.json` | `extension`, `ui`, `site`, `audio-hosted`, `dependency-audit` |
-| `scripts/ci-package-downloads.sh` | `extension`, `ui`, `site`, `audio-hosted` |
-| `scripts/ci-install-firefox.sh`, `scripts/firefox-release.js` | `audio-hosted` |
-| `e2e/extension.spec.js`, `e2e/firefox-shutdown.js`, `e2e/fixtures.js`, `playwright.config.js` | `extension` |
-| `scripts/build-extension.js` | `extension`, `audio-hosted`, `permission-steps` |
-| `e2e/popup-geometry.js` | `extension`, `ui` |
-| `e2e/limiter-stage.js`, `e2e/ui/**`, `playwright.ui.config.js`, `scripts/popup-preview.js`, `scripts/serve-site.js` | `ui`, `site` |
-| `site/demo-audio.js` | `ui`, `site` |
-| `site/**` | `site` |
-| `audit-exceptions.json`, `scripts/dependency-audit.js` | `dependency-audit` |
-| any other path | `extension`, `ui`, `site`, and a rule in `checks.json` |
-<!-- The end of the part made from checks.json. -->
+Which checks a change needs is written once, in `checks.json`. Run
+`npm run checks:for` to see what the files you changed need and what to do
+for each; give it paths to ask about other files. `docs/checks.md` has the
+whole map as two tables: the checks, and what each path needs. CI decides
+its browser tests from the same map, and the audio and dependency audit
+workflows start for the paths it gives them (tests keep their `paths:` equal
+to it). To change the rule, change `checks.json`, then run
+`npm run checks:tables`, which makes `docs/checks.md` and the release
+checklist's "When it applies" items again.
 
 - After changing code, tests, the manifest or scripts, run `npm test`.
 - Before handing work back, run `npm run check`. If it can't run, say which
@@ -91,7 +45,7 @@ run `npm run checks:tables`.
   and updating it, and put back each audible defect fixed so far to show it
   is caught. Run them as well as listening: they don't replace that yet.
   "What it can replace" in the README below says what would have to be shown
-  first. A change the table gives `audio-hosted` and `audio-mac` merges only
+  first. A change the map gives `audio-hosted` and `audio-mac` merges only
   once both suites have passed on the pull request's final commit, with the
   branch up to date with `main` (the workflow tests the branch merged into
   `main`): in the pull request's audio workflow, both jobs, none skipped or
@@ -105,7 +59,7 @@ run `npm run checks:tables`.
   start for the popup's files or the icons: the suites drive the background
   script themselves and never open the popup, so a change to its files can't
   change what they record, and the icons are only the pictures on the
-  toolbar's button. The listen (`listen` in the table) is for any change
+  toolbar's button. The listen (`listen` in the map) is for any change
   that can affect how the effect sounds, not only a change of values.
   `npm run test:audio-trial:chromium` and `npm run test:audio-trial:firefox`
   are the experiment the suite is built on. All four are described in
@@ -147,7 +101,7 @@ run `npm run checks:tables`.
 - These are pages, not the browser's popup window, so Firefox's rounded panel
   corners (see the `@supports (-moz-appearance: none)` rule in `popup.css`)
   and the browsers' own permission dialogs aren't drawn. That is why the
-  table has `firefox-frame-look`. For other states, render the popup with the
+  map has `firefox-frame-look`. For other states, render the popup with the
   helpers in `scripts/popup-preview.js`, as the store-art script and the
   tests do.
 
@@ -160,11 +114,11 @@ Never edit these by hand. Change the source, then regenerate:
 | `dist/` | `extension/` | `npm run build:chromium`, `npm run build:firefox`, `npm run package` |
 | `site/popup/popup.*`, `site/popup/settings.js` | `extension/popup.*`, `extension/settings.js` | `npm run site:popup` |
 | `?v=` stamps in `site/*.html` | `site/styles.css`, `site/*.js` | `npm run site:stamp` |
-| The tables under "Checks" above, and the items under "When it applies" in `RELEASE-CHECKLIST.md` | `checks.json` | `npm run checks:tables` |
+| `docs/checks.md`, and the items under "When it applies" in `RELEASE-CHECKLIST.md` | `checks.json` | `npm run checks:tables` |
 | `extension/assets/icon*`, `store-assets/chrome/store-icon-128.png`, the popup's header mark | `scripts/render-icons.js` | `npm run icons` |
 | `store-assets/screenshots/`, `store-assets/firefox/`, the promo tile and marquee in `store-assets/chrome/`, `site/assets/og-card.png` | `scripts/render-store-assets.js`, the popup, the captures in `store-assets/originals/`, the cassette in `site/index.html`, `site/assets/fonts/fraunces.woff2` | `npm run store:assets` (needs macOS fonts) |
 
-The tests fail when the site's popup copy or stamps, or the tables made from
+The tests fail when the site's popup copy or stamps, or what is made from
 `checks.json`, are out of date.
 
 ## Rules
@@ -244,7 +198,7 @@ The checks done by hand for a release are in `RELEASE-CHECKLIST.md`,
 including installing from both stores once they publish. Record them in the
 draft's "checked by hand" line. Some of its "When it applies" items, which
 are made from `checks.json` too, apply outside a release as well:
-`permission-steps` and `listen` in the table under "Checks".
+`permission-steps` and `listen` in `docs/checks.md`.
 
 ## Git
 

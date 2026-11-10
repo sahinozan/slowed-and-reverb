@@ -1,7 +1,8 @@
 'use strict';
 
-// Checks that the tables made from checks.json, in AGENTS.md and
-// RELEASE-CHECKLIST.md, are up to date, and what they are made of.
+// Checks that what is made from checks.json, the page docs/checks.md and
+// the release checklist's "When it applies" items, is up to date, and what
+// it is made of.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -9,12 +10,31 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { describe, test } = require('node:test');
 const { readMap } = require('../scripts/classify-ci-changes');
-const { END, START, agentsTables, checklistItems, renderAll, withTables } = require('../scripts/render-checks-tables');
+const { END, PAGE_MADE, START, checklistItems, checksPage, renderAll, withTables } = require('../scripts/render-checks-tables');
 
 const { root } = require('./helpers/load-script');
 
 const source = fs.readFileSync(path.join(root, 'checks.json'), 'utf8');
 const map = readMap(source);
+
+// The lines of a Markdown text that are rows of the page's tables: a row
+// whose first cell is one of the tables' headings, a check's name, or a
+// rule's paths. Markdown reads a table with or without its first bar, and
+// moved in by up to three spaces.
+function tableCopies(text, checkMap) {
+  const firsts = new Set([
+    'Check',
+    'A change to',
+    'any other path',
+    ...Object.keys(checkMap.checks).map((name) => `\`${name}\``),
+    ...checkMap.rules.map((rule) => rule.paths.map((pattern) => `\`${pattern}\``).join(', '))
+  ]);
+  return text.split('\n').filter((line) => {
+    if (!/^ {0,3}\S/.test(line) || !line.includes('|')) return false;
+    const cells = line.trim().replace(/^\|/, '').split('|');
+    return cells.length > 1 && firsts.has(cells[0].trim());
+  });
+}
 
 // The map with one change.
 function changed(change) {
@@ -23,10 +43,10 @@ function changed(change) {
   return readMap(JSON.stringify(copy));
 }
 
-describe('the tables made from the map of checks', () => {
-  test('are up to date in AGENTS.md and RELEASE-CHECKLIST.md', () => {
+describe('what is made from the map of checks', () => {
+  test('is up to date in docs/checks.md and RELEASE-CHECKLIST.md', () => {
     const files = renderAll(map);
-    assert.deepEqual(files.map(({ file }) => file), ['AGENTS.md', 'RELEASE-CHECKLIST.md']);
+    assert.deepEqual(files.map(({ file }) => file), ['docs/checks.md', 'RELEASE-CHECKLIST.md']);
     for (const { file, before, after } of files) {
       // Compared as a yes or no: a failed comparison of the texts would
       // print both files whole.
@@ -44,27 +64,55 @@ describe('the tables made from the map of checks', () => {
     assert.ok(renamed[1].after === renamed[1].before);
   });
 
-  test('AGENTS.md lists every check, and what each rule needs, in the map\'s order', () => {
-    const lines = agentsTables(map).split('\n');
+  test('the page lists every check, and what each rule is and needs, in the map\'s order', () => {
+    const lines = checksPage(map).split('\n');
+    assert.deepEqual(lines.slice(0, 4), ['# Which checks a change needs', '', PAGE_MADE, '']);
     const names = Object.keys(map.checks);
+    const first = lines.indexOf('| Check | Run by | What to do |');
+    assert.notEqual(first, -1);
     assert.deepEqual(
-      lines.slice(2, 2 + names.length).map((line) => /^\| `([\w-]+)` \| /.exec(line)?.[1]),
+      lines.slice(first + 2, first + 2 + names.length).map((line) => /^\| `([\w-]+)` \| /.exec(line)?.[1]),
       names
     );
-    assert.equal(lines[2 + names.length], '');
-    assert.equal(lines[3 + names.length], '| A change to | Needs, besides `repo` |');
-    const rows = lines.slice(5 + names.length);
+    assert.equal(lines[first + 2 + names.length], '');
+    const second = lines.indexOf('| A change to | What it is | Needs, besides `repo` |');
+    assert.ok(second > first);
+    const rows = lines.slice(second + 2);
     assert.equal(rows.length, map.rules.length + 1);
     map.rules.forEach((rule, index) => {
-      const [, paths, needs] = /^\| (.*) \| (.*) \|$/.exec(rows[index]);
+      const [, paths, about, needs] = /^\| (.*?) \| (.*) \| (.*?) \|$/.exec(rows[index]);
       assert.equal(paths, rule.paths.map((pattern) => `\`${pattern}\``).join(', '));
+      assert.equal(about, rule.about);
       const more = rule.needs.filter((name) => name !== 'repo');
       assert.equal(needs, more.length ? more.map((name) => `\`${name}\``).join(', ') : 'nothing more');
     });
-    assert.equal(rows.at(-1), '| any other path | `extension`, `ui`, `site`, and a rule in `checks.json` |');
-    assert.match(lines[2], /^\| `repo` \| CI's required check \| `npm run check`\. /);
+    assert.equal(rows.at(-1), "| any other path | A path the map doesn't know. | `extension`, `ui`, `site`, and a rule in `checks.json` |");
+    assert.match(lines[first + 2], /^\| `repo` \| CI's required check \| `npm run check`\. /);
     assert.ok(lines.some((line) => line.startsWith('| `audio-hosted` | its own workflow (`audio-capture-trial.yml`) | ')));
     assert.ok(lines.some((line) => line.startsWith("| `firefox-frame-look` | by hand, when the popup's frame changed in CSS | ")));
+  });
+
+  test('AGENTS.md points at the page and the command, and holds no copy of the tables', () => {
+    const agents = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /`npm run checks:for`/);
+    assert.match(agents, /`docs\/checks\.md`/);
+    assert.ok(!agents.includes(START) && !agents.includes(END) && !agents.includes(PAGE_MADE));
+    assert.deepEqual(tableCopies(agents, map), []);
+
+    // The page's tables put back into it are found: as they are, without
+    // their first bar, and moved in by the spaces Markdown still reads as a
+    // table.
+    const page = checksPage(map).split('\n');
+    const rows = page.filter((line) => line.startsWith('|') && !line.startsWith('| ---'));
+    assert.equal(tableCopies(`${agents}\n${page.join('\n')}\n`, map).length, rows.length);
+    assert.equal(tableCopies(`${agents}\n${page.map((line) => ` ${line}`).join('\n')}\n`, map).length, rows.length);
+    assert.equal(tableCopies(`${agents}\n${page.map((line) => `   ${line.replace(/^\| /, '')}`).join('\n')}\n`, map).length, rows.length);
+    // One row is enough, and four spaces make it code, not a table.
+    assert.deepEqual(tableCopies('| `listen` | by hand | Listen. |\n', map), ['| `listen` | by hand | Listen. |']);
+    assert.deepEqual(tableCopies('`extension/popup.css` | `extension`\n', map), ['`extension/popup.css` | `extension`']);
+    assert.deepEqual(tableCopies('    | `listen` | by hand | Listen. |\n', map), []);
+    // Its other tables and its prose aren't taken for copies.
+    assert.deepEqual(tableCopies('| Files | Source | Command |\n| `dist/` | `extension/` | `npm run package` |\nThe `listen` check.\n', map), []);
   });
 
   test('the release checklist has an item for each check done by hand when its condition holds', () => {
@@ -109,8 +157,8 @@ describe('the tables made from the map of checks', () => {
       copy.checks.listen.steps = 'Listen.\nThen listen again.';
       copy.checks.ui.about = 'The popup,\nand a | bar.';
     });
-    const tables = agentsTables(odd).split('\n');
-    assert.equal(tables.length, agentsTables(map).split('\n').length);
+    const tables = checksPage(odd).split('\n');
+    assert.equal(tables.length, checksPage(map).split('\n').length);
     assert.ok(tables.includes('| `ui` | CI\'s required check | `npm run test:ui`. The popup, and a \\| bar. |'));
     assert.ok(tables.some((line) => line.startsWith('| `listen` | by hand, when the sound(effect) changed or a \\| bar | ')));
     const items = checklistItems(odd).split('\n');
@@ -125,7 +173,7 @@ describe('the tables made from the map of checks', () => {
     const before = renderAll(map).map(({ before }) => before);
     const result = spawnSync(process.execPath, [script, '--check'], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.equal(result.stdout, 'AGENTS.md: already up to date\nRELEASE-CHECKLIST.md: already up to date\n');
+    assert.equal(result.stdout, 'docs/checks.md: already up to date\nRELEASE-CHECKLIST.md: already up to date\n');
     assert.ok(renderAll(map).every(({ before: now }, index) => now === before[index]));
     const unexpected = spawnSync(process.execPath, [script, '--force'], { encoding: 'utf8' });
     assert.equal(unexpected.status, 2);

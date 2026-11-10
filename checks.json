@@ -113,6 +113,7 @@
         ".gitignore",
         "eslint.config.js",
         "scripts/check-whitespace.js",
+        "scripts/checks-for.js",
         "scripts/node-test-results.js",
         "scripts/release.js",
         "scripts/render-checks-tables.js",

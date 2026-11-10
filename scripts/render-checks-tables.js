@@ -1,10 +1,11 @@
 'use strict';
 
-// Writes the tables of which checks a change needs into AGENTS.md and
-// RELEASE-CHECKLIST.md, from the map (checks.json), between the two marker
-// lines in each file. Run after changing the map (npm run checks:tables);
-// tests/checks-tables.test.js fails until the files match. With --check it
-// writes nothing and only says whether they do.
+// Writes what is made from the map of which checks a change needs
+// (checks.json): the page docs/checks.md, whole, and the "When it applies"
+// items of RELEASE-CHECKLIST.md, between its two marker lines. Run after
+// changing the map (npm run checks:tables); tests/checks-tables.test.js
+// fails until the files match. With --check it writes nothing and only says
+// whether they do.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -24,12 +25,13 @@ const oneLine = (text) => text.replace(/\s*\n\s*/g, ' ');
 const cell = (text) => oneLine(text).replaceAll('|', '\\|');
 const capital = (text) => text[0].toUpperCase() + text.slice(1);
 
-// Who runs a check, for the first table.
-function runBy(map, name) {
-  const check = map.checks[name];
-  if (check.by === 'ci') return "CI's required check";
-  if (check.by === 'workflow') return `its own workflow (${code(path.basename(check.workflow))})`;
-  return check.when ? `by hand, when ${check.when}` : 'by hand';
+// Who runs a check. `name` formats a file's name: as code for the page,
+// plainly for a terminal.
+function runBy(map, check, name = code) {
+  const { by, workflow, when } = map.checks[check];
+  if (by === 'ci') return "CI's required check";
+  if (by === 'workflow') return `its own workflow (${name(path.basename(workflow))})`;
+  return when ? `by hand, when ${oneLine(when)}` : 'by hand';
 }
 
 // The patterns of every rule that needs a check, in the rules' order.
@@ -37,30 +39,49 @@ function pathsNeeding(map, name) {
   return map.rules.filter((rule) => rule.needs.includes(name)).flatMap((rule) => rule.paths);
 }
 
-// What a check asks for, for the first table: its commands, what it is,
-// and where its steps are when the release checklist spells them out.
-function whatToDo(check) {
-  const commands = check.run ? `${list(check.run)}. ` : '';
-  const steps = check.steps ? ` Its steps are in ${code('RELEASE-CHECKLIST.md')}, "When it applies".` : '';
-  return `${commands}${check.about}${steps}`;
+// What a check is, with where its steps are when the release checklist
+// spells them out.
+function about(check, name = code) {
+  const steps = check.steps ? ` Its steps are in ${name('RELEASE-CHECKLIST.md')}, "When it applies".` : '';
+  return `${oneLine(check.about)}${steps}`;
 }
 
-// AGENTS.md: the checks, then what each rule's paths need besides the check
-// every change needs, in the map's order, since the first rule that matches
-// a path decides.
-function agentsTables(map) {
+// What a check asks for, for the page's first table: its commands, then
+// what it is.
+function whatToDo(check) {
+  return `${check.run ? `${list(check.run)}. ` : ''}${about(check)}`;
+}
+
+const PAGE_MADE = "<!-- Made from checks.json by npm run checks:tables. Don't edit this page. -->";
+
+// docs/checks.md: the checks, then what each rule's paths need besides the
+// check every change needs, in the map's order, since the first rule that
+// matches a path decides.
+function checksPage(map) {
   const always = Object.keys(map.checks).filter((name) => map.rules.every((rule) => rule.needs.includes(name)));
   const more = (needs) => list(needs.filter((name) => !always.includes(name)));
   const unknown = Object.keys(map.checks).filter((name) => map.checks[name].by === 'ci');
   return [
+    '# Which checks a change needs',
+    '',
+    PAGE_MADE,
+    '',
+    `The rule is written once, in ${code('checks.json')}, and this page is made from it. ${code('npm run checks:for')} prints what the files you changed need, so you don't have to find the rows yourself. CI decides its browser tests from the same map, and the audio and dependency audit workflows start for the paths it gives them.`,
+    '',
+    '## The checks',
+    '',
     '| Check | Run by | What to do |',
     '| --- | --- | --- |',
     ...Object.entries(map.checks).map(([name, check]) => `| ${code(name)} | ${cell(runBy(map, name))} | ${cell(whatToDo(check))} |`),
     '',
-    `| A change to | Needs, besides ${list(always)} |`,
-    '| --- | --- |',
-    ...map.rules.map((rule) => `| ${list(rule.paths)} | ${more(rule.needs) || 'nothing more'} |`),
-    `| any other path | ${more(unknown)}, and a rule in ${code('checks.json')} |`
+    '## What a change needs',
+    '',
+    `Find the first row that matches each file you changed, a removed or renamed file's old path included. A change needs ${list(always)} and the checks of every file it touches.`,
+    '',
+    `| A change to | What it is | Needs, besides ${list(always)} |`,
+    '| --- | --- | --- |',
+    ...map.rules.map((rule) => `| ${list(rule.paths)} | ${cell(rule.about)} | ${more(rule.needs) || 'nothing more'} |`),
+    `| any other path | A path the map doesn't know. | ${more(unknown)}, and a rule in ${code('checks.json')} |`
   ].join('\n');
 }
 
@@ -77,8 +98,9 @@ function checklistItems(map) {
     .join('\n');
 }
 
+// What is made: a whole file, or the part of one between its marker lines.
 const TARGETS = [
-  { file: 'AGENTS.md', render: agentsTables },
+  { file: 'docs/checks.md', whole: true, render: checksPage },
   { file: 'RELEASE-CHECKLIST.md', render: checklistItems }
 ];
 
@@ -94,12 +116,14 @@ function withTables(text, made) {
   return [...lines.slice(0, starts[0] + 1), made, ...lines.slice(ends[0])].join('\n');
 }
 
-// Each file as it is and as the map makes it.
+// Each file as it is and as the map makes it. A whole file that isn't
+// there yet is empty.
 function renderAll(map = readMap()) {
-  return TARGETS.map(({ file, render }) => {
-    const before = fs.readFileSync(path.join(root, file), 'utf8');
+  return TARGETS.map(({ file, whole, render }) => {
+    const target = path.join(root, file);
+    const before = whole && !fs.existsSync(target) ? '' : fs.readFileSync(target, 'utf8');
     try {
-      return { file, before, after: withTables(before, render(map)) };
+      return { file, before, after: whole ? `${render(map)}\n` : withTables(before, render(map)) };
     } catch (error) {
       throw new Error(`${file}: ${error.message}`, { cause: error });
     }
@@ -121,6 +145,7 @@ if (require.main === module) {
         console.log(`${file}: out of date; run npm run checks:tables`);
         process.exitCode = 1;
       } else {
+        fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
         fs.writeFileSync(path.join(root, file), after);
         console.log(`${file}: written`);
       }
@@ -128,4 +153,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { END, START, agentsTables, checklistItems, renderAll, withTables };
+module.exports = { END, PAGE_MADE, START, about, checklistItems, checksPage, renderAll, runBy, withTables };

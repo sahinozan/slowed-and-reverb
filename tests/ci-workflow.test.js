@@ -11,6 +11,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const { describe, test } = require('node:test');
 const { POLICY_VERSION } = require('../scripts/classify-ci-changes');
 
+const { gitFixtureEnv } = require('./helpers/git-fixture');
 const { root } = require('./helpers/load-script');
 
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
@@ -98,15 +99,7 @@ function repository(
   { classifier = fs.readFileSync(path.join(root, CLASSIFIER), 'utf8'), map = fs.readFileSync(path.join(root, MAP), 'utf8') } = {}
 ) {
   const dir = temporary(t);
-  const env = {
-    ...process.env,
-    GIT_CONFIG_GLOBAL: os.devNull,
-    GIT_CONFIG_NOSYSTEM: '1',
-    GIT_AUTHOR_NAME: 'Test',
-    GIT_AUTHOR_EMAIL: 'test@example.com',
-    GIT_COMMITTER_NAME: 'Test',
-    GIT_COMMITTER_EMAIL: 'test@example.com'
-  };
+  const env = gitFixtureEnv(dir);
   const git = (...args) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' }).trim();
   const repo = {
     dir,
