@@ -13,11 +13,11 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 const { describe, test } = require('node:test');
 const { checksFor, patternRegExp, readMap, ruleFor } = require('../scripts/classify-ci-changes');
 
 const { root } = require('./helpers/load-script');
+const { trackedFiles, workflowPathProblems, workflowPaths } = require('./helpers/workflow-paths');
 
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'audio-capture-trial.yml'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -169,7 +169,7 @@ function stepRuleProblems(text) {
 }
 
 // The workflow's paths.
-const FILTERS = [...workflow.matchAll(/^ {6}- '([^']+)'$/gm)].map((match) => match[1]);
+const FILTERS = workflowPaths(workflow, 'pull_request');
 
 // Read as checks.json's patterns are, which is how GitHub reads these.
 function covered(file) {
@@ -203,37 +203,6 @@ function commandScripts(scripts, name, seen = new Set()) {
   return [...scripts[name].matchAll(/\bnpm run ([\w:-]+)|\b(scripts\/[\w.-]+\.(?:js|sh))\b/g)].flatMap(([, command, file]) =>
     command ? commandScripts(scripts, command, seen) : [file]
   );
-}
-
-// The files git tracks, so a file the system leaves in a folder doesn't
-// count.
-function trackedFiles(folder = '.') {
-  return execFileSync('git', ['ls-files', '-z', '--', folder], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
-}
-
-// Where the workflow's paths and the map (checks.json) disagree about the
-// hosted audio suites: in the patterns themselves, which have to be the
-// same list, and then file by file, read as GitHub reads its path filters.
-// The workflow may run for a file the map's documentation rule takes (the
-// suite's README, say): GitHub can't tell, and such a change needs no runs.
-function audioPathProblems(files, filters, map) {
-  const problems = [];
-  const patterns = map.rules.filter((rule) => rule.needs.includes('audio-hosted')).flatMap((rule) => rule.paths);
-  for (const pattern of patterns) {
-    if (!filters.includes(pattern)) problems.push(`checks.json gives ${pattern} the hosted audio suites, but it isn't in the workflow's paths`);
-  }
-  for (const filter of filters) {
-    if (!patterns.includes(filter)) problems.push(`${filter} is in the workflow's paths, but checks.json doesn't give it the hosted audio suites`);
-  }
-  const matchers = filters.map(patternRegExp);
-  for (const file of files) {
-    const needs = checksFor(map, file).includes('audio-hosted');
-    const runs = matchers.some((matcher) => matcher.test(file));
-    const documentation = ruleFor(map, file)?.paths.includes('**/*.md') ?? false;
-    if (needs && !runs) problems.push(`${file} needs the hosted audio suites, but the workflow doesn't run for it`);
-    if (runs && !needs && !documentation) problems.push(`the workflow runs for ${file}, which doesn't need the hosted audio suites`);
-  }
-  return problems;
 }
 
 // The lines of these files that match, as "file:line". A line that is only
@@ -447,11 +416,19 @@ describe('the audio workflow', () => {
   test('its paths are the ones the map gives the hosted audio suites', () => {
     const map = readMap();
     assert.equal(map.checks['audio-hosted'].workflow, '.github/workflows/audio-capture-trial.yml');
+    // Nothing else in the workflow narrows or widens what starts it for a
+    // pull request, and no other kind of pull request event starts it.
+    assert.equal(workflow.match(/^ {4}paths:$/gm)?.length, 1);
+    assert.doesNotMatch(workflow, /paths-ignore|branches|pull_request_target/);
+    assert.deepEqual(
+      workflow.match(/^ {2}\w+:$/gm).filter((key) => /pull_request|push/.test(key)),
+      ['  pull_request:']
+    );
     const files = trackedFiles();
     for (const file of ['extension/settings.js', 'extension/popup.js', 'e2e/audio-capture/README.md', 'package.json']) {
       assert.ok(files.includes(file), `git ls-files didn't list ${file}`);
     }
-    assert.deepEqual(audioPathProblems(files, FILTERS, map), []);
+    assert.deepEqual(workflowPathProblems(files, FILTERS, map, 'audio-hosted'), []);
     // Of the extension's files, those that can reach the sound: not the
     // popup's or the icons.
     const heard = trackedFiles('extension').filter((file) => checksFor(map, file).includes('audio-hosted'));
@@ -461,6 +438,28 @@ describe('the audio workflow', () => {
         (name) => `extension/${name}`
       )
     );
+  });
+
+  test("finds paths it can't read whole, or that the workflow doesn't start by", () => {
+    const list = "      - 'scripts/firefox-release.js'\n";
+    assert.equal(workflow.split(list).length, 2);
+    const refused = (text, message) => assert.throws(() => workflowPaths(text, 'pull_request'), message);
+    // Paths written in ways the reader above doesn't take in.
+    refused(workflow.replace(list, `${list}      - "!extension/settings.js"\n`), /can't read "- "!extension\/settings\.js"" in pull_request's paths/);
+    refused(workflow.replace(list, `${list}      - "site/demo-audio.js"\n`), /can't read/);
+    refused(workflow.replace(list, `${list}      - site/demo-audio.js\n`), /can't read/);
+    refused(workflow.replace('    paths:\n', "    paths: ['extension/**']\n    ignored:\n"), /needs one paths: list/);
+    // The same list, but leaving these paths out, or for another event.
+    refused(workflow.replace('    paths:\n', '    paths-ignore:\n'), /has a paths-ignore/);
+    refused(workflow.replace('    paths:\n', "    paths-ignore:\n      - 'site/**'\n    paths:\n"), /has a paths-ignore/);
+    refused(workflow.replace('  pull_request:\n', '  push:\n'), /doesn't start for pull_request/);
+    refused(workflow.replace(/ {4}paths:\n(?: {6}.*\n)+/, '    paths:\n'), /paths: list is empty/);
+    // A single-quoted exclusion is read, and then isn't a pattern the map reads.
+    const excluded = workflowPaths(workflow.replace(list, `${list}      - '!extension/settings.js'\n`), 'pull_request');
+    assert.equal(excluded.at(-1), '!extension/settings.js');
+    assert.throws(() => workflowPathProblems(trackedFiles(), excluded, readMap(), 'audio-hosted'), /is not a pattern this map reads/);
+    // And the workflow as it is reads whole.
+    assert.equal(workflowPaths(workflow, 'pull_request').length, 19);
   });
 
   test('nothing but the toolbar opens the popup, and only its page loads its script and styles', () => {
@@ -482,27 +481,27 @@ describe('the audio workflow', () => {
     const map = readMap();
     const files = trackedFiles();
     // A file that reaches the sound taken out of the workflow.
-    assert.deepEqual(audioPathProblems(files, FILTERS.filter((filter) => filter !== 'extension/settings.js'), map), [
-      "checks.json gives extension/settings.js the hosted audio suites, but it isn't in the workflow's paths",
-      "extension/settings.js needs the hosted audio suites, but the workflow doesn't run for it"
+    assert.deepEqual(workflowPathProblems(files, FILTERS.filter((filter) => filter !== 'extension/settings.js'), map, 'audio-hosted'), [
+      "checks.json gives extension/settings.js audio-hosted, but it isn't in the workflow's paths",
+      "extension/settings.js needs audio-hosted, but the workflow doesn't run for it"
     ]);
     // The whole folder again, as it was: the popup's files and every icon.
-    const whole = audioPathProblems(files, [...FILTERS, 'extension/**'], map);
-    assert.equal(whole[0], "extension/** is in the workflow's paths, but checks.json doesn't give it the hosted audio suites");
-    assert.ok(whole.includes("the workflow runs for extension/popup.css, which doesn't need the hosted audio suites"), whole.join('\n'));
-    assert.ok(whole.includes("the workflow runs for extension/assets/icon128.png, which doesn't need the hosted audio suites"));
+    const whole = workflowPathProblems(files, [...FILTERS, 'extension/**'], map, 'audio-hosted');
+    assert.equal(whole[0], "extension/** is in the workflow's paths, but checks.json doesn't give it audio-hosted");
+    assert.ok(whole.includes("the workflow runs for extension/popup.css, which doesn't need audio-hosted"), whole.join('\n'));
+    assert.ok(whole.includes("the workflow runs for extension/assets/icon128.png, which doesn't need audio-hosted"));
     // The map changed alone: the popup's script given the suites, and the
     // settings no longer.
     const copy = JSON.parse(fs.readFileSync(path.join(root, 'checks.json'), 'utf8'));
     copy.rules.find((rule) => rule.paths.includes('extension/popup.js')).needs.push('audio-hosted');
     copy.rules.find((rule) => rule.paths.includes('extension/settings.js')).needs = ['repo'];
-    assert.deepEqual(audioPathProblems(files, FILTERS, readMap(JSON.stringify(copy))), [
-      "checks.json gives extension/popup.html the hosted audio suites, but it isn't in the workflow's paths",
-      "checks.json gives extension/popup.js the hosted audio suites, but it isn't in the workflow's paths",
-      "extension/settings.js is in the workflow's paths, but checks.json doesn't give it the hosted audio suites",
-      "extension/popup.html needs the hosted audio suites, but the workflow doesn't run for it",
-      "extension/popup.js needs the hosted audio suites, but the workflow doesn't run for it",
-      "the workflow runs for extension/settings.js, which doesn't need the hosted audio suites"
+    assert.deepEqual(workflowPathProblems(files, FILTERS, readMap(JSON.stringify(copy)), 'audio-hosted'), [
+      "checks.json gives extension/popup.html audio-hosted, but it isn't in the workflow's paths",
+      "checks.json gives extension/popup.js audio-hosted, but it isn't in the workflow's paths",
+      "extension/settings.js is in the workflow's paths, but checks.json doesn't give it audio-hosted",
+      "extension/popup.html needs audio-hosted, but the workflow doesn't run for it",
+      "extension/popup.js needs audio-hosted, but the workflow doesn't run for it",
+      "the workflow runs for extension/settings.js, which doesn't need audio-hosted"
     ]);
     // Only pictures are icons: a script put among them is a path the map
     // doesn't know, which a test of the map finds.

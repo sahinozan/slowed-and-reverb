@@ -88,7 +88,7 @@ else process.stdout.write('browser=false\\n');
 
 // A map by which nothing needs the browser tests.
 const lenientMap = JSON.stringify({
-  checks: { repo: { by: 'ci', job: 'repository-checks', about: 'Every change.' } },
+  checks: { repo: { by: 'ci', job: 'repository-checks', run: ['npm run check'], about: 'Every change.' } },
   rules: [{ about: 'Everything.', paths: ['**'], needs: ['repo'] }]
 });
 

@@ -120,8 +120,8 @@ describe('CI change classification', () => {
     // browser tests and documentation does.
     const map = {
       checks: {
-        repo: { by: 'ci', job: 'repository-checks', about: 'Every change.' },
-        extension: { by: 'ci', job: 'browser-smoke', about: 'The extension.' }
+        repo: { by: 'ci', job: 'repository-checks', run: ['npm run check'], about: 'Every change.' },
+        extension: { by: 'ci', job: 'browser-smoke', run: ['npm run test:e2e'], about: 'The extension.' }
       },
       rules: [
         { about: 'The website.', paths: ['site/**'], needs: ['repo'] },

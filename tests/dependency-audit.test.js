@@ -14,8 +14,10 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { describe, test } = require('node:test');
 const { EXCEPTIONS_FILE, EXIT, MAX_REVIEW_DAYS, STATUS_LINES, summarize } = require('../scripts/dependency-audit');
+const { readMap } = require('../scripts/classify-ci-changes');
 
 const { root } = require('./helpers/load-script');
+const { trackedFiles, workflowPathProblems, workflowPaths } = require('./helpers/workflow-paths');
 
 const fixtures = path.join(__dirname, 'fixtures', 'npm-audit');
 const fixture = (name) => fs.readFileSync(path.join(fixtures, name), 'utf8');
@@ -748,34 +750,26 @@ describe('dependency audit workflow', () => {
   }
 
   // The files listed under an event's paths:, as written.
-  function paths(trigger) {
-    const lines = workflow.split('\n');
-    const start = lines.indexOf(`  ${trigger}:`);
-    assert.notEqual(start, -1, trigger);
-    const found = [];
-    let listing = false;
-    for (const line of lines.slice(start + 1)) {
-      if (!line.startsWith('    ')) break;
-      if (line === '    paths:') listing = true;
-      else if (listing && line.startsWith("      - '") && line.endsWith("'")) found.push(line.slice(9, -1));
-      else listing = false;
-    }
-    return found;
-  }
+  const paths = (trigger) => workflowPaths(workflow, trigger);
 
   test('runs the audit weekly, by hand and for dependency changes, with read-only access', () => {
     assert.match(workflow, /^ {2}schedule:\n {4}- cron: '[^']+'$/m);
     assert.match(workflow, /^ {2}workflow_dispatch:$/m);
-    const files = [
-      '.github/workflows/dependency-audit.yml',
-      '.npmrc',
-      '.nvmrc',
-      'audit-exceptions.json',
-      'package.json',
-      'package-lock.json',
-      'scripts/dependency-audit.js'
-    ];
-    for (const trigger of ['pull_request', 'push']) assert.deepEqual(paths(trigger), files, trigger);
+    // For the paths the map (checks.json) gives the audit, and no others.
+    const map = readMap();
+    assert.equal(map.checks['dependency-audit'].workflow, '.github/workflows/dependency-audit.yml');
+    const files = trackedFiles();
+    for (const trigger of ['pull_request', 'push']) {
+      assert.ok(paths(trigger).includes('package-lock.json'), trigger);
+      assert.deepEqual(workflowPathProblems(files, paths(trigger), map, 'dependency-audit'), [], trigger);
+    }
+    assert.equal(workflow.match(/^ {4}paths:$/gm).length, 2);
+    assert.doesNotMatch(workflow, /paths-ignore|pull_request_target/);
+    // A path taken out of the workflow is found.
+    assert.deepEqual(workflowPathProblems(files, paths('push').filter((file) => file !== '.npmrc'), map, 'dependency-audit'), [
+      "checks.json gives .npmrc dependency-audit, but it isn't in the workflow's paths",
+      ".npmrc needs dependency-audit, but the workflow doesn't run for it"
+    ]);
     assert.match(workflow, /^permissions:\n {2}contents: read\n\n/m);
     assert.doesNotMatch(workflow, /: write\b/);
     assert.match(workflow, /persist-credentials: false/);

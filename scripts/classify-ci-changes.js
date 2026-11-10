@@ -28,6 +28,12 @@ const BROWSER_JOB = 'browser-smoke';
 
 const WHO = ['ci', 'workflow', 'hand'];
 
+// Everything the map may say. A key outside these is refused, so a
+// misspelled one isn't silently left out.
+const MAP_KEYS = ['about', 'checks', 'rules'];
+const CHECK_KEYS = ['by', 'job', 'workflow', 'run', 'when', 'steps', 'about'];
+const RULE_KEYS = ['about', 'paths', 'needs'];
+
 // A pattern is a path, with * for part of one name, ** for anything, and
 // **/ for any folders, none included. GitHub's path filters read these the
 // same way; nothing else they allow (?, !, [], {}) is read here.
@@ -52,29 +58,57 @@ function fail(message) {
   throw new Error(`checks.json: ${message}`);
 }
 
+function isText(value) {
+  return typeof value === 'string' && value !== '';
+}
+
 function isStrings(value) {
-  return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'string' && item !== '');
+  return Array.isArray(value) && value.length > 0 && value.every(isText);
+}
+
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// The first of an object's keys the map doesn't read, if any.
+function unread(object, known) {
+  return Object.keys(object).find((key) => !known.includes(key));
 }
 
 // The map, checked, with each rule's patterns ready to match. A map this
 // file can't read whole decides nothing: it throws instead.
 function readMap(source = fs.readFileSync(MAP_FILE, 'utf8')) {
   const map = JSON.parse(source);
-  if (map === null || typeof map !== 'object' || Array.isArray(map)) fail('is not an object');
+  if (!isObject(map)) fail('is not an object');
+  if (unread(map, MAP_KEYS)) fail(`has "${unread(map, MAP_KEYS)}", which this map doesn't read`);
   const { checks, rules } = map;
-  if (checks === null || typeof checks !== 'object' || Array.isArray(checks) || Object.keys(checks).length === 0) fail('has no checks');
+  if (!isObject(checks) || Object.keys(checks).length === 0) fail('has no checks');
   for (const [name, check] of Object.entries(checks)) {
-    if (check === null || typeof check !== 'object' || !WHO.includes(check.by)) fail(`check "${name}" doesn't say who runs it (${WHO.join(', ')})`);
-    if (typeof check.about !== 'string' || check.about === '') fail(`check "${name}" has no description`);
+    if (!isObject(check) || !WHO.includes(check.by)) fail(`check "${name}" doesn't say who runs it (${WHO.join(', ')})`);
+    if (unread(check, CHECK_KEYS)) fail(`check "${name}" has "${unread(check, CHECK_KEYS)}", which this map doesn't read`);
+    if (!isText(check.about)) fail(`check "${name}" has no description`);
     if (check.run !== undefined && !isStrings(check.run)) fail(`check "${name}" has commands that aren't text`);
-    if ((check.by === 'ci') !== (typeof check.job === 'string' && check.job !== '')) fail(`check "${name}" needs a CI job if, and only if, CI runs it`);
+    for (const key of ['job', 'workflow', 'when', 'steps']) {
+      if (check[key] !== undefined && !isText(check[key])) fail(`check "${name}" has a "${key}" that isn't text`);
+    }
+    // What each kind of check has to say, and what only its kind may.
+    if ((check.by === 'ci') !== (check.job !== undefined)) fail(`check "${name}" needs a CI job if, and only if, CI runs it`);
+    if ((check.by === 'workflow') !== (check.workflow !== undefined)) {
+      fail(`check "${name}" needs a workflow if, and only if, a workflow of its own runs it`);
+    }
+    if (check.by === 'ci' && check.run === undefined) fail(`check "${name}" has no commands for CI to run`);
+    if (check.by === 'hand' && check.run === undefined && check.when === undefined) {
+      fail(`check "${name}" is done by hand, so it needs commands or a condition`);
+    }
+    if (check.steps !== undefined && check.when === undefined) fail(`check "${name}" has steps but no condition to do them under`);
   }
   if (!Array.isArray(rules) || rules.length === 0) fail('has no rules');
   const seen = new Set();
   const read = rules.map((rule, index) => {
     const where = `rule ${index + 1}`;
-    if (rule === null || typeof rule !== 'object') fail(`${where} is not an object`);
-    if (typeof rule.about !== 'string' || rule.about === '') fail(`${where} has no description`);
+    if (!isObject(rule)) fail(`${where} is not an object`);
+    if (unread(rule, RULE_KEYS)) fail(`${where} has "${unread(rule, RULE_KEYS)}", which this map doesn't read`);
+    if (!isText(rule.about)) fail(`${where} has no description`);
     if (!isStrings(rule.paths)) fail(`${where} has no paths`);
     if (!isStrings(rule.needs)) fail(`${where} has no checks`);
     for (const name of rule.needs) {

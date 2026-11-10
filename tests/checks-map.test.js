@@ -31,8 +31,8 @@ function changed(change) {
 
 // The classifier's own lists as they were before the map (policy version
 // 2), kept to show the map decides the browser tests exactly as they did.
-// When a decision is changed on purpose, change it here in the same pull
-// request, so the difference is written down.
+// Delete this, and the test that uses it, with the first decision that is
+// changed on purpose.
 function browserBeforeTheMap(file) {
   const nonBrowserPaths = [
     '.gitattributes',
@@ -93,11 +93,15 @@ describe('the map of which checks a change needs', () => {
       assert.ok(text, `ci.yml has no ${job} job`);
       for (const command of run) assert.match(text, new RegExp(`^ {8}run: ${command}$`, 'm'), `${job} doesn't run ${command}`);
     }
+    // The checks a workflow of its own runs name a workflow that is there.
+    const own = Object.entries(map.checks).filter(([, check]) => check.by === 'workflow');
+    assert.deepEqual(own.map(([name]) => name), ['audio-hosted', 'dependency-audit']);
+    for (const [name, { workflow }] of own) assert.ok(tracked.includes(workflow), `${name}: no ${workflow}`);
     // The commands are the package's own scripts.
     const { scripts } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     for (const [name, { run = [] }] of Object.entries(map.checks)) {
       for (const command of run) {
-        const script = /npm run ([\w:-]+)$/.exec(command)?.[1];
+        const script = /npm run ([\w:-]+)(?: -- <folder>)?$/.exec(command)?.[1];
         assert.ok(script && scripts[script], `${name}: ${command} is not one of package.json's scripts`);
       }
     }
@@ -181,6 +185,21 @@ describe('the map of which checks a change needs', () => {
     refused((copy) => delete copy.checks.ui.job, /check "ui" needs a CI job/);
     refused((copy) => (copy.checks.listen.job = 'browser-smoke'), /check "listen" needs a CI job/);
     refused((copy) => (copy.checks.repo.run = 'npm run check'), /check "repo" has commands that aren't text/);
+    refused((copy) => delete copy.checks['audio-hosted'].workflow, /check "audio-hosted" needs a workflow/);
+    refused((copy) => (copy.checks.repo.workflow = '.github/workflows/ci.yml'), /check "repo" needs a workflow/);
+    refused((copy) => (copy.checks.listen.when = ''), /check "listen" has a "when" that isn't text/);
+    refused((copy) => (copy.checks.listen.steps = ['Listen.']), /check "listen" has a "steps" that isn't text/);
+    refused((copy) => (copy.checks.listen.when = 17), /check "listen" has a "when" that isn't text/);
+    refused((copy) => (copy.checks.listen.job = 42), /check "listen" has a "job" that isn't text/);
+    refused((copy) => (copy.checks['audio-hosted'].workflow = 7), /check "audio-hosted" has a "workflow" that isn't text/);
+    refused((copy) => delete copy.checks.extension.run, /check "extension" has no commands for CI to run/);
+    refused((copy) => delete copy.checks['audio-mac'].run, /check "audio-mac" is done by hand, so it needs commands or a condition/);
+    refused((copy) => delete copy.checks.listen.when, /check "listen" is done by hand, so it needs commands or a condition/);
+    refused((copy) => (copy.checks['site-popup-sync'].steps = 'Copy it.'), /check "site-popup-sync" has steps but no condition/);
+    // A key the map doesn't read, such as a misspelled one.
+    refused((copy) => (copy.checks.listen.whn = 'always'), /check "listen" has "whn", which this map doesn't read/);
+    refused((copy) => (copy.rules[0].need = ['repo']), /rule 1 has "need", which this map doesn't read/);
+    refused((copy) => (copy.rule = []), /has "rule", which this map doesn't read/);
     assert.throws(() => readMap('[]'), /is not an object/);
     assert.throws(() => readMap('{'), SyntaxError);
     // And the map as it is reads.

@@ -10,7 +10,7 @@
       "by": "ci",
       "job": "repository-checks",
       "run": ["npm run check"],
-      "about": "Lint, the unit tests and Firefox's lint of the build. Every change needs it."
+      "about": "Lint, the unit tests and Firefox's lint of the build."
     },
     "extension": {
       "by": "ci",
@@ -33,17 +33,24 @@
     "audio-hosted": {
       "by": "workflow",
       "workflow": ".github/workflows/audio-capture-trial.yml",
-      "about": "Both jobs of the Audio suites workflow on the pull request's final commit, none skipped or cancelled. GitHub starts it from the workflow's own paths, and it isn't a required check, so look at it by hand."
+      "about": "Both jobs of the Audio suites workflow passed on the pull request's final commit, none skipped or canceled. GitHub starts it by itself. It isn't a required check, so look."
     },
     "audio-mac": {
       "by": "hand",
       "run": ["AUDIO_REGRESSION_MUTE=1 npm run test:audio:chromium", "npm run test:audio:firefox"],
-      "about": "The audio suites on this Mac, on the pull request's final commit. Firefox plays the tone aloud, so ask first."
+      "about": "The audio suites on this Mac, on the pull request's final commit, one at a time. Firefox plays the tone aloud, so ask first."
+    },
+    "dependency-audit": {
+      "by": "workflow",
+      "workflow": ".github/workflows/dependency-audit.yml",
+      "run": ["npm run audit:dependencies -- <folder>"],
+      "about": "Read the `summary.md` it writes in the folder. The Dependency audit workflow runs it on the pull request too. It isn't a required check, so look."
     },
     "listen": {
       "by": "hand",
-      "when": "the change can affect how the effect sounds",
-      "about": "Listen to reverb, echo, EQ, width and saturation with music."
+      "when": "a change can affect how the effect sounds (the audio graph's wiring, an effect's code, gains, fades, presets or defaults, what the popup sends to the tab and how often, or a browser change to Web Audio)",
+      "about": "Listen to how the effect sounds, with music, in both browsers.",
+      "steps": "Listen to reverb, echo, EQ, width and saturation with music. The audio suite keeps echo, saturation and EQ neutral, so it can't hear this. Compare a loud, bright song in Chromium and Firefox too: they should sound alike, and in each, turning the extension on with every setting at its default should only make the song a little louder (the limiter stage)."
     },
     "firefox-frame-look": {
       "by": "hand",
@@ -52,8 +59,14 @@
     },
     "permission-steps": {
       "by": "hand",
-      "when": "the permission code changed: the manifest's permissions, or how the extension asks for access or handles it",
-      "about": "The permission and revoking steps of RELEASE-CHECKLIST.md, in each browser."
+      "when": "the permission code changed (the manifest's permissions, or how the extension asks for access or handles it)",
+      "about": "The permission and revoking steps, in each browser, also outside a release.",
+      "steps": "In each browser, also outside a release: the YouTube Music step under \"The entry points\" above (Firefox's YouTube Music prompt), \"Permission prompts\", a reload of each site with the effect on, and revoking access."
+    },
+    "store-art-look": {
+      "by": "hand",
+      "when": "there is new store art",
+      "about": "Look at each image at the size the store shows it (`store-assets/README.md`)."
     },
     "site-popup-sync": {
       "by": "hand",
@@ -68,6 +81,11 @@
       "needs": ["repo", "extension", "ui", "site", "audio-hosted"]
     },
     {
+      "about": "The dependency audit's workflow, which is also one of the workflows below.",
+      "paths": [".github/workflows/dependency-audit.yml"],
+      "needs": ["repo", "extension", "ui", "site", "dependency-audit"]
+    },
+    {
       "about": "What decides and enforces which checks run: the workflows (Dependabot's action updates included), the classifier and this map. A change to them runs every check CI decides.",
       "paths": [".github/workflows/**", "checks.json", "scripts/classify-ci-changes.js"],
       "needs": ["repo", "extension", "ui", "site"]
@@ -78,23 +96,31 @@
       "needs": ["repo"]
     },
     {
-      "about": "Repository settings, the unit tests, the store's files, and the tools that render or release, which no browser test runs.",
+      "about": "npm's settings, which decide what an install and the audit read.",
+      "paths": [".npmrc"],
+      "needs": ["repo", "dependency-audit"]
+    },
+    {
+      "about": "Repository settings, the unit tests, and the tools that render or release, which no browser test runs.",
       "paths": [
         ".gitattributes",
         ".github/**",
         ".gitignore",
-        ".npmrc",
         "eslint.config.js",
         "scripts/release.js",
         "scripts/render-icons.js",
         "scripts/render-store-assets.js",
         "scripts/stamp-site-assets.js",
         "scripts/sync-site-popup.js",
-        "store-assets/**",
         "tests/**",
         "wrangler.jsonc"
       ],
       "needs": ["repo"]
+    },
+    {
+      "about": "The store's images and the captures they are made from. The listing text is documentation.",
+      "paths": ["store-assets/**"],
+      "needs": ["repo", "store-art-look"]
     },
     {
       "about": "The audio engines. The limiter stage in them is part of what the popup and limiter tests render.",
@@ -147,15 +173,13 @@
       "needs": ["repo", "extension", "ui", "site", "audio-hosted"]
     },
     {
-      "about": "Dependencies, the Node.js version, and what the CI jobs install their packages and Firefox with. They can change any test's result.",
-      "paths": [
-        ".nvmrc",
-        "package-lock.json",
-        "package.json",
-        "scripts/ci-install-firefox.sh",
-        "scripts/ci-package-downloads.sh",
-        "scripts/firefox-release.js"
-      ],
+      "about": "Dependencies and the Node.js version. They can change any test's result.",
+      "paths": [".nvmrc", "package-lock.json", "package.json"],
+      "needs": ["repo", "extension", "ui", "site", "audio-hosted", "dependency-audit"]
+    },
+    {
+      "about": "What the CI jobs install their packages and Firefox with.",
+      "paths": ["scripts/ci-install-firefox.sh", "scripts/ci-package-downloads.sh", "scripts/firefox-release.js"],
       "needs": ["repo", "extension", "ui", "site", "audio-hosted"]
     },
     {
@@ -195,14 +219,13 @@
       "needs": ["repo", "site"]
     },
     {
+      "about": "The dependency audit and the advisories it lets through. Not sorted for the browser tests yet, like the rule below.",
+      "paths": ["audit-exceptions.json", "scripts/dependency-audit.js"],
+      "needs": ["repo", "extension", "ui", "site", "dependency-audit"]
+    },
+    {
       "about": "Not sorted yet. Nothing shows the browser tests use these, but CI ran them for these before this map, as for any path it didn't know, and still does.",
-      "paths": [
-        ".claude/launch.json",
-        "audit-exceptions.json",
-        "scripts/check-whitespace.js",
-        "scripts/dependency-audit.js",
-        "scripts/node-test-results.js"
-      ],
+      "paths": [".claude/launch.json", "scripts/check-whitespace.js", "scripts/node-test-results.js"],
       "needs": ["repo", "extension", "ui", "site"]
     }
   ]
