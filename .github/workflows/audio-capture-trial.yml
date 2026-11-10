@@ -88,16 +88,13 @@ jobs:
             name: Chromium
           - browser: firefox
             name: Firefox
-    # A browser's suite takes about 5 minutes and its trial about 1;
-    # installing the sound server took up to 13 on its own from the Azure
-    # mirror, and well under one from Ubuntu's archive. Every step below has
-    # its own deadline. Together they come to 45 in the Chromium job (24 to
-    # set up, 10 for the suite, 5 for the trial, 1 to show the sound server
-    # and 5 to upload) and 41 in the Firefox job (14 to set up, 1 to choose
-    # a Firefox, 3 to install it, 2 to read its files, then as in Chromium's),
-    # leaving 5 for the runner's own work between them, so even a step that
-    # runs out of time leaves time to upload the evidence
-    # (tests/audio-workflow.test.js checks the sums).
+    # Every step below has its own deadline. Together they come to 45 in the
+    # Chromium job (24 to set up, 10 for the suite, 5 for the trial, 1 to
+    # show the sound server and 5 to upload) and 41 in the Firefox job (14
+    # to set up, 1 to choose a Firefox, 3 to install it, 2 to read its
+    # files, then as in Chromium's), leaving 5 for the runner's own work
+    # between them, so even a step that runs out of time leaves time to
+    # upload the evidence (tests/audio-workflow.test.js checks the sums).
     timeout-minutes: 50
 
     steps:
@@ -122,6 +119,8 @@ jobs:
         timeout-minutes: 3
         run: npm ci
 
+      # Before any step that installs with APT: GitHub's Azure mirror for
+      # Ubuntu can be too slow for the steps' deadlines.
       - name: Download Ubuntu packages from Ubuntu's archive
         timeout-minutes: 1
         run: bash scripts/ci-package-downloads.sh
@@ -193,11 +192,10 @@ jobs:
           FIREFOX_VERSION: ${{ steps.firefox-release.outputs.version }}
         run: bash scripts/ci-install-firefox.sh
 
-      # On GitHub's Ubuntu runners Firefox has sometimes not started within
-      # 30 s, its main process waiting on the disk (in disk sleep, using no
-      # CPU) when it was checked. Which file it waited for isn't known. As
-      # an experiment, this reads Firefox's install once first, so it is in
-      # memory, and logs how long the disk took. It can't stop the tests.
+      # An experiment: on GitHub's Ubuntu runners Firefox can be slow to
+      # start while it waits on the disk. This reads Firefox's install once
+      # first, so it is in memory, and logs how long the disk took. It can't
+      # stop the tests.
       - name: Read Firefox's files into memory
         if: matrix.browser == 'firefox'
         continue-on-error: true
