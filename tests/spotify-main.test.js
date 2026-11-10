@@ -475,6 +475,43 @@ describe('Spotify main-world audio engine', () => {
     harness.dom.window.close();
   });
 
+  test('fades in Firefox for a change to normal speed and away from it, and never without changing the speed', async () => {
+    const harness = setup({ userAgent: FIREFOX_USER_AGENT });
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 0.9989 });
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    const context = FakeAudioContext.instances[0];
+    const processed = outputGains(context)[1];
+
+    // Within a thousandth of the player's speed, the player isn't changed,
+    // so the output must not go silent for it either.
+    context.currentTime = 2;
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 0.9991 });
+    await settle();
+    assert.equal(harness.media.playbackRate, 0.9989);
+    for (const time of [2.01, 2.03, 2.07, 2.1, 2.2]) assert.equal(processed.gain.valueAt(time), 1);
+
+    // To normal speed: silent while the player changes.
+    context.currentTime = 3;
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 1 });
+    assert.equal(harness.media.playbackRate, 0.9989);
+    await settle();
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(processed.gain.valueAt(3.07), 0);
+    assert.equal(processed.gain.valueAt(3.2), 1);
+
+    // Away from it, by the smallest step the popup makes.
+    context.currentTime = 4;
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 1.01 });
+    assert.equal(harness.media.playbackRate, 1);
+    await settle();
+    assert.equal(harness.media.playbackRate, 1.01);
+    assert.equal(processed.gain.valueAt(4.07), 0);
+    assert.equal(processed.gain.valueAt(4.2), 1);
+
+    harness.dom.window.close();
+  });
+
   test('leaves the speed Spotify sets alone while the effect is off', async () => {
     const harness = setup({ userAgent: FIREFOX_USER_AGENT });
     harness.apply(true, { ...SETTINGS, keepPitch: false });

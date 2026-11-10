@@ -208,7 +208,7 @@ function withoutRinging(expect, ringing) {
 const NOTHING = Object.freeze({});
 
 // Which side of normal speed a speed is on, as the engines' speedSide.
-const speedSide = (speed) => (Math.abs(speed - 1) <= 0.001 ? 0 : Math.sign(speed - 1));
+const speedSide = (speed) => Math.sign(speed - 1);
 
 // What a change of settings may do: the engines' silent dip when it makes
 // the player click, nothing otherwise. In Firefox a change of speed that
@@ -216,7 +216,8 @@ const speedSide = (speed) => (Math.abs(speed - 1) <= 0.001 ? 0 : Math.sign(speed
 // engines change the player at once, and it must not click or go silent.
 function settingsChange(target, from, to) {
   const pitchChanges = from.keepPitch !== to.keepPitch;
-  const speedClicks = target === 'firefox' && speedSide(from.speed) !== speedSide(to.speed);
+  const speedChanges = Math.abs(from.speed - to.speed) > 0.001;
+  const speedClicks = target === 'firefox' && speedChanges && speedSide(from.speed) !== speedSide(to.speed);
   return pitchChanges || speedClicks ? { silenceMs: DIP_MS } : NOTHING;
 }
 

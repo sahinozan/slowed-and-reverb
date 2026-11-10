@@ -247,6 +247,28 @@ describe('content script audio processing', () => {
     ]);
   });
 
+  // Speeds within a thousandth of each other count as the same speed, as
+  // they did before, so a request that close to the player's speed never
+  // fades; one further apart that passes normal speed does, however little.
+  test('fades in Firefox by where the speeds are, not by how near normal speed they are', async (t) => {
+    const harness = await createContentHarness({
+      userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
+    });
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9989 }, enabled: true });
+    const processed = outputGains(harness.getContext())[1];
+    const fadesOut = (from) => ramps(processed.gain).slice(from).some((ramp) => ramp.to === 0);
+
+    let before = ramps(processed.gain).length;
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9991 }, enabled: true });
+    assert.equal(fadesOut(before), false);
+
+    before = ramps(processed.gain).length;
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 1.0009 }, enabled: true });
+    assert.equal(harness.media.playbackRate, 1.0009);
+    assert.equal(fadesOut(before), true);
+  });
+
   // A change that stays below normal speed, or stays above it, makes no
   // click there, so the player changes at once and nothing is faded out.
   for (const [title, from, to] of [

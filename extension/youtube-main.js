@@ -415,11 +415,13 @@
 
   // Which side of normal speed a speed is on: -1 below, 1 above, 0 at it.
   function speedSide(speed) {
-    return Math.abs(speed - 1) <= 0.001 ? 0 : Math.sign(speed - 1);
+    return Math.sign(speed - 1);
   }
 
   function playbackClicks(media, speed, keepPitch) {
     if (media.preservesPitch !== keepPitch) return true;
+    // A speed this close to the player's own is no change of speed.
+    if (Math.abs(media.playbackRate - speed) <= 0.001) return false;
     return FIREFOX && speedSide(media.playbackRate) !== speedSide(speed);
   }
 

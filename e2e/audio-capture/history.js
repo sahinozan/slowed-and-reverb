@@ -120,8 +120,9 @@ const HISTORY = [
       }
     ],
     // In 90 changes to, from or across normal speed with no fade, in
-    // Firefox 159 and 160, the player clicked every time, at 0.53 or more
-    // for a change from one side to the other.
+    // Firefox 159 and 160, 89 were over the click threshold and one, from
+    // 0.8 to normal speed, was at 0.036. Every change from one side to the
+    // other was at 0.53 or more, so the control asks for those.
     expect: [{ code: 'click', during: ['during speed 1.1, across normal speed', 'during speed 0.9, back across normal speed'] }]
   },
   {
