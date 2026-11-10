@@ -51,7 +51,7 @@ run `npm run checks:tables`.
 | `.github/workflows/**`, `checks.json`, `scripts/classify-ci-changes.js` | `extension`, `ui`, `site` |
 | `**/*.md`, `LICENSE` | nothing more |
 | `.npmrc` | `dependency-audit` |
-| `.gitattributes`, `.github/**`, `.gitignore`, `eslint.config.js`, `scripts/release.js`, `scripts/render-icons.js`, `scripts/render-store-assets.js`, `scripts/stamp-site-assets.js`, `scripts/sync-site-popup.js`, `tests/**`, `wrangler.jsonc` | nothing more |
+| `.claude/launch.json`, `.gitattributes`, `.github/**`, `.gitignore`, `eslint.config.js`, `scripts/check-whitespace.js`, `scripts/node-test-results.js`, `scripts/release.js`, `scripts/render-checks-tables.js`, `scripts/render-icons.js`, `scripts/render-store-assets.js`, `scripts/stamp-site-assets.js`, `scripts/sync-site-popup.js`, `tests/**`, `wrangler.jsonc` | nothing more |
 | `store-assets/**` | `store-art-look` |
 | `extension/spotify-main.js`, `extension/youtube-main.js` | `extension`, `ui`, `audio-hosted`, `audio-mac`, `listen` |
 | `extension/background.js`, `extension/content.js`, `extension/spotify-bridge.js` | `extension`, `audio-hosted`, `audio-mac`, `listen`, `permission-steps` |
@@ -60,19 +60,19 @@ run `npm run checks:tables`.
 | `extension/popup.html`, `extension/popup.js` | `extension`, `ui`, `site`, `listen`, `permission-steps`, `site-popup-sync` |
 | `extension/popup.css` | `extension`, `ui`, `site`, `firefox-frame-look`, `site-popup-sync` |
 | `extension/assets/*.png`, `extension/assets/*.svg` | `extension` |
-| `e2e/audio-capture/**` | `extension`, `ui`, `site`, `audio-hosted`, `audio-mac` |
+| `e2e/audio-capture/**` | `audio-hosted`, `audio-mac` |
 | `e2e/extension-copy.js`, `e2e/firefox-launch.js` | `extension`, `audio-hosted` |
 | `scripts/request-target.js` | `extension`, `ui`, `site`, `audio-hosted` |
 | `.nvmrc`, `package-lock.json`, `package.json` | `extension`, `ui`, `site`, `audio-hosted`, `dependency-audit` |
-| `scripts/ci-install-firefox.sh`, `scripts/ci-package-downloads.sh`, `scripts/firefox-release.js` | `extension`, `ui`, `site`, `audio-hosted` |
+| `scripts/ci-package-downloads.sh` | `extension`, `ui`, `site`, `audio-hosted` |
+| `scripts/ci-install-firefox.sh`, `scripts/firefox-release.js` | `audio-hosted` |
 | `e2e/extension.spec.js`, `e2e/firefox-shutdown.js`, `e2e/fixtures.js`, `playwright.config.js` | `extension` |
 | `scripts/build-extension.js` | `extension`, `audio-hosted`, `permission-steps` |
 | `e2e/popup-geometry.js` | `extension`, `ui` |
 | `e2e/limiter-stage.js`, `e2e/ui/**`, `playwright.ui.config.js`, `scripts/popup-preview.js`, `scripts/serve-site.js` | `ui`, `site` |
 | `site/demo-audio.js` | `ui`, `site` |
 | `site/**` | `site` |
-| `audit-exceptions.json`, `scripts/dependency-audit.js` | `extension`, `ui`, `site`, `dependency-audit` |
-| `.claude/launch.json`, `scripts/check-whitespace.js`, `scripts/node-test-results.js`, `scripts/render-checks-tables.js` | `extension`, `ui`, `site` |
+| `audit-exceptions.json`, `scripts/dependency-audit.js` | `dependency-audit` |
 | any other path | `extension`, `ui`, `site`, and a rule in `checks.json` |
 <!-- The end of the part made from checks.json. -->
 

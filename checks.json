@@ -101,13 +101,17 @@
       "needs": ["repo", "dependency-audit"]
     },
     {
-      "about": "Repository settings, the unit tests, and the tools that render or release, which no browser test runs.",
+      "about": "Repository and editor settings, the unit tests, and the tools that check, render or release, which no browser test loads.",
       "paths": [
+        ".claude/launch.json",
         ".gitattributes",
         ".github/**",
         ".gitignore",
         "eslint.config.js",
+        "scripts/check-whitespace.js",
+        "scripts/node-test-results.js",
         "scripts/release.js",
+        "scripts/render-checks-tables.js",
         "scripts/render-icons.js",
         "scripts/render-store-assets.js",
         "scripts/stamp-site-assets.js",
@@ -158,9 +162,9 @@
       "needs": ["repo", "extension"]
     },
     {
-      "about": "The audio suite. CI runs every browser test for it too, as it did before this map, though nothing shows they use it.",
+      "about": "The audio suite. No browser test loads it.",
       "paths": ["e2e/audio-capture/**"],
-      "needs": ["repo", "extension", "ui", "site", "audio-hosted", "audio-mac"]
+      "needs": ["repo", "audio-hosted", "audio-mac"]
     },
     {
       "about": "What the audio suites share with the extension's browser tests: the disposable copy of the build and starting Firefox.",
@@ -178,9 +182,14 @@
       "needs": ["repo", "extension", "ui", "site", "audio-hosted", "dependency-audit"]
     },
     {
-      "about": "What the CI jobs install their packages and Firefox with.",
-      "paths": ["scripts/ci-install-firefox.sh", "scripts/ci-package-downloads.sh", "scripts/firefox-release.js"],
+      "about": "What the browser and audio jobs set up their package downloads with.",
+      "paths": ["scripts/ci-package-downloads.sh"],
       "needs": ["repo", "extension", "ui", "site", "audio-hosted"]
+    },
+    {
+      "about": "What the audio jobs choose and install a Firefox with.",
+      "paths": ["scripts/ci-install-firefox.sh", "scripts/firefox-release.js"],
+      "needs": ["repo", "audio-hosted"]
     },
     {
       "about": "The extension's browser tests.",
@@ -219,19 +228,9 @@
       "needs": ["repo", "site"]
     },
     {
-      "about": "The dependency audit and the advisories it lets through. Not sorted for the browser tests yet, like the rule below.",
+      "about": "The dependency audit and the advisories it lets through.",
       "paths": ["audit-exceptions.json", "scripts/dependency-audit.js"],
-      "needs": ["repo", "extension", "ui", "site", "dependency-audit"]
-    },
-    {
-      "about": "Not sorted yet. Nothing shows the browser tests use these, but CI ran them for these before this map, as for any path it didn't know, and still does.",
-      "paths": [
-        ".claude/launch.json",
-        "scripts/check-whitespace.js",
-        "scripts/node-test-results.js",
-        "scripts/render-checks-tables.js"
-      ],
-      "needs": ["repo", "extension", "ui", "site"]
+      "needs": ["repo", "dependency-audit"]
     }
   ]
 }

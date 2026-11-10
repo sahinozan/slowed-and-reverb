@@ -3,8 +3,8 @@
 // Checks checks.json, the map of which checks a change needs: that it is
 // whole, that every tracked file has a rule and every pattern still decides
 // a file, that what decides the checks always runs all of them, that the CI
-// jobs it names run its commands, and that it decides the browser tests as
-// the classifier's own lists did before it.
+// jobs it names run its commands, and that every file the browser tests
+// load has them in the map.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -14,6 +14,7 @@ const { describe, test } = require('node:test');
 const { BROWSER_JOB, checksFor, classifyFiles, patternRegExp, readMap, ruleFor } = require('../scripts/classify-ci-changes');
 
 const { root } = require('./helpers/load-script');
+const { commandFiles, playwrightTestFiles, requireClosure } = require('./helpers/load-graph');
 
 const source = fs.readFileSync(path.join(root, 'checks.json'), 'utf8');
 const map = readMap(source);
@@ -29,27 +30,33 @@ function changed(change) {
   return JSON.stringify(copy);
 }
 
-// The classifier's own lists as they were before the map (policy version
-// 2), kept to show the map decides the browser tests exactly as they did.
-// Delete this, and the test that uses it, with the first decision that is
-// changed on purpose.
-function browserBeforeTheMap(file) {
-  const nonBrowserPaths = [
-    '.gitattributes',
-    '.gitignore',
-    '.npmrc',
-    'eslint.config.js',
-    'scripts/release.js',
-    'scripts/render-icons.js',
-    'scripts/stamp-site-assets.js',
-    'scripts/sync-site-popup.js',
-    'scripts/render-store-assets.js',
-    'wrangler.jsonc'
-  ];
-  const nonBrowserDirectories = ['.github/', 'store-assets/', 'tests/'];
-  if (file === 'scripts/classify-ci-changes.js' || file.startsWith('.github/workflows/')) return true;
-  if (file === 'LICENSE' || file.endsWith('.md')) return false;
-  return !(nonBrowserPaths.includes(file) || nonBrowserDirectories.some((directory) => file.startsWith(directory)));
+// Where the map and what the browser tests load disagree. Each command of
+// a check CI's browser job runs is followed to the files it runs and the
+// modules they require; each of those files has to need that check, or
+// another check with the same command (the popup's and the website's tests
+// are one command). The job's own scripts in the workflow need one of the
+// job's checks. A file the browser tests load that the map doesn't give
+// them could change without the tests that use it running.
+function browserLoadProblems(checkMap, scripts, workflowText, listTests) {
+  const problems = [];
+  const browser = Object.keys(checkMap.checks).filter((name) => checkMap.checks[name].job === BROWSER_JOB);
+  const commands = [...new Set(browser.flatMap((name) => checkMap.checks[name].run))];
+  for (const command of commands) {
+    const any = browser.filter((name) => checkMap.checks[name].run.includes(command));
+    const script = /^npm run ([\w:-]+)$/.exec(command)?.[1];
+    for (const file of requireClosure(commandFiles(scripts, script, listTests))) {
+      if (!checksFor(checkMap, file).some((name) => any.includes(name))) {
+        problems.push(`${command} loads ${file}, but checks.json doesn't give it ${any.join(' or ')}`);
+      }
+    }
+  }
+  const job = new RegExp(`^ {2}${BROWSER_JOB}:\\n[\\s\\S]*?(?=^ {2}\\S|(?![\\s\\S]))`, 'm').exec(workflowText)?.[0] ?? '';
+  for (const file of new Set([...job.matchAll(/\b(scripts\/[\w.-]+\.(?:js|sh))\b/g)].map((match) => match[1]))) {
+    if (!checksFor(checkMap, file).some((name) => browser.includes(name))) {
+      problems.push(`the ${BROWSER_JOB} job runs ${file}, but checks.json gives it none of ${browser.join(', ')}`);
+    }
+  }
+  return problems;
 }
 
 describe('the map of which checks a change needs', () => {
@@ -124,27 +131,61 @@ describe('the map of which checks a change needs', () => {
     }
   });
 
-  test('decides the browser tests as the classifier\'s own lists did', () => {
-    // Every tracked path, and paths made from them that don't exist: a file
-    // beside each, in each of its folders, with and without a
-    // documentation name.
-    const paths = new Set(tracked);
-    for (const file of tracked) {
-      paths.add(`${file}.md`);
-      const parts = file.split('/');
-      for (let depth = 0; depth < parts.length; depth++) {
-        const folder = parts.slice(0, depth).join('/');
-        for (const name of ['new-file.js', 'new-file', 'notes.md', 'LICENSE', 'checks.json']) {
-          paths.add(folder ? `${folder}/${name}` : name);
-        }
-      }
+  test('every file the browser tests load has them in the map', () => {
+    const { scripts } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    // Playwright lists each configuration's tests once for the checks below.
+    const listed = new Map();
+    const listTests = (config) => listed.get(config) ?? listed.set(config, playwrightTestFiles(config)).get(config);
+    assert.deepEqual(browserLoadProblems(map, scripts, ciWorkflow, listTests), []);
+
+    // What is followed: the commands' own files and what they require.
+    const e2e = requireClosure(commandFiles(scripts, 'test:e2e', listTests));
+    for (const file of ['scripts/build-extension.js', 'playwright.config.js', 'e2e/extension.spec.js', 'e2e/extension-copy.js', 'scripts/request-target.js']) {
+      assert.ok(e2e.includes(file), `test:e2e wasn't followed to ${file}`);
     }
-    assert.ok(paths.size > tracked.length * 2);
-    const different = [...paths].filter((file) => classifyFiles([file], map).browser !== browserBeforeTheMap(file));
-    // The map itself is new: before it, checks.json was a path like any
-    // other the lists didn't know, which ran the browser tests too.
-    assert.deepEqual(different, []);
-    assert.equal(browserBeforeTheMap('checks.json'), true);
+    const ui = requireClosure(commandFiles(scripts, 'test:ui', listTests));
+    for (const file of ['playwright.ui.config.js', 'e2e/ui/site.spec.js', 'e2e/limiter-stage.js', 'scripts/popup-preview.js', 'scripts/serve-site.js']) {
+      assert.ok(ui.includes(file), `test:ui wasn't followed to ${file}`);
+    }
+    assert.ok(requireClosure(commandFiles(scripts, 'test:firefox', listTests)).includes('e2e/firefox-launch.js'));
+    // None of them loads the audio suite, the audit or the checking tools,
+    // which is why those don't need the browser tests.
+    const loaded = new Set([...e2e, ...ui, ...requireClosure(commandFiles(scripts, 'test:firefox', listTests))]);
+    for (const file of loaded) assert.ok(!file.startsWith('e2e/audio-capture/'), file);
+    for (const file of ['scripts/dependency-audit.js', 'scripts/firefox-release.js', 'scripts/check-whitespace.js', 'scripts/node-test-results.js']) {
+      assert.ok(!loaded.has(file), file);
+      assert.deepEqual(classifyFiles([file], map), { browser: false }, file);
+    }
+  });
+
+  test('finds a file the browser tests load that the map leaves out of them', () => {
+    const { scripts } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    const listTests = (config) => (config === 'playwright.config.js' ? ['e2e/extension.spec.js'] : ['e2e/ui/site.spec.js']);
+    assert.deepEqual(browserLoadProblems(map, scripts, ciWorkflow, listTests), []);
+    // The rule for the disposable copy of the build and for starting
+    // Firefox taken out of the extension's tests.
+    const without = readMap(
+      changed((copy) => {
+        const rule = copy.rules.find(({ paths }) => paths.includes('e2e/extension-copy.js'));
+        rule.needs = rule.needs.filter((name) => name !== 'extension');
+      })
+    );
+    assert.deepEqual(browserLoadProblems(without, scripts, ciWorkflow, listTests), [
+      "npm run test:e2e loads e2e/extension-copy.js, but checks.json doesn't give it extension",
+      "npm run test:firefox loads e2e/extension-copy.js, but checks.json doesn't give it extension",
+      "npm run test:firefox loads e2e/firefox-launch.js, but checks.json doesn't give it extension"
+    ]);
+    // A test that starts loading a file of the audio suite.
+    const loads = { ...scripts, 'test:ui': `${scripts['test:ui']} && node e2e/audio-capture/metrics.js` };
+    assert.deepEqual(browserLoadProblems(map, loads, ciWorkflow, listTests), [
+      "npm run test:ui loads e2e/audio-capture/metrics.js, but checks.json doesn't give it ui or site"
+    ]);
+    // A script the job runs that the map gives none of its checks.
+    const job = ciWorkflow.replace('run: bash scripts/ci-package-downloads.sh', 'run: bash scripts/ci-install-firefox.sh');
+    assert.notEqual(job, ciWorkflow);
+    assert.deepEqual(browserLoadProblems(map, scripts, job, listTests), [
+      'the browser-smoke job runs scripts/ci-install-firefox.sh, but checks.json gives it none of extension, ui, site'
+    ]);
   });
 
   test('reads patterns as GitHub\'s path filters do, and only the kinds it knows', () => {

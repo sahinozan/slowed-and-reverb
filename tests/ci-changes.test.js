@@ -33,6 +33,25 @@ describe('CI change classification', () => {
     );
   });
 
+  test('skips the browser tests for what none of them loads: the audio suite, the audit and the checking tools', () => {
+    for (const file of [
+      'e2e/audio-capture/harness.js',
+      'e2e/audio-capture/recorder-worklet.js',
+      'scripts/ci-install-firefox.sh',
+      'scripts/firefox-release.js',
+      'audit-exceptions.json',
+      'scripts/dependency-audit.js',
+      '.claude/launch.json',
+      'scripts/check-whitespace.js',
+      'scripts/node-test-results.js',
+      'scripts/render-checks-tables.js'
+    ]) {
+      assert.deepEqual(classifyFiles([file]), { browser: false }, file);
+    }
+    // What the browser job itself sets up with still runs them.
+    assert.deepEqual(classifyFiles(['scripts/ci-package-downloads.sh']), { browser: true });
+  });
+
   test('runs the browser tests for the website and what serves the popup and the site to them', () => {
     for (const file of [
       'site/index.html',
