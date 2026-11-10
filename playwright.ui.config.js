@@ -6,7 +6,7 @@
 // driven over WebDriver BiDi (Playwright's "moz-firefox" channel). Set
 // FIREFOX_BIN to use a Firefox other than the usual install. Nothing here
 // loads the extension: e2e/extension.spec.js does that, under
-// playwright.config.js. See README.md.
+// playwright.config.js. See docs/testing.md.
 
 const { defineConfig, devices } = require('@playwright/test');
 

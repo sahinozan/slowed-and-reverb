@@ -25,8 +25,8 @@ npm run test:audio-trial:chromium            # the trial in Chromium, about 1 mi
 npm run test:audio-trial:firefox             # the trial in Firefox, about 45 seconds
 ```
 
-Run one at a time, with no other browser tests, on a sound device (on
-Linux, a PulseAudio or PipeWire sink).
+Run one at a time, with no other browser tests, on a sound device
+([docs/testing.md](../../docs/testing.md#a-sound-device)).
 
 - `FIREFOX_BIN` chooses another Firefox, as for `npm run test:firefox`.
 - `AUDIO_REGRESSION_MUTE=1` mutes the Chromium suite, which records the
