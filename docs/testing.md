@@ -120,8 +120,8 @@ jobs start a PulseAudio null sink.
 GitHub's Windows runners have no sound device, so CI's Windows job sets
 `SLOWED_REVERB_UI_FIREFOX_PLAYBACK=omit` and the two tests tagged `@playback`
 (the demo playing, and its control for the popup's choices not reaching the
-demo) run there in Chromium only; every other test runs in both engines on
-both systems.
+demo) run there in Chromium only; every other website test runs in both
+engines on both systems.
 
 ## What stays manual
 
