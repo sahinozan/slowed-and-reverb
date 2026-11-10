@@ -12,13 +12,12 @@
 // They only see an agent's edit tools. A command that writes a file, as the
 // generators themselves do, isn't stopped. They read the edit from standard
 // input, read and write files in this repository only, load nothing but
-// Node's own modules and each other, and make no network requests.
+// Node's own modules and this file, and make no network requests.
 // Claude Code loads its settings only in a session started at a checkout's
 // root, so a session started in a folder below it has no hooks.
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { changes, parts } = require('./codex-patch');
 
 // One entry for each row of the "Generated files" table in AGENTS.md, in
 // the table's order, with the row's three cells as they are written there
@@ -192,44 +191,35 @@ function readInput() {
   return JSON.parse(fs.readFileSync(0, 'utf8'));
 }
 
-// The edit a hook is given, read once:
-//
-// - files: the files it names;
-// - textAfter(file, before): the text the file will hold, or null when the
-//   edit doesn't say;
-// - changesLines(file, inside, outside): whether it surely changes a
-//   stretch of the file's lines, for an edit that doesn't say what the
-//   file will hold.
+// The edit a hook is given: the files it names and, for one of them, the
+// text it will hold afterward, or null when the edit doesn't say.
 //
 // Claude Code's Edit and Write name one file; Write gives its text whole,
 // and Edit a text to find and the text to put there. Codex's apply_patch
-// names each file in its patch, from the session's folder. Only its
-// Add File gives a file's text; for its Update File, codex-patch.js says
-// what can be told.
+// names each file on a line of its patch, from the session's folder:
+//
+//   *** Update File: a/path          (or Add File, or Delete File)
+//   *** Move to: another/path        (optional, after Update File)
+//
+// A patch doesn't say what a file will hold. Working that out takes a copy
+// of how Codex finds each hunk's place, and a copy that differs refuses
+// patches that do no harm, so a patch is only read for the files it names.
 function readEdit(input) {
   const given = input?.tool_input ?? {};
   const from = typeof input?.cwd === 'string' ? input.cwd : process.cwd();
   const whole = (file, itself) => real(path.resolve(from, file), itself);
   if (typeof given.file_path === 'string') {
-    const textAfter = (file, before) => {
+    const textAfter = (before) => {
       if (typeof given.content === 'string') return given.content;
       if (typeof given.old_string !== 'string' || typeof given.new_string !== 'string') return null;
       if (given.replace_all) return before.split(given.old_string).join(given.new_string);
       return before.replace(given.old_string, () => given.new_string);
     };
-    return { files: [whole(given.file_path)], textAfter, changesLines: () => false };
+    return { files: [whole(given.file_path)], textAfter };
   }
-  const named = parts([given.command ?? []].flat().join('\n')).map((part) => ({
-    ...part,
-    file: whole(part.file, part.does === 'Delete File'),
-    movedTo: part.movedTo && whole(part.movedTo)
-  }));
-  const of = (file, does) => named.filter((part) => part.file === file && part.does === does);
-  return {
-    files: [...new Set(named.flatMap((part) => (part.movedTo ? [part.file, part.movedTo] : [part.file])))],
-    textAfter: (file) => of(file, 'Add File').map((part) => part.lines.filter((line) => line.startsWith('+')).map((line) => `${line.slice(1)}\n`).join('')).at(-1) ?? null,
-    changesLines: (file, inside, outside) => of(file, 'Update File').some((part) => changes(part.lines, inside, outside))
-  };
+  const patch = [given.command ?? []].flat().join('\n');
+  const named = patch.matchAll(/^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/gm);
+  return { files: [...new Set([...named].map(([, does, file]) => whole(file.trim(), does === 'Delete File')))], textAfter: () => null };
 }
 
 module.exports = { GENERATED, HOME, matches, matchesAny, place, readEdit, readInput };
