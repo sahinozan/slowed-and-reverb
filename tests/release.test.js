@@ -115,11 +115,16 @@ describe('Firefox privacy policy text', () => {
     assert.match(text, /\S+@\S+\.\S+/);
     assert.doesNotMatch(outsideCode, /\S+@\S+\.\S+/);
     // No bare web address either: Firefox Add-ons would make it a link over
-    // http. One written as a link keeps the https address it was given.
+    // http. One written as a link keeps the https address it was given. So
+    // outside code and https links, nothing may be shaped like an address:
+    // no words joined by a dot that end in letters, whatever the ending (a
+    // file name or an identifier belongs in code too), and no http anywhere
+    // outside code.
     const outsideLinks = outsideCode.replace(/\[[^\]]*\]\(https:\/\/[^)\s]+\)/g, '');
     assert.match(text, /\[slowedreverbapp\.com\]\(https:\/\/slowedreverbapp\.com\)/);
-    assert.doesNotMatch(outsideLinks, /\b[\w-]+\.(?:com|org|net|me|io|app)\b/i);
-    assert.doesNotMatch(text, /\]\(http:/);
+    assert.deepEqual(outsideLinks.match(/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b/gi), null);
+    assert.deepEqual(outsideLinks.match(/\b[a-z][a-z0-9+.-]*:\/\//gi), null);
+    assert.doesNotMatch(outsideCode, /http:/i);
     assert.match(text, /^\*\*Summary\*\*\nSlowed & Reverb processes audio locally in the browser\. /m);
     for (const link of markdown.match(/\]\(https:[^)]+\)/g)) assert.ok(text.includes(link), link);
   });
