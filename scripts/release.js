@@ -22,6 +22,9 @@ const path = require('path');
 const { execFileSync, spawn } = require('child_process');
 const AdmZip = require('adm-zip');
 const { FORMAT: RESULTS_FORMAT } = require('./node-test-results');
+// What a version bump touches is listed once, in scripts/version-set.js, which
+// writes it; the release checks it from the same list.
+const { compareVersions, parseVersion, sitePages, versionBumpProblems } = require('./version-set');
 
 const root = path.join(__dirname, '..');
 const TARGETS = ['chromium', 'firefox'];
@@ -83,16 +86,6 @@ function firefoxPrivacyText(markdown) {
   return `${output.replace(/\[([^\]]+@[^\]]+)\]\(mailto:[^)]+\)/g, '`$1`')}\n`;
 }
 
-function parseVersion(version) {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  return match ? match.slice(1).map(Number) : null;
-}
-
-function compareVersions(a, b) {
-  const [left, right] = [parseVersion(a), parseVersion(b)];
-  return left.map((part, index) => part - right[index]).find((difference) => difference !== 0) ?? 0;
-}
-
 // The newest release folder older than version, or null.
 function previousVersion(folders, version) {
   return (
@@ -101,48 +94,6 @@ function previousVersion(folders, version) {
       .sort(compareVersions)
       .pop() ?? null
   );
-}
-
-function versionsIn(text) {
-  return text?.match(/\d+\.\d+\.\d+/g) ?? [];
-}
-
-// What a version bump touches (AGENTS.md, "Releases") that still shows
-// another version. read(file) returns a file's text from the repository root.
-function versionBumpProblems(read, pages, version) {
-  const problems = [];
-  const expect = (ok, problem) => {
-    if (!ok) problems.push(problem);
-  };
-
-  const packageJson = JSON.parse(read('package.json'));
-  expect(packageJson.version === version, `package.json has version ${packageJson.version}`);
-  const lock = JSON.parse(read('package-lock.json'));
-  expect(
-    lock.version === version && lock.packages?.['']?.version === version,
-    'package-lock.json has another version in its root entries'
-  );
-  for (const file of [
-    'extension/content.js',
-    'extension/spotify-bridge.js',
-    'extension/spotify-main.js',
-    'extension/youtube-main.js'
-  ]) {
-    const literal = /const VERSION = '([^']*)';/.exec(read(file));
-    expect(literal?.[1] === version, `${file} has VERSION ${literal?.[1]}`);
-  }
-  for (const page of pages) {
-    expect(
-      read(`site/${page}`).includes(`<span>Slowed &amp; Reverb ${version}</span>`),
-      `site/${page} doesn't show ${version} in its footer`
-    );
-  }
-  expect(read('site/changelog.html').includes(`<h2>${version} `), `site/changelog.html has no entry for ${version}`);
-  const policy = /applies to versions ([\s\S]*?) of the/.exec(read('PRIVACY.md'))?.[1];
-  expect(versionsIn(policy).includes(version), `PRIVACY.md's versions line doesn't list ${version}`);
-  const page = /covers versions ([\s\S]*?) of Slowed/.exec(read('site/privacy.html'))?.[1];
-  expect(versionsIn(page).includes(version), `site/privacy.html's versions line doesn't list ${version}`);
-  return problems;
 }
 
 // "17 (16 files plus the assets directory entry)" for entries of
@@ -788,8 +739,7 @@ async function release(options) {
     const checks = {};
 
     await step('Version bump', () => {
-      const pages = fs.readdirSync(path.join(tree, 'site')).filter((name) => name.endsWith('.html'));
-      const problems = versionBumpProblems(read, pages, version);
+      const problems = versionBumpProblems(read, sitePages(tree), version);
       if (problems.length) throw new ReleaseError(`The version bump to ${version} is incomplete:\n  ${problems.join('\n  ')}`);
       return `everything shows ${version}`;
     });
