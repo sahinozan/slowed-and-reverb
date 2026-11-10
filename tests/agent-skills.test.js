@@ -47,21 +47,30 @@ const coded = (body) => [
 const MADE = /^(dist|test-results)\/|^(summary\.json|environment\.json|summary\.md|firefox-privacy-policy\.txt)$/;
 const FILE = /\.(json|js|md|html|css|yml|txt|png|svg|woff2|sh)$/;
 
+const PATH = /^[\w.*/-]+$/;
+// The folders at the repository's root.
+const FOLDERS = new Set(tracked.filter((file) => file.includes('/')).map((file) => file.split('/')[0]));
+
 // What is wrong with what a skill points at: a command the package
 // doesn't have, a file that isn't in the repository, a heading its file
 // doesn't have. The description is plain text, so its commands and files
-// are found as words; the text after it gives them in code, where a file
-// can be one word among others, as in a command or the comment after it.
+// are found as words. The text after it gives them in code: a piece of
+// code that is one path is a file, spelled as it is, and in a longer one,
+// such as a command with a comment after it, a word is a file when it
+// starts with one of the repository's folders or is a name with a file's
+// ending.
 function problems({ fields, body }, has = (file) => fs.existsSync(path.join(root, file))) {
   const found = [];
-  const words = [...fields.description.match(/[\w.@-]+(?:\/[\w.*-]+)*/g), ...coded(body).flatMap((text) => text.split(/\s+/))]
-    .map((word) => word.replace(/^[("']+|[)"',;:.]+$/g, ''));
   const texts = [fields.description, ...coded(body)];
   for (const [, command] of texts.flatMap((text) => [...text.matchAll(/\bnpm run ([\w:-]+)/g)])) {
     if (!Object.hasOwn(scripts, command)) found.push(`npm run ${command} is not one of package.json's scripts`);
   }
-  const files = [...new Set(words)].filter((text) => /^[\w.*/-]+$/.test(text) && (text.includes('/') || FILE.test(text)) && !MADE.test(text));
-  for (const given of files) {
+  const words = fields.description.match(/[\w.@-]+(?:\/[\w.*-]+)*/g).map((word) => word.replace(/\.$/, ''));
+  const whole = [...words, ...coded(body)].filter((text) => PATH.test(text) && (text.includes('/') || FILE.test(text)));
+  const inside = coded(body).filter((text) => /\s/.test(text))
+    .flatMap((text) => text.split(/\s+/).map((word) => word.replace(/^[("']+|[)"',;:.]+$/g, '')))
+    .filter((word) => PATH.test(word) && (word.includes('/') ? FOLDERS.has(word.split('/')[0]) : FILE.test(word)));
+  for (const given of new Set([...whole, ...inside].filter((file) => !MADE.test(file)))) {
     const pattern = given.endsWith('/') ? `${given}**` : given;
     const there = tracked.filter((file) => matches(pattern, file));
     if (there.length === 0 || (there.length === 1 && there[0] === given && !has(given))) found.push(`${given} isn't in the repository`);
@@ -148,12 +157,18 @@ describe('the skills for coding agents', () => {
       // the name of something every object has.
       [changed('store-assets', 'marquee, site/assets/og-card.png', 'marquee, site/assets/missing-card.png'), "site/assets/missing-card.png isn't in the repository"],
       [changed('release', 'it runs `npm run check`', 'it runs `npm run constructor`'), "npm run constructor is not one of package.json's scripts"],
+      // A file's name is taken as it is spelled, a period after it included.
+      [changed('release', '`scripts/version-set.js`', '`scripts/version-set.js.`'), "scripts/version-set.js. isn't in the repository"],
       // In the description, where they are plain words.
       [changed('land-dependabot', 'package.json and package-lock.json', 'package.json and package-locks.json'), "package-locks.json isn't in the repository"],
       [changed('popup-change', '(extension/settings.js).', '(extension/setting.js).'), "extension/setting.js isn't in the repository"],
       [changed('release', 'with npm run release,', 'with npm run publish,'), "npm run publish is not one of package.json's scripts"]
     ];
     for (const [changedSkill, problem] of cases) assert.ok(problems(changedSkill).includes(problem), `${problem}: ${problems(changedSkill).join('; ')}`);
+    // A command may send what it prints somewhere, and the comment after
+    // it may have a slash or a period, without either being a file here.
+    const command = 'git fetch\nnpm run check > /dev/null 2>&1   # pass/fail only (see ./notes, or ~/logs/check.log).\n';
+    assert.deepEqual(problems(changed('release', 'git fetch\n', command)), []);
     // A file git still lists that is gone from the folder.
     assert.deepEqual(problems(skill('release'), (file) => file !== 'scripts/release.js'), ["scripts/release.js isn't in the repository"]);
   });

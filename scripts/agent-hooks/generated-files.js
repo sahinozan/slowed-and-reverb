@@ -194,29 +194,51 @@ function readInput() {
 
 // The files a Codex patch names, each with what is done to it:
 //
+//   *** Begin Patch
 //   *** Update File: a/path          (or Add File, or Delete File)
 //   *** Move to: another/path        (optional, after Update File)
+//   *** End Patch
 //
-// It is read the way Codex's applier reads it, so that the two agree on
-// which lines are these and which are a file's text. Lines end at a line
-// feed only. Space around a line doesn't count, by Rust's meaning of space
-// (JavaScript's trim also takes U+FEFF and leaves U+0085), so a path keeps
-// the space before it and loses the space after. And once a file is being
-// updated, the lines up to the next one that starts with *** are its text:
-// one that only looks like these, after a space, is a line of the file.
+// It is read the way Codex's applier reads it (its streaming_parser.rs, as
+// of Codex 0.167.0), so that the two agree on which lines are these and
+// which are a file's text:
+//
+// - Lines end at a line feed only, and the patch is what is from the Begin
+//   Patch line to the End Patch line. What comes after isn't read.
+// - Space around one of these lines doesn't count, by Rust's meaning of
+//   space (JavaScript's trim also takes U+FEFF and leaves U+0085). So a
+//   path keeps the space before it and loses the space after.
+// - While a file is updated, only the space after a line doesn't count:
+//   a line that starts with a space is a line of the file, whatever
+//   follows the space.
 const AROUND = /^\p{White_Space}+|\p{White_Space}+$/gu;
+const AFTER = /\p{White_Space}+$/u;
 
 function patchFiles(patch) {
   const named = [];
+  let started = false;
   let updating = false;
   for (const line of patch.split('\n')) {
-    if (updating && !line.startsWith('***')) continue;
-    const [, does, file] = /^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/s.exec(line.replace(AROUND, '')) ?? [];
+    const text = line.replace(updating ? AFTER : AROUND, '');
+    if (!started) {
+      started = text === '*** Begin Patch';
+      continue;
+    }
+    if (text === '*** End Patch') break;
+    const [, does, file] = (updating ? /^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/s : /^\*\*\* (Add File|Update File|Delete File): (.+)$/s).exec(text) ?? [];
     if (!does) continue;
     updating = does === 'Update File' || does === 'Move to';
     named.push({ does, file });
   }
   return named;
+}
+
+// Where a path in a patch leads, from the session's folder. The applier
+// takes tabs and carriage returns out of a path wherever they are, after
+// it has seen whether the path starts at the root.
+function patchPath(from, file) {
+  const clean = file.replace(/[\t\r]/g, '');
+  return path.isAbsolute(file) ? path.resolve(clean) : path.resolve(path.join(from, clean));
 }
 
 // The edit a hook is given: the files it names and, for one of them, the
@@ -232,7 +254,6 @@ function patchFiles(patch) {
 function readEdit(input) {
   const given = input?.tool_input ?? {};
   const from = typeof input?.cwd === 'string' ? input.cwd : process.cwd();
-  const whole = (file, itself) => real(path.resolve(from, file), itself);
   if (typeof given.file_path === 'string') {
     const textAfter = (before) => {
       if (typeof given.content === 'string') return given.content;
@@ -240,10 +261,10 @@ function readEdit(input) {
       if (given.replace_all) return before.split(given.old_string).join(given.new_string);
       return before.replace(given.old_string, () => given.new_string);
     };
-    return { files: [whole(given.file_path)], textAfter };
+    return { files: [real(path.resolve(from, given.file_path))], textAfter };
   }
   const named = patchFiles([given.command ?? []].flat().join('\n'));
-  return { files: [...new Set(named.map(({ does, file }) => whole(file, does === 'Delete File')))], textAfter: () => null };
+  return { files: [...new Set(named.map(({ does, file }) => real(patchPath(from, file), does === 'Delete File')))], textAfter: () => null };
 }
 
 module.exports = { GENERATED, HOME, matches, matchesAny, patchFiles, place, readEdit, readInput };

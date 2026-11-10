@@ -226,6 +226,28 @@ describe('an edit to a generated file', () => {
     // Space before a path is part of its name, so this is another file.
     assert.deepEqual(names(lines('*** Delete File:   docs/checks.md')), ['  docs/checks.md']);
     assert.equal(refusal(lines('*** Delete File:   docs/checks.md')), null);
+    // A tab or a carriage return in a path is taken out wherever it is,
+    // after the applier has seen whether the path starts at the root.
+    for (const file of ['\tdocs/checks.md', 'docs/\tchecks.md', 'docs/che\rcks.md', 'docs/.\t/checks.md', 'site/.\t./docs/checks.md', '\t/docs/checks.md', `${root}/\tdocs/checks.md`]) {
+      for (const input of [lines(`*** Add File: ${file}`, '+text'), lines(`*** Delete File: ${file}`), lines(`*** Update File: ${file}`, '@@', '-a', '+b'), lines('*** Update File: ordinary.txt', `*** Move to: ${file}`, '@@', '-a', '+b')]) {
+        assert.ok(refusal(input)?.startsWith('docs/checks.md is generated'), JSON.stringify(input.tool_input));
+      }
+    }
+    // Other marks stay in the name, so these are other files.
+    for (const file of ['docs/\vchecks.md', 'docs/checks.md?', 'docs/checks%2emd', 'docs\\checks.md']) assert.equal(refusal(lines(`*** Delete File: ${file}`)), null, JSON.stringify(file));
+    // The patch ends at its End Patch line. The applier takes a patch
+    // inside <<EOF and a last line ending in EOF, which it doesn't read.
+    const wrapped = (first, last) => ({ tool_name: 'apply_patch', cwd: root, tool_input: { command: [first, '*** Begin Patch', '*** Add File: ordinary.txt', '+text', '*** End Patch', last].join('\n') } });
+    for (const first of ['<<EOF', "<<'EOF'", '<<"EOF"']) {
+      assert.deepEqual(names(wrapped(first, '*** Delete File: docs/checks.mdEOF')), ['ordinary.txt']);
+      assert.equal(refusal(wrapped(first, '*** Delete File: docs/checks.mdEOF')), null);
+      assert.ok(refusal({ tool_name: 'apply_patch', cwd: root, tool_input: { command: `${first}\n*** Begin Patch\n*** Delete File: docs/checks.md\n*** End Patch\nEOF\n` } })?.startsWith('docs/checks.md is generated'));
+    }
+    // Nor is anything read before its Begin Patch line.
+    assert.deepEqual(patchFiles('*** Delete File: docs/checks.md\n*** Begin Patch\n*** Environment ID: one\n*** Delete File: a\n*** End Patch'), [{ does: 'Delete File', file: 'a' }]);
+    // While a file is updated, an End Patch line after a space is a line
+    // of the file too.
+    assert.deepEqual(names(lines('*** Update File: ordinary.txt', '@@', '-a', '  *** End Patch', '*** Delete File: docs/checks.md')), ['ordinary.txt', 'docs/checks.md']);
     // U+FEFF isn't space to the applier, which then finds no such file.
     assert.equal(refusal(lines(`*** Delete File: docs/checks.md${String.fromCharCode(0xfeff)}`)), null);
     assert.deepEqual(patchFiles('*** Begin Patch\n*** Update File: a\n*** Move to: b\n@@\n-a\n+b\n*** Add File: c\n+text\n*** End Patch'), [
