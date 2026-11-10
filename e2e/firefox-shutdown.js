@@ -19,6 +19,9 @@ const root = path.join(__dirname, '..');
 const builtExtensionDir = path.join(root, 'dist', 'firefox');
 const EXTENSION_ID = 'slowed-reverb@sahinozan';
 const CHANNEL = 'SLOWED_REVERB_E2E';
+// How long a question asked only for a failure's message may take. What a
+// test itself asks waits as long as puppeteer lets it.
+const DETAIL_TIMEOUT_MS = 10_000;
 const SETTINGS = {
   speed: 0.8,
   reverb: 40,
@@ -53,7 +56,7 @@ function addTestDriver(extensionDir) {
       (result) => ({ result }),
       (error) => ({ error: String(error) })
     )
-    .then((reply) => window.postMessage({ channel: '${CHANNEL}', type: 'RESULT', reply: JSON.stringify(reply) }, '*'));
+    .then((reply) => window.postMessage({ channel: '${CHANNEL}', type: 'RESULT', id: event.data.id, reply: JSON.stringify(reply) }, '*'));
 });
 `
   );
@@ -62,6 +65,10 @@ function addTestDriver(extensionDir) {
     `browser.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== 'E2E_DRIVE') return;
   const target = { tabId: sender.tab.id };
+  // What the extension itself has registered, for a failure's message.
+  if (message.site === 'registered-scripts') {
+    return browser.scripting.getRegisteredContentScripts().then((scripts) => scripts.map(({ id }) => id));
+  }
   if (message.site === 'youtube') {
     return queueTabApply(sender.tab.id, sender.tab.url, message.settings, true);
   }
@@ -133,12 +140,69 @@ after(async () => {
   if (tempRoot) fs.rmSync(tempRoot, { recursive: true, force: true });
 });
 
-async function waitFor(check, timeout, message) {
+// `detail`, when given, adds what is known at the moment the wait runs out
+// to the failure's message. The failure is the wait's own whatever happens
+// while finding that out.
+async function waitFor(check, timeout, message, detail) {
   const deadline = Date.now() + timeout;
   for (;;) {
     if (await check()) return;
-    if (Date.now() > deadline) throw new Error(message);
+    if (Date.now() > deadline) {
+      if (!detail) throw new Error(message);
+      let known;
+      try {
+        known = await detail();
+      } catch (error) {
+        known = `nothing more could be found out (${error.message})`;
+      }
+      throw new Error(`${message}; ${known}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+// A step of finding out more about a failure gives up after a while, so
+// it can't hold a failing test for puppeteer's own three minutes.
+function within(promise, what, timeoutMs = DETAIL_TIMEOUT_MS) {
+  let timer;
+  const late = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} took more than ${timeoutMs} ms`)), timeoutMs);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+// What Firefox itself says about the extension, for the message of a
+// failure that depends on Firefox putting the extension's scripts into a
+// page: whether the add-on is on, which content scripts Firefox holds for
+// it (Spotify's registered ones are among them when it has them), how far
+// the extension's startup got, and whether its background script is
+// running. Asked from the browser window's own scope, like turning the
+// extension off. It only reads, and it never throws: a failure to ask is
+// part of the answer.
+async function firefoxSays() {
+  const ask = async () => {
+    const tree = await browser.connection.send('browsingContext.getTree', { 'moz:scope': 'chrome' });
+    const { result } = await browser.connection.send('script.evaluate', {
+      expression: `(async () => {
+        const { AddonManager } = ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
+        const addon = await AddonManager.getAddonByID('${EXTENSION_ID}');
+        const policy = WebExtensionPolicy.getByID('${EXTENSION_ID}');
+        return JSON.stringify({
+          addon: addon ? { version: addon.version, isActive: addon.isActive, userDisabled: addon.userDisabled } : null,
+          contentScripts: policy ? policy.contentScripts.map((script) => script.jsPaths.map((url) => url.split('/').pop()).join('+')) : null,
+          startup: policy ? { readyPromise: Boolean(policy.readyPromise), state: policy.extension?.state ?? null } : null,
+          background: policy?.extension?.backgroundState ?? null
+        });
+      })()`,
+      target: { context: tree.result.contexts[0].context },
+      awaitPromise: true
+    });
+    return result.type === 'success' ? result.result.value : JSON.stringify(result.exceptionDetails);
+  };
+  try {
+    return `Firefox says ${await within(ask(), 'asking Firefox')}`;
+  } catch (error) {
+    return `Firefox couldn't be asked about the extension (${error.message})`;
   }
 }
 
@@ -200,34 +264,78 @@ async function openPlayingFixture(name) {
 }
 
 // Asks the extension, through the test driver, to turn the effect on in the
-// page's tab, or with `state` for the tab's state.
-async function drive(page, site, state = false) {
+// page's tab, or with `state` for the tab's state. Each question has an id
+// its answer carries, so an answer that comes late isn't taken for the next
+// question's. A driver that isn't in the page, or whose extension is off,
+// never answers. A test's own question then waits as long as puppeteer
+// lets it, as it always did, and comes back as an error to report instead
+// of puppeteer's; with `timeoutMs` the page gives up sooner and says so.
+async function drive(page, site, state = false, timeoutMs = 0) {
   await waitFor(
     () => page.evaluate(() => document.readyState === 'complete'),
     5_000,
     'page did not finish loading'
   );
-  return page.evaluate(
-    (channel, site, state, settings) =>
-      new Promise((resolve) => {
-        window.addEventListener('message', function listener(event) {
-          if (event.data?.channel !== channel || event.data.type !== 'RESULT') return;
-          window.removeEventListener('message', listener);
-          resolve(JSON.parse(event.data.reply));
-        });
-        window.postMessage({ channel, type: 'DRIVE', site, state, settings }, '*');
-      }),
-    CHANNEL,
-    site,
-    state,
-    SETTINGS
-  );
+  return page
+    .evaluate(
+      (channel, site, state, settings, timeoutMs) =>
+        new Promise((resolve) => {
+          const id = `${Date.now()}-${Math.random()}`;
+          const timer = timeoutMs
+            ? setTimeout(() => {
+                window.removeEventListener('message', listener);
+                resolve({ error: `the test driver in the page did not answer within ${timeoutMs} ms` });
+              }, timeoutMs)
+            : null;
+          function listener(event) {
+            if (event.data?.channel !== channel || event.data.type !== 'RESULT' || event.data.id !== id) return;
+            window.removeEventListener('message', listener);
+            clearTimeout(timer);
+            resolve(JSON.parse(event.data.reply));
+          }
+          window.addEventListener('message', listener);
+          window.postMessage({ channel, type: 'DRIVE', id, site, state, settings }, '*');
+        }),
+      CHANNEL,
+      site,
+      state,
+      SETTINGS,
+      timeoutMs
+    )
+    .catch((error) => {
+      if (error?.name !== 'ProtocolError' || !/timed out/.test(error.message)) throw error;
+      return { error: `the test driver in the page did not answer before puppeteer gave up (${error.message})` };
+    });
+}
+
+// What is known when the extension's scripts haven't reached a page: the
+// last answer the page got, what Firefox says, and which scripts the
+// extension says it has registered. Scripts the extension has registered
+// but Firefox doesn't hold, or holds and didn't put into the page, are
+// different faults. Firefox is asked first, because asking the extension
+// wakes a background script that had stopped, and again afterward in case
+// that changed something. Each is found out by itself, so one that fails
+// doesn't lose the others.
+async function whatIsKnown(page, answer) {
+  const before = await firefoxSays();
+  let registered;
+  try {
+    // The page gives up first and says why; the longer limit here is for a
+    // page that doesn't answer at all.
+    const reply = await within(drive(page, 'registered-scripts', false, DETAIL_TIMEOUT_MS), 'asking the extension', DETAIL_TIMEOUT_MS + 5_000);
+    registered = JSON.stringify(reply.result ?? reply);
+  } catch (error) {
+    registered = `unknown (${error.message})`;
+  }
+  const after = await firefoxSays();
+  const changed = after === before ? '' : `; after it was asked, ${after}`;
+  return `the last answer was ${JSON.stringify(answer)}; ${before}; the extension has registered ${registered}${changed}`;
 }
 
 // Turns the effect on in the page's tab through the test driver.
 async function turnOn(page, site) {
   const reply = await drive(page, site);
-  assert.equal(reply.error, undefined, `${site}: ${reply.error}`);
+  if (reply.error !== undefined) assert.fail(`${site}: ${reply.error}; ${await firefoxSays()}`);
   assert.notEqual(reply.result?.success, false, `${site}: ${JSON.stringify(reply.result)}`);
   // Spotify's engine waits for playback to start before it changes anything.
   await page.evaluate(async () => {
@@ -409,14 +517,19 @@ for (const [update, rollback] of UPDATES) {
     await setExtensionEnabled(false);
     await setExtensionEnabled(true);
 
+    // Until Firefox has put the new bridge into the page, the answer is an
+    // error. If the bridge never comes, the failure says what is known.
     let state;
+    let answer;
     await waitFor(
       async () => {
-        state = (await drive(page, 'spotify-registered', true)).result;
+        answer = await drive(page, 'spotify-registered', true);
+        state = answer.result;
         return state !== undefined;
       },
       5_000,
-      'the new bridge never reached the page'
+      'the new bridge never reached the page',
+      () => whatIsKnown(page, answer)
     );
     assert.deepEqual(state, { enabled: false, blocked: true, blockReason: 'outdated' });
     assert.deepEqual((await drive(page, 'spotify-registered')).result, {
@@ -453,13 +566,16 @@ for (const [update, rollback] of UPDATES) {
 
     // The same injection as when the popup opens, then turning the effect on.
     let reply;
+    let answer;
     await waitFor(
       async () => {
-        reply = (await drive(page, 'youtube')).result;
+        answer = await drive(page, 'youtube');
+        reply = answer.result;
         return reply !== undefined;
       },
       5_000,
-      'the new version never reached the page'
+      'the new version never reached the page',
+      () => whatIsKnown(page, answer)
     );
     assert.deepEqual(reply, { success: false, blocked: true, blockReason: 'outdated' });
     await expectPlayback(page, 'youtube', false, 2_000);
