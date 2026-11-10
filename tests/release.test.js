@@ -114,6 +114,12 @@ describe('Firefox privacy policy text', () => {
     const outsideCode = text.replace(/(?<![\\`])(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g, '');
     assert.match(text, /\S+@\S+\.\S+/);
     assert.doesNotMatch(outsideCode, /\S+@\S+\.\S+/);
+    // No bare web address either: Firefox Add-ons would make it a link over
+    // http. One written as a link keeps the https address it was given.
+    const outsideLinks = outsideCode.replace(/\[[^\]]*\]\(https:\/\/[^)\s]+\)/g, '');
+    assert.match(text, /\[slowedreverbapp\.com\]\(https:\/\/slowedreverbapp\.com\)/);
+    assert.doesNotMatch(outsideLinks, /\b[\w-]+\.(?:com|org|net|me|io|app)\b/i);
+    assert.doesNotMatch(text, /\]\(http:/);
     assert.match(text, /^\*\*Summary\*\*\nSlowed & Reverb processes audio locally in the browser\. /m);
     for (const link of markdown.match(/\]\(https:[^)]+\)/g)) assert.ok(text.includes(link), link);
   });

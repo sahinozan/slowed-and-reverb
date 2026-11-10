@@ -59,9 +59,9 @@ remaining session data when the browser session ends.
 Optional site permissions are recorded and managed by the browser. The extension
 can check whether permission is present, but it does not transmit that status.
 
-On slowedreverbapp.com, the demo of the popup keeps the theme picked in it in the
-browser's session storage for the rest of the visit, and the same preset bar label
-in the site's local storage. Neither is sent anywhere.
+On [slowedreverbapp.com](https://slowedreverbapp.com), the demo of the popup keeps
+the theme picked in it in the browser's session storage for the rest of the visit,
+and the same preset bar label in the site's local storage. Neither is sent anywhere.
 
 ## Permissions
 
