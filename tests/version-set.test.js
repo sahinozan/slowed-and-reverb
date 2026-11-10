@@ -135,12 +135,13 @@ describe('The check of a version bump', () => {
 
     assert.deepEqual(problems('<ul><!-- TODO: the release notes for 1.1.2 --></ul>'), unwritten);
     assert.deepEqual(problems('<ul><!-- TODO: the release notes for 1.1.2 --><li>A fix.</li></ul>'), unwritten);
-    assert.deepEqual(problems('<ul><li>TODO</li></ul>'), unwritten);
     assert.deepEqual(problems('<ul></ul>'), unwritten);
     assert.deepEqual(problems('<ul><li></li></ul>'), unwritten);
     assert.deepEqual(problems('<!-- A fix. -->'), unwritten);
     assert.deepEqual(problems('<ul><li>A fix.</li></ul>'), []);
     assert.deepEqual(problems('<p>The first release.</p>'), []);
+    // The comment is the placeholder. The word in the notes is only a word.
+    assert.deepEqual(problems('<ul><li>Saved presets named TODO now keep their names.</li></ul>'), []);
   });
 
   test('the repository is consistent with its own version', () => {
@@ -167,6 +168,30 @@ describe('One list of places', () => {
     assert.deepEqual(versionBumpProblems(read, [], '1.0.1', [place]), ['a.txt has 1.0.0']);
     assert.deepEqual([...versionEdits(read, [], '1.0.1', { today }, [place])], [['a.txt', '1.0.1']]);
     assert.deepEqual(versionFiles([], [place]), ['a.txt']);
+  });
+
+  test('a place added to the list is written by the command and checked by the release, with no list handed to either', (t) => {
+    const directory = copyRepository(t);
+    fs.writeFileSync(path.join(directory, 'added.txt'), current);
+    const place = {
+      files: () => ['added.txt'],
+      problem: (file, text, version) => (text === version ? null : `${file} has ${text}`),
+      write: (file, text, version) => version
+    };
+    PLACES.push(place);
+    try {
+      assert.deepEqual(release.versionBumpProblems(reader(directory), pages, current), []);
+      assert.ok(release.versionBumpProblems(reader(directory), pages, next).includes(`added.txt has ${current}`));
+      assert.ok(versionFiles(pages).includes('added.txt'));
+
+      const result = setVersion({ directory, version: next, today });
+      assert.deepEqual(result.files, [...files, 'added.txt']);
+      assert.equal(reader(directory)('added.txt'), next);
+      assert.deepEqual(release.versionBumpProblems(reader(directory), pages, next), [NOTES]);
+    } finally {
+      PLACES.splice(PLACES.indexOf(place), 1);
+    }
+    assert.ok(!versionFiles(pages).includes('added.txt'));
   });
 
   test('each place is checked in the files it is written in, and its own writing satisfies its own check', () => {
@@ -333,6 +358,59 @@ describe('npm run version:set', () => {
     assert.equal(one.get('site/privacy.html'), 'This policy covers versions 1.0.1 and 1.0.2 of Slowed &amp; Reverb.');
   });
 
+  test('finds the policy sentence however its line is broken, and touches nothing outside its list', () => {
+    const edits = (texts) => versionEdits((file) => texts[file], [], '1.0.2', { today }, PLACES.slice(-2));
+    const rest = '\n\n## Summary\n\nThe extension reads nothing of the page.\n\n## Contact\n\nWrite to the owner of the project.\n';
+    const broken = edits({
+      'PRIVACY.md': `This policy applies to\nversions \`1.0.0\` and\n\`1.0.1\` of\nthe extension.${rest}`,
+      'site/privacy.html': `<p>\n  This policy covers\n  versions 1.0.0 and 1.0.1 of\n  Slowed &amp; Reverb.\n</p>${rest}`
+    });
+    assert.equal(broken.get('PRIVACY.md'), `This policy applies to versions \`1.0.0\`, \`1.0.1\`, and \`1.0.2\` of the\nextension.${rest}`);
+    assert.equal(
+      broken.get('site/privacy.html'),
+      `<p>\n  This policy covers\n  versions 1.0.0, 1.0.1 and 1.0.2 of\n  Slowed &amp; Reverb.\n</p>${rest}`
+    );
+
+    // A sentence that doesn't end the expected way is refused, not searched
+    // for its ending further down the policy.
+    for (const [file, text] of [
+      ['PRIVACY.md', `This policy applies to versions \`1.0.0\` and \`1.0.1\` for the extension.${rest}`],
+      ['site/privacy.html', `This policy covers versions 1.0.0 and 1.0.1.${rest} Thanks for the use of Slowed &amp; Reverb.`]
+    ]) {
+      const place = PLACES.slice(-2).find((policy) => policy.files()[0] === file);
+      assert.throws(() => place.write(file, text, '1.0.2'), (error) => error instanceof VersionError && /has no line naming the versions/.test(error.message));
+      assert.equal(place.problem(file, text, '1.0.1'), `${file}'s versions line doesn't list 1.0.1`);
+    }
+  });
+
+  test('keeps the rest of both policies through many bumps in a row', (t) => {
+    const directory = copyRepository(t);
+    const paragraphs = (file) => reader(directory)(file).split('\n\n');
+    const others = (file, words) => paragraphs(file).filter((paragraph) => !paragraph.includes(words));
+    const before = { md: others('PRIVACY.md', 'applies to'), html: others('site/privacy.html', 'This policy covers') };
+    const versions = [];
+    for (let step = 1; step <= 12; step += 1) {
+      versions.push(`${major}.${minor}.${patch + step}`);
+      setVersion({ directory, version: versions.at(-1), today });
+      edit(directory, 'site/changelog.html', (text) => text.replace(/<!-- TODO[\s\S]*?-->/, '<li>A fix.</li>'));
+      assert.deepEqual(versionBumpProblems(reader(directory), pages, versions.at(-1)), []);
+    }
+
+    const footer = (version) => `<span>Slowed &amp; Reverb ${version}</span>`;
+    const after = { md: others('PRIVACY.md', 'applies to'), html: others('site/privacy.html', 'This policy covers') };
+    assert.ok(after.md.join('\n\n') === before.md.join('\n\n'), 'the rest of PRIVACY.md is as it was');
+    assert.ok(
+      after.html.join('\n\n') === before.html.join('\n\n').replace(footer(current), footer(versions.at(-1))),
+      'the rest of site/privacy.html is as it was, but for its footer'
+    );
+    const listedIn = (text) => text.match(/\d+\.\d+\.\d+/g);
+    const policy = paragraphs('PRIVACY.md').find((paragraph) => paragraph.includes('applies to'));
+    assert.deepEqual(listedIn(/applies\s+to\s+versions([\s\S]*?)\s+of\s+the\s+Slowed/.exec(policy)[1]).slice(-13), [current, ...versions]);
+    assert.ok(policy.split('\n').every((line) => line.length <= 78));
+    const page = reader(directory)('site/privacy.html');
+    assert.deepEqual(listedIn(/covers versions (.*?) of Slowed/.exec(page)[1]).slice(-13), [current, ...versions]);
+  });
+
   test("refuses a version that isn't higher than the current one, or isn't one", (t) => {
     const directory = copyRepository(t);
     const lower = patch > 0 ? `${major}.${minor}.${patch - 1}` : `${major}.${minor > 0 ? minor - 1 : 0}.0`;
@@ -396,21 +474,92 @@ describe('npm run version:set', () => {
     }
   });
 
-  test('puts back what it wrote when a file fails to write', (t) => {
+  // The folders the command stages its writes in that are still there.
+  const stages = (directory) => fs.readdirSync(directory).filter((name) => name.startsWith('.version-set-'));
+
+  test('touches no file when the new texts fail to write', (t) => {
     const directory = copyRepository(t);
     let writes = 0;
-    const writeFile = (file, text) => {
-      writes += 1;
-      if (writes === 4) {
-        // Half a file, as a full disk would leave it.
-        fs.writeFileSync(file, text.slice(0, 10));
+    const io = {
+      ...fs,
+      writeFileSync(file, text, options) {
+        writes += 1;
+        if (writes < 4) return fs.writeFileSync(file, text, options);
+        // Half a file, as a full disk leaves it, and no write works after it.
+        if (writes === 4) fs.writeFileSync(file, text.slice(0, 10), options);
         throw new Error('no space left');
       }
-      fs.writeFileSync(file, text);
     };
-    assert.throws(() => setVersion({ directory, version: next, today, writeFile }), /no space left/);
+    assert.throws(
+      () => setVersion({ directory, version: next, today, io }),
+      (error) => error instanceof VersionError && /couldn't be written: no space left/.test(error.message)
+    );
     assert.equal(writes, 4);
     assert.deepEqual(changedFiles(directory), []);
+    assert.deepEqual(stages(directory), []);
+  });
+
+  test('puts back the files it replaced when one fails to be replaced, without writing', (t) => {
+    const directory = copyRepository(t);
+    let renames = 0;
+    let failed = false;
+    const io = {
+      ...fs,
+      renameSync(from, to) {
+        renames += 1;
+        if (renames === 4) {
+          failed = true;
+          throw new Error('input/output error');
+        }
+        return fs.renameSync(from, to);
+      },
+      // Once the disk fails, it takes no writes at all.
+      writeFileSync(...args) {
+        if (failed) throw new Error('input/output error');
+        return fs.writeFileSync(...args);
+      },
+      copyFileSync(...args) {
+        if (failed) throw new Error('input/output error');
+        return fs.copyFileSync(...args);
+      }
+    };
+    assert.throws(
+      () => setVersion({ directory, version: next, today, io }),
+      (error) => error instanceof VersionError && /couldn't be written: input\/output error/.test(error.message)
+    );
+    // Three replaced, one failed, three put back.
+    assert.equal(renames, 7);
+    assert.deepEqual(changedFiles(directory), []);
+    assert.deepEqual(stages(directory), []);
+  });
+
+  test("keeps every file as it was, and says where, when they can't be put back", (t) => {
+    const directory = copyRepository(t);
+    let renames = 0;
+    const io = {
+      ...fs,
+      renameSync(from, to) {
+        renames += 1;
+        if (renames >= 4) throw new Error('input/output error');
+        return fs.renameSync(from, to);
+      }
+    };
+    let thrown;
+    try {
+      setVersion({ directory, version: next, today, io });
+    } catch (error) {
+      thrown = error;
+    }
+    // Not the kind of error the command follows with "Nothing was changed."
+    assert.ok(thrown instanceof Error && !(thrown instanceof VersionError));
+    const [stage] = stages(directory);
+    assert.ok(stage && thrown.message.includes(path.join(directory, stage)), thrown.message);
+    const replaced = files.slice(0, 3);
+    assert.deepEqual(changedFiles(directory), replaced);
+    replaced.forEach((file, index) => {
+      assert.ok(thrown.message.includes(`  ${file} (${index}.old)`), thrown.message);
+      assert.ok(fs.readFileSync(path.join(directory, stage, `${index}.old`), 'utf8') === unchanged(file), `${file} is kept as it was`);
+    });
   });
 
   test('says what it changed and what is left to do by hand', (t) => {

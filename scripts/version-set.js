@@ -13,8 +13,8 @@
 // It works out every edit and checks the result before it writes anything, so
 // a run that fails leaves the repository as it was. It uses no network and no
 // npm. The release notes are a person's to write: the changelog gets an entry
-// with the version, the day and a TODO where they go, and the check reports
-// that entry until they are written.
+// with the version, the day and a TODO comment where they go, and the check
+// reports that entry until they are written.
 
 const fs = require('fs');
 const path = require('path');
@@ -35,7 +35,10 @@ const MONTHS = [
   'December'
 ];
 // What marks release notes still to write, as in the release's draft record.
+// In the changelog it opens a comment; the word in the notes themselves is
+// only a word.
 const NOTES_MARKER = 'TODO';
+const NOTES_COMMENT = new RegExp(`<!--\\s*${NOTES_MARKER}\\b`);
 
 // A problem a person can fix, shown without a stack trace.
 class VersionError extends Error {}
@@ -146,9 +149,9 @@ function changelogNotesProblem(file, version) {
 }
 
 // The changelog's entry for the version. The writer adds the entry with the
-// day and a TODO where the release notes go; it doesn't write them. The check
-// wants an entry that says something and has no TODO left in it, so the new
-// entry can't pass for a finished one.
+// day and a TODO comment where the release notes go; it doesn't write them.
+// The check wants an entry that says something and has no such comment left
+// in it, so the new entry can't pass for a finished one.
 const changelogEntry = {
   files: () => ['site/changelog.html'],
   problem(file, text, version) {
@@ -156,11 +159,9 @@ const changelogEntry = {
     if (start < 0) return `${file} has no entry for ${version}`;
     const body = text.slice(start).replace(/^<h2>[\s\S]*?<\/h2>/, '');
     const entry = body.slice(0, /<\/section>|<h2>/.exec(body)?.index);
-    const words = entry
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/<[^>]*>/g, '')
-      .trim();
-    return entry.includes(NOTES_MARKER) || !words ? changelogNotesProblem(file, version) : null;
+    // The entry's pieces: a comment, a tag, or the words between them.
+    const words = [...entry.matchAll(/<!--[\s\S]*?-->|<[^>]*>|([^<]+)/g)].some((piece) => piece[1]?.trim());
+    return NOTES_COMMENT.test(entry) || !words ? changelogNotesProblem(file, version) : null;
   },
   write(file, text, version, { today }) {
     // An entry someone wrote ahead of the bump stays as it is.
@@ -200,10 +201,17 @@ function listed(items, oxford) {
   return `${items.slice(0, -1).join(', ')}${oxford ? ',' : ''} and ${items[items.length - 1]}`;
 }
 
-// The sentence of a privacy policy that names the versions it covers. It gets
-// the new version at the end of its list, written by list(versions); with
+// A list of versions as either policy writes it, and nothing else, so that
+// what is taken for the list can't reach past it into the rest of the policy.
+const VERSION_LIST = '((?:[\\d.,`\\s]|and)+?)';
+
+// The sentence of a privacy policy that names the versions it covers, found
+// by the words before and after its list, however the line is broken. It gets
+// the new version at the end of the list, written by list(versions); with
 // width, the paragraph around it is wrapped again to that many characters.
-function policyVersions(file, sentence, list, width) {
+function policyVersions(file, [wordsBefore, wordsAfter], list, width) {
+  const spaced = (words) => words.split(' ').join('\\s+');
+  const sentence = new RegExp(`(${spaced(wordsBefore)}\\s+)${VERSION_LIST}(\\s+${spaced(wordsAfter)}\\b)`);
   return {
     files: () => [file],
     problem(_, text, version) {
@@ -249,8 +257,8 @@ const PLACES = [
   changelogEntry,
   // The policy names every version it covers, in the repository and on the
   // website. PRIVACY.md is wrapped by hand, to 78 characters in this paragraph.
-  policyVersions('PRIVACY.md', /(applies to versions )([\s\S]*?)( of the)/, (versions) => listed(versions.map((version) => `\`${version}\``), true), 78),
-  policyVersions('site/privacy.html', /(covers versions )([\s\S]*?)( of Slowed)/, (versions) => listed(versions, false))
+  policyVersions('PRIVACY.md', ['applies to versions', 'of the'], (versions) => listed(versions.map((version) => `\`${version}\``), true), 78),
+  policyVersions('site/privacy.html', ['covers versions', 'of Slowed'], (versions) => listed(versions, false))
 ];
 
 // The files a version bump touches.
@@ -279,10 +287,49 @@ function listProblems(problems) {
   return problems.map((problem) => `  ${problem}`).join('\n');
 }
 
+// Puts each new text in place of its file in directory, all of them or none.
+// Everything is written first, to a folder of its own beside them: each new
+// text, and a copy of each file as it is. Only then are the files replaced,
+// by renaming, which writes no data, so a disk that has stopped taking writes
+// is found out before any file is touched. If a rename fails, the copies are
+// renamed back; if that fails too, the folder is kept and named, with every
+// file as it was in it.
+function replaceFiles(directory, changed, io) {
+  let stage;
+  const replaced = [];
+  try {
+    stage = io.mkdtempSync(path.join(directory, '.version-set-'));
+    const staged = changed.map(([file, text], index) => {
+      const item = { file, target: path.join(directory, file), next: path.join(stage, `${index}.new`), kept: path.join(stage, `${index}.old`) };
+      io.copyFileSync(item.target, item.kept);
+      io.writeFileSync(item.next, text, { mode: io.statSync(item.target).mode });
+      return item;
+    });
+    for (const item of staged) {
+      io.renameSync(item.next, item.target);
+      replaced.push(item);
+    }
+  } catch (error) {
+    try {
+      for (const item of replaced) io.renameSync(item.kept, item.target);
+    } catch (restoring) {
+      const names = replaced.map((item) => `  ${item.file} (${path.basename(item.kept)})`).join('\n');
+      throw new Error(
+        `Writing stopped (${error.message}) and the files already changed couldn't be put back (${restoring.message}). ` +
+          `They are kept as they were in ${stage}:\n${names}`,
+        { cause: error }
+      );
+    }
+    if (stage) io.rmSync(stage, { recursive: true, force: true });
+    throw new VersionError(`The files couldn't be written: ${error.message}`, { cause: error });
+  }
+  io.rmSync(stage, { recursive: true, force: true });
+}
+
 // Writes the bump to version in the repository at directory, or throws having
 // changed nothing. Returns the version it replaced, the files it changed and
 // whether the changelog's entry still needs its release notes.
-function setVersion({ directory = root, version, today = new Date(), places = PLACES, writeFile = fs.writeFileSync }) {
+function setVersion({ directory = root, version, today = new Date(), io = fs }) {
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version ?? '')) {
     throw new VersionError(`Give the new version as three numbers, like 1.3.0${version ? `, not "${version}"` : ''}.`);
   }
@@ -295,33 +342,21 @@ function setVersion({ directory = root, version, today = new Date(), places = PL
   if (compareVersions(version, current) <= 0) {
     throw new VersionError(`${version} isn't higher than the current version, ${current}.`);
   }
-  const unfinished = versionBumpProblems(read, pages, current, places);
+  const unfinished = versionBumpProblems(read, pages, current);
   if (unfinished.length) {
     throw new VersionError(`The repository doesn't show ${current} everywhere yet. Finish or undo that first:\n${listProblems(unfinished)}`);
   }
 
-  const texts = versionEdits(read, pages, version, { today }, places);
+  const texts = versionEdits(read, pages, version, { today });
   const notes = changelogNotesProblem('site/changelog.html', version);
-  const left = versionBumpProblems((file) => texts.get(file), pages, version, places);
+  const left = versionBumpProblems((file) => texts.get(file), pages, version);
   const wrong = left.filter((problem) => problem !== notes);
   if (wrong.length) {
     throw new VersionError(`The edits worked out for ${version} wouldn't pass the release's check:\n${listProblems(wrong)}`);
   }
 
   const changed = [...texts].filter(([file, text]) => text !== read(file));
-  const before = changed.map(([file]) => [file, read(file)]);
-  const written = [];
-  try {
-    for (const [file, text] of changed) {
-      written.push(file);
-      writeFile(path.join(directory, file), text);
-    }
-  } catch (error) {
-    for (const [file, text] of before) {
-      if (written.includes(file)) fs.writeFileSync(path.join(directory, file), text);
-    }
-    throw error;
-  }
+  replaceFiles(directory, changed, io);
   return { current, version, files: changed.map(([file]) => file), notesLeft: left.includes(notes) };
 }
 
