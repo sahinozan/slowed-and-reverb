@@ -162,6 +162,12 @@ describe('the map of which checks a change needs', () => {
     for (const file of ['scripts/ci-package-downloads.sh', '.nvmrc', 'package-lock.json', 'e2e/firefox-shutdown.js']) {
       assert.ok(steps.includes(file), `the job wasn't followed to ${file}`);
     }
+    // What the job's checkout and install read can't be found by following
+    // commands: how git writes files out, npm's settings, the Node.js
+    // version and the dependencies.
+    for (const file of ['.gitattributes', '.npmrc', '.nvmrc', 'package.json', 'package-lock.json']) {
+      assert.deepEqual(classifyFiles([file], map), { browser: true }, file);
+    }
     // None of them loads the audio suite, the audit or the checking tools,
     // which is why those don't need the browser tests.
     const loaded = new Set([...e2e, ...ui, ...firefox, ...steps]);

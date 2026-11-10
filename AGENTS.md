@@ -50,8 +50,9 @@ run `npm run checks:tables`.
 | `.github/workflows/dependency-audit.yml` | `extension`, `ui`, `site`, `dependency-audit` |
 | `.github/workflows/**`, `checks.json`, `scripts/classify-ci-changes.js` | `extension`, `ui`, `site` |
 | `**/*.md`, `LICENSE` | nothing more |
-| `.npmrc` | `dependency-audit` |
-| `.claude/launch.json`, `.gitattributes`, `.github/**`, `.gitignore`, `eslint.config.js`, `scripts/check-whitespace.js`, `scripts/node-test-results.js`, `scripts/release.js`, `scripts/render-checks-tables.js`, `scripts/render-icons.js`, `scripts/render-store-assets.js`, `scripts/stamp-site-assets.js`, `scripts/sync-site-popup.js`, `tests/**`, `wrangler.jsonc` | nothing more |
+| `.npmrc` | `extension`, `ui`, `site`, `dependency-audit` |
+| `.gitattributes` | `extension`, `ui`, `site` |
+| `.claude/launch.json`, `.github/**`, `.gitignore`, `eslint.config.js`, `scripts/check-whitespace.js`, `scripts/node-test-results.js`, `scripts/release.js`, `scripts/render-checks-tables.js`, `scripts/render-icons.js`, `scripts/render-store-assets.js`, `scripts/stamp-site-assets.js`, `scripts/sync-site-popup.js`, `tests/**`, `wrangler.jsonc` | nothing more |
 | `store-assets/**` | `store-art-look` |
 | `extension/spotify-main.js`, `extension/youtube-main.js` | `extension`, `ui`, `audio-hosted`, `audio-mac`, `listen` |
 | `extension/background.js`, `extension/content.js`, `extension/spotify-bridge.js` | `extension`, `audio-hosted`, `audio-mac`, `listen`, `permission-steps` |

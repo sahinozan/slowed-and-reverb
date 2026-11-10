@@ -96,15 +96,19 @@
       "needs": ["repo"]
     },
     {
-      "about": "npm's settings, which decide what an install and the audit read.",
+      "about": "npm's settings, which decide what every job's install and the audit read.",
       "paths": [".npmrc"],
-      "needs": ["repo", "dependency-audit"]
+      "needs": ["repo", "extension", "ui", "site", "dependency-audit"]
+    },
+    {
+      "about": "How git writes files out in a checkout, line endings included. The browser tests also run on Windows, where the repository checks don't.",
+      "paths": [".gitattributes"],
+      "needs": ["repo", "extension", "ui", "site"]
     },
     {
       "about": "Repository and editor settings, the unit tests, and the tools that check, render or release, which no browser test loads.",
       "paths": [
         ".claude/launch.json",
-        ".gitattributes",
         ".github/**",
         ".gitignore",
         "eslint.config.js",

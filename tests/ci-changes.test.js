@@ -48,8 +48,12 @@ describe('CI change classification', () => {
     ]) {
       assert.deepEqual(classifyFiles([file]), { browser: false }, file);
     }
-    // What the browser job itself sets up with still runs them.
-    assert.deepEqual(classifyFiles(['scripts/ci-package-downloads.sh']), { browser: true });
+    // What the browser job itself sets up with still runs them, and so do
+    // npm's settings and how git writes files out, which its install and
+    // its checkout read.
+    for (const file of ['scripts/ci-package-downloads.sh', '.npmrc', '.gitattributes']) {
+      assert.deepEqual(classifyFiles([file]), { browser: true }, file);
+    }
   });
 
   test('runs the browser tests for the website and what serves the popup and the site to them', () => {
