@@ -130,6 +130,10 @@ In Claude Code and Codex, hooks keep to this table (`scripts/agent-hooks/`,
 set up in `.claude/settings.json` and `.codex/hooks.json`): an edit to one of
 these files is refused, and `npm run site:popup`, `npm run site:stamp` and
 `npm run checks:tables` run by themselves after an edit to their sources.
+Where only a part of a file is generated (the checklist's items and the
+popup's header mark), Claude Code's edit is refused when it would change
+that part. A Codex patch to those two files isn't judged: the checklist's
+items are made again after it, and a test checks the mark.
 The hooks see only an agent's edit tools, so a command that writes these
 files isn't stopped, and Claude Code loads them only in a session started
 at a checkout's root. A new row here needs an entry in

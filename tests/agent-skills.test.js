@@ -50,15 +50,17 @@ const FILE = /\.(json|js|md|html|css|yml|txt|png|svg|woff2|sh)$/;
 // What is wrong with what a skill points at: a command the package
 // doesn't have, a file that isn't in the repository, a heading its file
 // doesn't have. The description is plain text, so its commands and files
-// are found as words; the text after it gives them in code.
+// are found as words; the text after it gives them in code, where a file
+// can be one word among others, as in a command or the comment after it.
 function problems({ fields, body }, has = (file) => fs.existsSync(path.join(root, file))) {
   const found = [];
-  const words = fields.description.match(/[\w.@-]+(?:\/[\w.*-]+)*/g).map((word) => word.replace(/\.$/, ''));
+  const words = [...fields.description.match(/[\w.@-]+(?:\/[\w.*-]+)*/g), ...coded(body).flatMap((text) => text.split(/\s+/))]
+    .map((word) => word.replace(/^[("']+|[)"',;:.]+$/g, ''));
   const texts = [fields.description, ...coded(body)];
   for (const [, command] of texts.flatMap((text) => [...text.matchAll(/\bnpm run ([\w:-]+)/g)])) {
-    if (!scripts[command]) found.push(`npm run ${command} is not one of package.json's scripts`);
+    if (!Object.hasOwn(scripts, command)) found.push(`npm run ${command} is not one of package.json's scripts`);
   }
-  const files = [...words, ...coded(body)].filter((text) => /^[\w.*/-]+$/.test(text) && (text.includes('/') || FILE.test(text)) && !MADE.test(text));
+  const files = [...new Set(words)].filter((text) => /^[\w.*/-]+$/.test(text) && (text.includes('/') || FILE.test(text)) && !MADE.test(text));
   for (const given of files) {
     const pattern = given.endsWith('/') ? `${given}**` : given;
     const there = tracked.filter((file) => matches(pattern, file));
@@ -142,6 +144,10 @@ describe('the skills for coding agents', () => {
       [changed('release', '`site/*.html`', '`site/*.htm`'), "site/*.htm isn't in the repository"],
       [changed('release', '`AGENTS.md` ("Git")', '`AGENTS.md` ("Merging")'), 'AGENTS.md has no heading "Merging"'],
       [changed('release', '`AGENTS.md` ("Git")', '`docs/git.md` ("Git")'), "docs/git.md isn't in the repository"],
+      // A file among the words of a command's line, and a command with
+      // the name of something every object has.
+      [changed('store-assets', 'marquee, site/assets/og-card.png', 'marquee, site/assets/missing-card.png'), "site/assets/missing-card.png isn't in the repository"],
+      [changed('release', 'it runs `npm run check`', 'it runs `npm run constructor`'), "npm run constructor is not one of package.json's scripts"],
       // In the description, where they are plain words.
       [changed('land-dependabot', 'package.json and package-lock.json', 'package.json and package-locks.json'), "package-locks.json isn't in the repository"],
       [changed('popup-change', '(extension/settings.js).', '(extension/setting.js).'), "extension/setting.js isn't in the repository"],

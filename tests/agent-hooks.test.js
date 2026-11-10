@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { after, describe, test } = require('node:test');
-const { GENERATED, matches, matchesAny } = require('../scripts/agent-hooks/generated-files');
+const { GENERATED, matches, matchesAny, patchFiles, readEdit } = require('../scripts/agent-hooks/generated-files');
 const { refusal } = require('../scripts/agent-hooks/refuse-generated-edit');
 const { regenerate } = require('../scripts/agent-hooks/regenerate');
 const { stampFor } = require('../scripts/stamp-site-assets');
@@ -190,6 +190,49 @@ describe('an edit to a generated file', () => {
       { ...patch(['Update File: popup/popup.css']), cwd: path.join(root, 'site') }
     ];
     for (const input of refused) assert.ok(refusal(input)?.includes(' is generated'), JSON.stringify(input.tool_input));
+  });
+
+  test('reads a patch\'s file names as Codex\'s applier does', () => {
+    // Each of these was tried with the applier itself
+    // (codex --codex-run-as-apply-patch) in a temporary folder.
+    const lines = (...all) => ({ tool_name: 'apply_patch', cwd: root, tool_input: { command: ['*** Begin Patch', ...all, '*** End Patch'].join('\n') } });
+    const names = (input) => readEdit(input).files.map((file) => path.relative(root, file));
+    const nextLine = String.fromCharCode(0x85);
+    // Space before one of these lines and after its path doesn't count,
+    // where a file's own lines aren't expected.
+    const refused = [
+      lines('  *** Delete File: docs/checks.md'),
+      lines('\t*** Update File: docs/checks.md  ', '@@', '-a', '+b'),
+      lines(`${nextLine}*** Delete File: docs/checks.md${nextLine}`),
+      lines('*** Add File: ordinary.txt', '+text', '  *** Delete File: docs/checks.md'),
+      lines('*** Delete File: ordinary.txt', '  *** Add File: dist/new.js', '+text'),
+      lines('*** Update File: ordinary.txt', '@@', '-a', '+b', '*** End of File', '*** Delete File: docs/checks.md\t'),
+      lines('*** Update File: ordinary.txt', '*** Move to: docs/checks.md ', '@@', '-a', '+b'),
+      { tool_name: 'apply_patch', cwd: root, tool_input: { command: '*** Begin Patch\r\n*** Delete File: docs/checks.md\r\n*** End Patch\r\n' } }
+    ];
+    for (const input of refused) assert.ok(refusal(input)?.startsWith('docs/checks.md is generated') || refusal(input)?.startsWith('dist/new.js is generated'), JSON.stringify(input.tool_input));
+    // A line ends at a line feed only, so these are one line of the new
+    // file's text each, whatever JavaScript makes of what is inside them.
+    for (const inside of ['\r', '\v', '\f', nextLine, String.fromCharCode(0x2028), String.fromCharCode(0x2029)]) {
+      const input = lines('*** Add File: ordinary.txt', `+text${inside}*** Update File: docs/checks.md`);
+      assert.deepEqual(names(input), ['ordinary.txt'], JSON.stringify(inside));
+      assert.equal(refusal(input), null, JSON.stringify(inside));
+    }
+    // While a file is updated, a line that starts with a space is a line
+    // of the file, kept as it is.
+    const kept = lines('*** Update File: ordinary.txt', '@@', ' *** Delete File: docs/checks.md', '  *** Update File: docs/checks.md', '+*** Add File: docs/checks.md', '-*** Move to: docs/checks.md', '', '  *** Move to: docs/checks.md');
+    assert.deepEqual(names(kept), ['ordinary.txt']);
+    assert.equal(refusal(kept), null);
+    // Space before a path is part of its name, so this is another file.
+    assert.deepEqual(names(lines('*** Delete File:   docs/checks.md')), ['  docs/checks.md']);
+    assert.equal(refusal(lines('*** Delete File:   docs/checks.md')), null);
+    // U+FEFF isn't space to the applier, which then finds no such file.
+    assert.equal(refusal(lines(`*** Delete File: docs/checks.md${String.fromCharCode(0xfeff)}`)), null);
+    assert.deepEqual(patchFiles('*** Begin Patch\n*** Update File: a\n*** Move to: b\n@@\n-a\n+b\n*** Add File: c\n+text\n*** End Patch'), [
+      { does: 'Update File', file: 'a' },
+      { does: 'Move to', file: 'b' },
+      { does: 'Add File', file: 'c' }
+    ]);
   });
 
   test('is not refused for any other file', () => {

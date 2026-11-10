@@ -26,7 +26,8 @@ const path = require('node:path');
 // - whole: files made whole, so any edit to them is refused. `except` takes
 //   files out again.
 // - between: a part of a file edited by hand elsewhere, between two marker
-//   lines. An edit is refused when it changes what is between them.
+//   lines. An edit by Claude Code is refused when it changes what is
+//   between them. A Codex patch to such a file isn't judged (see readEdit).
 // - regenerate: the generator's script, the sources it runs after an edit
 //   to, and the files it may write.
 //
@@ -191,15 +192,39 @@ function readInput() {
   return JSON.parse(fs.readFileSync(0, 'utf8'));
 }
 
+// The files a Codex patch names, each with what is done to it:
+//
+//   *** Update File: a/path          (or Add File, or Delete File)
+//   *** Move to: another/path        (optional, after Update File)
+//
+// It is read the way Codex's applier reads it, so that the two agree on
+// which lines are these and which are a file's text. Lines end at a line
+// feed only. Space around a line doesn't count, by Rust's meaning of space
+// (JavaScript's trim also takes U+FEFF and leaves U+0085), so a path keeps
+// the space before it and loses the space after. And once a file is being
+// updated, the lines up to the next one that starts with *** are its text:
+// one that only looks like these, after a space, is a line of the file.
+const AROUND = /^\p{White_Space}+|\p{White_Space}+$/gu;
+
+function patchFiles(patch) {
+  const named = [];
+  let updating = false;
+  for (const line of patch.split('\n')) {
+    if (updating && !line.startsWith('***')) continue;
+    const [, does, file] = /^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/s.exec(line.replace(AROUND, '')) ?? [];
+    if (!does) continue;
+    updating = does === 'Update File' || does === 'Move to';
+    named.push({ does, file });
+  }
+  return named;
+}
+
 // The edit a hook is given: the files it names and, for one of them, the
 // text it will hold afterward, or null when the edit doesn't say.
 //
 // Claude Code's Edit and Write name one file; Write gives its text whole,
 // and Edit a text to find and the text to put there. Codex's apply_patch
-// names each file on a line of its patch, from the session's folder:
-//
-//   *** Update File: a/path          (or Add File, or Delete File)
-//   *** Move to: another/path        (optional, after Update File)
+// names its files in the patch, from the session's folder.
 //
 // A patch doesn't say what a file will hold. Working that out takes a copy
 // of how Codex finds each hunk's place, and a copy that differs refuses
@@ -217,9 +242,8 @@ function readEdit(input) {
     };
     return { files: [whole(given.file_path)], textAfter };
   }
-  const patch = [given.command ?? []].flat().join('\n');
-  const named = patch.matchAll(/^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/gm);
-  return { files: [...new Set([...named].map(([, does, file]) => whole(file.trim(), does === 'Delete File')))], textAfter: () => null };
+  const named = patchFiles([given.command ?? []].flat().join('\n'));
+  return { files: [...new Set(named.map(({ does, file }) => whole(file, does === 'Delete File')))], textAfter: () => null };
 }
 
-module.exports = { GENERATED, HOME, matches, matchesAny, place, readEdit, readInput };
+module.exports = { GENERATED, HOME, matches, matchesAny, patchFiles, place, readEdit, readInput };
