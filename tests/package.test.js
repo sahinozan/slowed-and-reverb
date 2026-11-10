@@ -83,8 +83,9 @@ describe('store package contracts', () => {
     assert.equal(packageJson.packageManager, 'npm@11.19.0');
     assert.equal(fs.readFileSync(path.join(root, '.nvmrc'), 'utf8').trim(), '24.19.0');
     const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-    assert.match(readme, /ESLint 10/);
-    assert.match(readme, /Node >= 24\.19/);
+    const contributing = fs.readFileSync(path.join(root, 'CONTRIBUTING.md'), 'utf8');
+    assert.match(contributing, /ESLint 10/);
+    assert.match(contributing, /Node >= 24\.19/);
     assert.match(readme, /YouTube, YouTube Music, and\s+Spotify are supported/);
     assert.doesNotMatch(readme, /Spotify has an experimental/);
     assert.match(manifest.description, /YouTube™, YouTube Music™ and Spotify/);

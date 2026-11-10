@@ -1,8 +1,9 @@
 # Slowed & Reverb
 
-A browser extension that applies real-time speed, reverb, EQ, and stereo effects
-for YouTube™, YouTube Music™, and Spotify. Processing stays on the device, with
-zero telemetry and zero runtime dependencies.
+A browser extension that changes how songs sound as they play, with speed,
+reverb, EQ, and stereo effects, for YouTube™, YouTube Music™, and Spotify. The
+sound is processed on your device. The extension collects nothing and makes no
+network requests.
 
 ## Get the extension
 
@@ -11,6 +12,9 @@ Install it from the
 for Chrome, Edge, Brave, and other Chromium browsers, or from
 [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/slowed-reverb/)
 for desktop Firefox 142 and later.
+
+The website, [slowedreverbapp.com](https://slowedreverbapp.com), has a demo to
+try and a guide to every control.
 
 ## Use
 
@@ -115,164 +119,11 @@ panel shows, and on My Presets.
   is not currently processed. Frame support can require broader permissions,
   and both cases need more complex lifecycle and state handling.
 
-## Development
+## Contributing
 
-```sh
-npm ci                    # install exactly what package-lock.json records
-npm run lint              # ESLint 10, flat config, then CI's whitespace check over every tracked file
-npm test                  # run service worker, content, popup, and package tests
-npm run test:watch        # rerun tests while developing
-npx playwright install --no-shell chromium # one-time local browser install
-npm run test:e2e          # real Chromium extension smoke test
-npm run test:firefox      # real Firefox tests: effects stop when the extension is turned off; Spotify speed resets cause no gaps; an update asks for a reload
-npm run test:ui           # the popup's layout in every state, the website and the limiter, in Chromium and the installed Firefox
-npm run test:audio:chromium   # record the engines' audio through past failures in Chromium (e2e/audio-capture/README.md)
-npm run test:audio:firefox    # the same in the installed Firefox
-npm run test:audio-trial:chromium # experiment the suite is built on: record the engines' audio in Chromium
-npm run test:audio-trial:firefox  # the same in the installed Firefox
-npm run build:chromium    # emit dist/chromium/
-npm run build:firefox     # emit dist/firefox/
-npm run package           # build allowlisted ZIPs for both stores
-npm run lint:firefox      # build, then validate with web-ext
-npm run check             # run every required local and store-package check
-npm run audit:dependencies -- <folder> # ask the npm registry for advisories, development tools included
-npm run release -- <commit> # build, check and record a release's store packages from main
-npm run site:popup        # copy the current popup into the website after popup changes
-npm run site:serve        # preview the website locally, served like Cloudflare
-npm run site:stamp        # refresh the website's stylesheet and script version stamps
-npm run checks:for        # print which checks the files you changed need (or the paths you give it), from checks.json
-npm run checks:tables     # write docs/checks.md and the release checklist's "When it applies" items, from checks.json
-```
-
-The public website lives in [site/](site/README.md): static HTML, CSS, and a
-few small scripts, with no build step, served at
-[slowedreverbapp.com](https://slowedreverbapp.com).
-
-The extension source lives in [extension/](extension/). Its manifest targets
-Chromium. Target builds emit clean, allowlisted
-directories under `dist/`; `npm run package` creates one upload ZIP per store in
-`dist/packages/`. The Firefox version receives Firefox's MV3 background
-configuration and add-on metadata during the build. Its data-collection
-declaration and optional YouTube reload permissions target Firefox desktop 142+.
-Firefox Android is not declared because it has not been tested.
-
-Needs Node >= 24.19 and npm 11.19. Development tools are exact-versioned in
-`package.json` and `package-lock.json`; use `npm ci` for normal setup rather
-than fetching tools with `npx`. The project `.npmrc` disables dependency install
-scripts, rejects Git and remote-tarball dependencies, and excludes releases less
-than seven days old when resolving dependency updates. Review lockfile changes
-and run `npm run audit:dependencies -- <folder>` before committing any
-intentional dependency update. It runs `npm audit` on the lockfile with the
-development tools included, keeps npm's output in the folder and summarizes
-each advisory once in `summary.md` there, with the dependencies that bring it
-in. It prints only whether it found advisories and where the summary is, or
-which file it couldn't write, so nothing from the registry reaches the console,
-where GitHub Actions would read lines like `::add-mask::` as commands.
-
-It fails for any advisory not listed in
-[`audit-exceptions.json`](audit-exceptions.json). That file holds the
-advisories that have been looked at, have no usable fix yet, and don't reach
-this project, each with the package and installed versions it covers, a
-reason of a sentence or two, and a `reviewBy` date at most 90 days ahead. An
-advisory on the list is let through only while every installed version of the
-package is listed and the date hasn't passed, so a new version or a passed date
-fails the audit until someone looks again. When the package is installed at
-several versions, an entry lists all of them, even one the advisory doesn't
-affect, since npm's report doesn't say which copy each advisory is about. An entry that no longer matches
-anything installed fails it too, so the list doesn't keep entries that aren't
-needed. Add or renew an entry only after checking how the project uses the
-affected code, and put the fuller analysis in the pull request that changes
-the list.
-
-The test suite runs the real extension scripts against deterministic browser,
-DOM, and Web Audio mocks. It covers tab state and shortcuts, audio graph values,
-blocked and live-media behavior, popup controls and presets, manifest contracts,
-and the Firefox build. The Playwright smoke test loads the built Chromium extension
-into a real browser, renders its popup at production size, applies settings to a
-local audio fixture, checks that the popup's content fits without scrolling with
-every control on screen, and saves a screenshot in the test report. It also updates an earlier version with a YouTube page open and checks
-that the popup asks for a reload and the effect starts after it. The Firefox test
-runs the Firefox build in the installed Firefox through puppeteer-core (set
-`FIREFOX_BIN` for a Firefox somewhere else), turns the effects on for the same
-fixture, turns the extension off through Firefox's add-on manager, and checks
-that each player is back to normal speed, captured once, and playing only
-through the unchanged path; it does the same again after turning the extension
-back on and removing it. It also updates an earlier version with a YouTube page
-open, and with a Spotify page open before turning the extension off and on, and
-checks that each old engine stays off until the page is reloaded. It can't hear
-the audio. The audio regression suite (`npm run test:audio:chromium` and
-`npm run test:audio:firefox`, needing a sound device) records it: the speed and
-pitch, clicks and gaps as settings change, Spotify's own speed changes, and the
-sound coming back unchanged when the effect or the extension is turned off,
-removed or updated, and it catches each audible defect fixed so far when that is
-put back. It doesn't replace listening after an engine change: Firefox's own
-late frame of silence when the effect turns on during a song is reported, not
-fixed, and the suite hasn't run often enough to know how steady it is. It
-plays steady tones on a local page, so a listen on the real sites is still a
-manual check before a store release (`e2e/audio-capture/README.md`).
-`npm run test:ui` renders the popup page from `extension/` with a stub
-extension API in Playwright's Chromium and in the installed Firefox (Gecko,
-through WebDriver BiDi; `FIREFOX_BIN` chooses another), in each state that
-changes its layout: the built-in and saved presets with long names, the
-Advanced tab, themes, the effect on and off, notices for loading, live and
-blocked pages, and the reload and permission panels, including after a failed
-attempt. For each it checks that the popup shows that state, then that it is
-340px wide, needs no scrolling, and shows every control it should, uncovered
-and not made transparent by anything around it; the effect controls stay
-checked under My Presets, and the saved presets list scrolls on its own and
-its last preset is still usable. It fails on the layout defects fixed in
-`c3ab8b5` and `46512dc` when they are put back, and on made-up ones: a popup
-too wide, a clipped presets list, effect controls hidden or cut off under My
-Presets, and a transparent panel or page (`SLOWED_REVERB_POPUP_HISTORY=1 npm run test:ui -- --grep history`
-checks those commits' own files). It is the popup's page, not the browser's
-popup window: Firefox's rounded panel corners and the browsers' permission
-dialogs aren't drawn, so a change to the popup's frame in CSS still needs a
-look in Firefox. It also serves `site/` as Cloudflare does and checks, on a
-desktop and two phone widths, that the demo plays and pauses, that the popup
-and the page's speed fader drive it both ways, that the popup's theme colors
-the page and the next one, that the embedded popup is sized to fit and keeps
-the room the page reserved for it, that no page is wider than the window, and
-that no page requests anything from another site, WebSockets included, or
-reports an error. The browsers are muted, so this checks that the song's clock
-moves, not how it sounds. Firefox's audio clock starts only with a sound
-device, so on Linux the demo needs a PulseAudio or PipeWire sink; CI's Ubuntu
-job starts a null sink. GitHub's Windows runners have no sound device, so CI's
-Windows job sets `SLOWED_REVERB_UI_FIREFOX_PLAYBACK=omit` and the two tests
-tagged `@playback` (the demo playing, and its control for the popup's choices
-not reaching the demo) run there in Chromium only; every other test runs in
-both engines on both systems. Each playing test attaches
-`demo-playback.json`: each step the demo took to play (fetching and decoding
-the song, resuming the audio context, starting the `<audio>` element), which
-ones are still waiting, and the audio context's and element's state and
-clocks. Playwright drives the installed Firefox through its experimental
-WebDriver BiDi support (the `moz-firefox` channel, with a new profile for each
-run), which a future Firefox or Playwright may change.
-Before its tests the Firefox test prints
-which Firefox it started, how long Firefox took to open its WebDriver BiDi port
-and what Firefox printed meanwhile; when Firefox doesn't start, it adds the
-browser's processes and how they ended.
-`npm run test:ui` also checks the limiter's sound, without playing any
-(`e2e/ui/limiter.spec.js`). Firefox's compressor still boosts the treble before
-it decides how far to turn the sound down, which Chromium stopped doing in
-2014, so the limiter turned loud, bright music down in Firefox only. Both
-engines and the website's demo carry the same limiter stage, which in Firefox
-puts a filter each side of the limiter to cancel that. The test renders the
-stage from each file offline in both browsers and checks that tones from
-100 Hz to 18 kHz, white noise and a bass note under bursts of treble, all
-below the limiter's threshold, come out at the same level in both; that the
-defect is heard when it is put back; that a compressor without the filters
-is left as it was; and that a limiter connected before the stage has checked
-the browser limits a loud tone exactly as one connected after.
-GitHub Actions runs `npm run check` for every change, and the browser tests on
-disposable Ubuntu and Windows machines unless the change can't affect them. The
-pull request's base commit decides that with its copies of `checks.json`, the
-map of which checks a change needs, and of `scripts/classify-ci-changes.js`,
-which reads it; changes to the workflows, the classifier or the map always run
-them. A separate Dependency audit workflow runs the
-audit every week and for dependency changes; it isn't one of the checks a pull
-request needs. What the automated tests don't check today, the real sites,
-the browsers' own windows and prompts, and real sound, is done by hand before
-each store release, from [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the commands and how pull
+requests work. [docs/testing.md](docs/testing.md) says what each test command
+covers.
 
 ## Privacy
 

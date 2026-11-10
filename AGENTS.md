@@ -3,7 +3,8 @@
 Slowed & Reverb is a browser extension (Manifest V3, Chromium and Firefox) that
 changes how songs sound on YouTube, YouTube Music and the Spotify web player,
 plus its website at slowedreverbapp.com and its store listings. README.md
-covers the features and development commands in full.
+covers the features, CONTRIBUTING.md the setup and development commands, and
+`docs/testing.md` what each test command covers.
 
 ## Layout
 
@@ -17,7 +18,7 @@ covers the features and development commands in full.
 - `tests/`: unit tests (`node --test`); `e2e/`: a Playwright smoke test for
   Chromium and a puppeteer-core test for Firefox.
 - `docs/`: `checks.md`, which checks a change needs, made from
-  `checks.json`.
+  `checks.json`, and `testing.md`, what each test command covers.
 
 ## Checks
 
@@ -44,8 +45,8 @@ checklist's "When it applies" items again.
   of settings, Spotify's speed changes, turning the extension off, removing
   and updating it, and put back each audible defect fixed so far to show it
   is caught. Run them as well as listening: they don't replace that yet.
-  "What it can replace" in the README below says what would have to be shown
-  first. A change the map gives `audio-hosted` and `audio-mac` merges only
+  "What it can replace" in `e2e/audio-capture/README.md` says what would
+  have to be shown first. A change the map gives `audio-hosted` and `audio-mac` merges only
   once both suites have passed on the pull request's final commit, with the
   branch up to date with `main` (the workflow tests the branch merged into
   `main`): in the pull request's audio workflow, both jobs, none skipped or
