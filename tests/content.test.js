@@ -211,21 +211,64 @@ describe('content script audio processing', () => {
     assert.equal(processed.gain.valueAt(1.2), 1);
   });
 
-  test('stays silent while Firefox changes the speed', async (t) => {
+  // Firefox's player clicks when its speed goes to normal speed, away from
+  // it, or from one side of it to the other.
+  for (const [title, speed] of [['across normal speed', 1.1], ['to normal speed', 1]]) {
+    test(`stays silent while Firefox changes the speed ${title}`, async (t) => {
+      const harness = await createContentHarness({
+        userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
+      });
+      t.after(() => close(harness));
+      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+      const processed = outputGains(harness.getContext())[1];
+
+      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed }, enabled: true });
+      assert.equal(harness.media.playbackRate, speed);
+      assert.deepEqual(ramps(processed.gain).slice(-2), [
+        { to: 0, endTime: 1.03 },
+        { to: 1, endTime: 1.105 }
+      ]);
+    });
+  }
+
+  test('stays silent while Firefox changes the speed away from normal speed', async (t) => {
     const harness = await createContentHarness({
       userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
     });
     t.after(() => close(harness));
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 1 }, enabled: true });
     const processed = outputGains(harness.getContext())[1];
 
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9 }, enabled: true });
-    assert.equal(harness.media.playbackRate, 0.9);
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 1.01 }, enabled: true });
+    assert.equal(harness.media.playbackRate, 1.01);
     assert.deepEqual(ramps(processed.gain).slice(-2), [
       { to: 0, endTime: 1.03 },
       { to: 1, endTime: 1.105 }
     ]);
   });
+
+  // A change that stays below normal speed, or stays above it, makes no
+  // click there, so the player changes at once and nothing is faded out.
+  for (const [title, from, to] of [
+    ['a small step below normal speed', 0.7, 0.71],
+    ['a large step below normal speed', 0.5, 0.9],
+    ['a step above normal speed', 1.5, 1.1]
+  ]) {
+    test(`changes the speed at once in Firefox for ${title}`, async (t) => {
+      const harness = await createContentHarness({
+        userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
+      });
+      t.after(() => close(harness));
+      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: from }, enabled: true });
+      const processed = outputGains(harness.getContext())[1];
+      const before = ramps(processed.gain).length;
+
+      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: to }, enabled: true });
+      assert.equal(harness.media.playbackRate, to);
+      assert.equal(ramps(processed.gain).slice(before).some((ramp) => ramp.to === 0), false);
+      for (const time of [1.01, 1.03, 1.06, 1.1, 1.2]) assert.equal(processed.gain.valueAt(time), 1);
+    });
+  }
 
   test('returns the graph to neutral values when disabled', async (t) => {
     const harness = await createContentHarness();

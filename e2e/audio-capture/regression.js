@@ -87,8 +87,9 @@ const EXCERPT_BEFORE_MS = 50;
 const EXCERPT_AFTER_MS = 400;
 
 // The silence the engines make on purpose (youtube-main.js and
-// spotify-main.js). A change that makes the player click (in Firefox any
-// change of speed or pitch mode, in Chromium a change of pitch mode) fades
+// spotify-main.js). A change that makes the player click (a change of pitch
+// mode in both browsers; in Firefox also a change of speed to normal speed,
+// away from it, or from one side of it to the other) fades
 // the output out over 10 ms from 20 ms ahead, changes the player 40 ms
 // after the request and keeps the output silent until 80 ms after that:
 // about 90 ms of silence. 60 ms more allows for a page timer running late.
@@ -206,12 +207,17 @@ function withoutRinging(expect, ringing) {
 // no clicks.
 const NOTHING = Object.freeze({});
 
-// What a change of settings may do: the engines' silent dip when it changes
-// how the player plays, nothing otherwise.
+// Which side of normal speed a speed is on, as the engines' speedSide.
+const speedSide = (speed) => (Math.abs(speed - 1) <= 0.001 ? 0 : Math.sign(speed - 1));
+
+// What a change of settings may do: the engines' silent dip when it makes
+// the player click, nothing otherwise. In Firefox a change of speed that
+// stays below normal speed, or stays above it, is in that "nothing": the
+// engines change the player at once, and it must not click or go silent.
 function settingsChange(target, from, to) {
   const pitchChanges = from.keepPitch !== to.keepPitch;
-  const speedChanges = Math.abs(from.speed - to.speed) > 0.001;
-  return pitchChanges || (target === 'firefox' && speedChanges) ? { silenceMs: DIP_MS } : NOTHING;
+  const speedClicks = target === 'firefox' && speedSide(from.speed) !== speedSide(to.speed);
+  return pitchChanges || speedClicks ? { silenceMs: DIP_MS } : NOTHING;
 }
 
 function defineRegression(browser) {
@@ -786,7 +792,14 @@ function defineRegression(browser) {
       await hold(span, 'on', effectExpect(EFFECT), { settleMs: 0 });
       await change('reverb 40', { ...current, reverb: 40 });
       await change('pan to the middle', { ...current, pan: 0 });
+      // Below normal speed all the way: in Firefox too the player changes
+      // at once, with no silence, for a small step and for a larger one.
+      await change('speed 0.81', { ...current, speed: 0.81 });
       await change('speed 0.9', { ...current, speed: 0.9 });
+      // From one side of normal speed to the other and back: Firefox's
+      // player clicks, so there the engines go silent around the change.
+      await change('speed 1.1, across normal speed', { ...current, speed: 1.1 });
+      await change('speed 0.9, back across normal speed', { ...current, speed: 0.9 });
 
       // A dragged slider: requests paced to reach the engine SWEEP_STEP_MS
       // apart, without waiting for the answers, so each one reaches it

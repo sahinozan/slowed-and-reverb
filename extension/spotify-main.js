@@ -70,11 +70,17 @@
   // in the past and jump to partway through.
   const SCHEDULE_AHEAD_SECONDS = 0.02;
 
-  // The player itself clicks when it changes how it plays: Firefox for any
-  // change of speed or pitch mode, 5 to 20 ms after it; Chromium only for a
-  // change of pitch mode, about 50 ms after it (measured on both). So the
-  // output fades out first, the player changes once it is silent, and the
-  // output stays silent until the click has passed.
+  // The player itself clicks when it changes how it plays: Firefox for a
+  // change of pitch mode and for a change of speed to normal speed, away
+  // from it, or from one side of it to the other, 5 to 20 ms after it;
+  // Chromium only for a change of pitch mode, about 50 ms after it (measured
+  // on both). So the output fades out first, the player changes once it is
+  // silent, and the output stays silent until the click has passed.
+  //
+  // A change of speed that stays below normal speed, or stays above it,
+  // makes no click in Firefox, whatever its size (measured in Firefox 159
+  // and 160, for changes from 0.01 to 0.4), so it is made at once: a silent
+  // gap for each step would turn stepping through speeds into a stutter.
   const FIREFOX = window.navigator.userAgent.includes('Firefox');
   const DIP_FADE_SECONDS = 0.01;
   // After the fade-out has finished, with a margin for page timers.
@@ -352,8 +358,8 @@
 
   // Spotify sets its player back to normal speed every few seconds, and to 0
   // while it seeks. Putting the effect's speed back after each of those is a
-  // change of speed, which Firefox hides only with a silent gap, heard as a
-  // skip. So the speed Spotify sets on a player this engine knows is kept as a
+  // change away from normal speed, which Firefox hides only with a silent
+  // gap, heard as a skip. So the speed Spotify sets on a player this engine knows is kept as a
   // request: while the effect is on, 0 goes through and any other speed keeps
   // the effect's, so the player never changes; while it is off, the request
   // is the speed. The engine sets the player itself through the original
@@ -407,9 +413,14 @@
     });
   }
 
+  // Which side of normal speed a speed is on: -1 below, 1 above, 0 at it.
+  function speedSide(speed) {
+    return Math.abs(speed - 1) <= 0.001 ? 0 : Math.sign(speed - 1);
+  }
+
   function playbackClicks(media, speed, keepPitch) {
     if (media.preservesPitch !== keepPitch) return true;
-    return FIREFOX && Math.abs(media.playbackRate - speed) > 0.001;
+    return FIREFOX && speedSide(media.playbackRate) !== speedSide(speed);
   }
 
   function setPlayback(media, speed, keepPitch) {
