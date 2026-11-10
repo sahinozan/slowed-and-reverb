@@ -825,6 +825,8 @@ describe('popup behavior', () => {
 
     slider.value = '10';
     slider.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+    // Let 10 leave, so that 80 is a second message and not a change to the first.
+    await flushPromises();
     slider.value = '80';
     slider.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
     // The slow answer to 10 arrives during this wait, and the check is that
@@ -1045,7 +1047,8 @@ describe('popup behavior', () => {
       };
     }
 
-    // Holds each of the tab's answers to a change until the test lets it go.
+    // Holds each of the tab's answers to a change until the test lets it go,
+    // with `{ success: true }` unless the test gives another answer.
     function slowTab(speed) {
       const answers = [];
       return {
@@ -1053,7 +1056,7 @@ describe('popup behavior', () => {
         onTabMessage(_tabId, message) {
           if (message.type === 'GET_STATE') return playingAt(speed);
           return new Promise((resolve) => {
-            answers.push(() => resolve({ success: true }));
+            answers.push((answer = { success: true }) => resolve(answer));
           });
         }
       };
@@ -1312,6 +1315,30 @@ describe('popup behavior', () => {
       assert.equal(harness.window.document.getElementById('power-toggle').checked, true);
     });
 
+    test('ignores the answer to a change that a newer one has replaced', async (t) => {
+      const tab = slowTab(1);
+      const harness = await createPopupHarness({ onTabMessage: tab.onTabMessage });
+      t.after(() => close(harness));
+      const { up, field } = speedControls(harness);
+      const power = harness.window.document.getElementById('power-toggle');
+
+      up.click();
+      await settle();
+      up.click();
+      // The tab refuses the first step, but the popup has moved on from it.
+      tab.answers.shift()({ success: false, blocked: true, blockReason: 'drm' });
+      await settle();
+      assert.equal(harness.window.document.getElementById('blocked-banner').hidden, true);
+      assert.deepEqual([power.checked, field.disabled], [true, false]);
+      assert.deepEqual(shown(harness), ['1.02', '1.02', '1.02x']);
+
+      // The answer to the newest change does count.
+      tab.answers.shift()({ success: false, blocked: true, blockReason: 'drm' });
+      await settle();
+      assert.equal(harness.window.document.getElementById('blocked-banner').hidden, false);
+      assert.deepEqual([power.checked, field.disabled], [false, true]);
+    });
+
     test('sends steps made before the first has left as one change', async (t) => {
       const harness = await createPopupHarness({ contentState: playingAt(1) });
       t.after(() => close(harness));
@@ -1560,6 +1587,40 @@ describe('popup behavior', () => {
         assert.equal(harness.window.document.getElementById('power-toggle').checked, false);
         assert.equal(up.disabled, true);
       });
+
+      // The popup can be used while it is still asking the tab about its
+      // state. What the tab then answers replaces what the controls show, so
+      // a step still waiting from before must not be sent on top of it.
+      for (const [title, answer, speed] of [
+        ['the speed the tab has', playingAt(1.01), '1.01'],
+        ['a live stream', { ...playingAt(1.01), live: true }, '1.00']
+      ]) {
+        test(`drops a waiting step when the tab's first answer shows ${title}`, async (t) => {
+          const tabState = deferredTabState();
+          const harness = await createPopupHarness({ ...FIREFOX, onTabMessage: tabState.onTabMessage });
+          t.after(() => close(harness));
+          const timers = fakeTimers(harness.window);
+          const { up, field } = speedControls(harness);
+
+          up.click();
+          await settle();
+          up.click();
+          assert.equal(field.value, '1.02');
+          const sent = appliesSent(harness);
+          assert.deepEqual(sent, [[1.01, true]]);
+
+          tabState.release(answer);
+          await settle();
+          assert.equal(field.value, speed);
+          timers.advance(1000);
+          await settle();
+
+          // What is shown is what the tab has: nothing more was sent or saved.
+          assert.deepEqual(appliesSent(harness), sent);
+          assert.equal(field.value, speed);
+          assert.equal(harness.local.data.speed, 1.01);
+        });
+      }
 
       test('sends a waiting speed when the popup closes', async (t) => {
         const harness = await createPopupHarness({ ...FIREFOX, contentState: playingAt(1) });

@@ -570,6 +570,11 @@ function getCurrentSettings() {
 }
 
 function applySettingsToUI(settings) {
+  // A speed step kept back for the end of its run was made on what the
+  // controls showed before. Sent later, it would put that back, on top of
+  // what they show from here on.
+  dropHeldApply();
+
   for (const slider of SLIDERS) {
     const value = settings[slider.key] ?? DEFAULT_SETTINGS[slider.key];
     slider.input.value =
@@ -789,7 +794,7 @@ function sendOnClose() {
   apply.resolve(null);
 }
 
-// A page that turns out to be blocked gets nothing that was being kept back.
+// Gives up a change that was being kept back (see applySettingsToUI).
 function dropHeldApply() {
   window.clearTimeout(speedSettleTimer);
   speedSettleTimer = null;
@@ -997,7 +1002,6 @@ function setBlocked(isBlocked, reason) {
   setEqDisabled(isBlocked);
 
   if (isBlocked) {
-    dropHeldApply();
     setActiveTab(tabButtons, tabPanels, 'presets');
     setActiveTab(effectTabButtons, effectTabPanels, 'basic');
     els.footer.classList.remove('no-divider');
