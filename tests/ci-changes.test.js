@@ -1,10 +1,15 @@
 'use strict';
 
+// The classifier's decisions, which come from checks.json
+// (tests/checks-map.test.js checks the map itself), and its command line.
+
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { describe, test } = require('node:test');
-const { classifyFiles, parsePaths } = require('../scripts/classify-ci-changes');
+const { POLICY_VERSION, classifyFiles, parsePaths } = require('../scripts/classify-ci-changes');
 
 const { root } = require('./helpers/load-script');
 
@@ -48,7 +53,7 @@ describe('CI change classification', () => {
   });
 
   test('runs the browser tests when what decides or enforces the checks changes', () => {
-    for (const file of ['.github/workflows/ci.yml', '.github/workflows/other.yml', 'scripts/classify-ci-changes.js']) {
+    for (const file of ['.github/workflows/ci.yml', '.github/workflows/other.yml', 'scripts/classify-ci-changes.js', 'checks.json']) {
       assert.deepEqual(classifyFiles([file]), { browser: true }, file);
     }
   });
@@ -84,7 +89,8 @@ describe('CI change classification', () => {
     const script = path.join(root, 'scripts', 'classify-ci-changes.js');
     const run = (args, input = '') => spawnSync(process.execPath, [script, ...args], { input, encoding: 'utf8' });
 
-    assert.equal(run(['--policy-version']).stdout, '2\n');
+    assert.equal(POLICY_VERSION, '3');
+    assert.equal(run(['--policy-version']).stdout, '3\n');
     assert.equal(run([], 'docs/notes.md\0').stdout, 'browser=false\n');
     assert.equal(run([], 'extension/content.js\0').stdout, 'browser=true\n');
     assert.equal(run([], '').stdout, 'browser=true\n');
@@ -92,5 +98,46 @@ describe('CI change classification', () => {
     const unexpected = run(['--browser=false']);
     assert.equal(unexpected.status, 2);
     assert.equal(unexpected.stdout, '');
+  });
+
+  // CI runs a copy of the classifier from a temporary folder, with the
+  // base commit's map in the folder above it.
+  test('a copy reads the map above its own folder, and decides nothing without one', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-classifier-test-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const copy = path.join(dir, 'scripts', 'classify-ci-changes.js');
+    fs.mkdirSync(path.dirname(copy));
+    fs.copyFileSync(path.join(root, 'scripts', 'classify-ci-changes.js'), copy);
+    const run = (args, input = '') => spawnSync(process.execPath, [copy, ...args], { input, encoding: 'utf8' });
+
+    // Its version needs no map; a decision does.
+    assert.equal(run(['--policy-version']).stdout, '3\n');
+    const without = run([], 'README.md\0');
+    assert.notEqual(without.status, 0);
+    assert.equal(without.stdout, '');
+
+    // A map of its own, not the repository's: here the website needs no
+    // browser tests and documentation does.
+    const map = {
+      checks: {
+        repo: { by: 'ci', job: 'repository-checks', run: ['npm run check'], about: 'Every change.' },
+        extension: { by: 'ci', job: 'browser-smoke', run: ['npm run test:e2e'], about: 'The extension.' }
+      },
+      rules: [
+        { about: 'The website.', paths: ['site/**'], needs: ['repo'] },
+        { about: 'Documentation.', paths: ['**/*.md'], needs: ['repo', 'extension'] }
+      ]
+    };
+    fs.writeFileSync(path.join(dir, 'checks.json'), JSON.stringify(map));
+    assert.equal(run([], 'site/index.html\0').stdout, 'browser=false\n');
+    assert.equal(run([], 'README.md\0').stdout, 'browser=true\n');
+    assert.equal(run([], 'site/index.html\0tests/a.test.js\0').stdout, 'browser=true\n');
+
+    // A map it can't read whole stops it, with nothing printed to decide from.
+    fs.writeFileSync(path.join(dir, 'checks.json'), JSON.stringify({ ...map, rules: [] }));
+    const broken = run([], 'site/index.html\0');
+    assert.notEqual(broken.status, 0);
+    assert.equal(broken.stdout, '');
+    assert.match(broken.stderr, /checks\.json: has no rules/);
   });
 });

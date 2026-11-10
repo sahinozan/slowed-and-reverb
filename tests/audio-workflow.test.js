@@ -6,17 +6,18 @@
 // GitHub's rules for which steps run after a failure, that each job runs
 // its browser's suite and then its trial, that the nightly runs ask for the
 // Firefox releases BASELINE.md needs, that the workflow runs for a change to
-// any file the audio suites load, and that of the extension's files it runs
-// for those that can reach the sound and leaves out the popup's and the
-// icons, which the suites never open.
+// any file the audio suites load, that its paths are the ones checks.json
+// gives the hosted audio suites, and that the suites never open the popup,
+// which is why the map leaves the popup's files out of them.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 const { describe, test } = require('node:test');
+const { checksFor, patternRegExp, readMap, ruleFor } = require('../scripts/classify-ci-changes');
 
 const { root } = require('./helpers/load-script');
+const { trackedFiles, workflowPathProblems, workflowPaths } = require('./helpers/workflow-paths');
 
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'audio-capture-trial.yml'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -168,10 +169,11 @@ function stepRuleProblems(text) {
 }
 
 // The workflow's paths.
-const FILTERS = [...workflow.matchAll(/^ {6}- '([^']+)'$/gm)].map((match) => match[1]);
+const FILTERS = workflowPaths(workflow, 'pull_request');
 
-function covered(file, filters = FILTERS) {
-  return filters.some((filter) => (filter.endsWith('/**') ? file.startsWith(filter.slice(0, -2)) : file === filter));
+// Read as checks.json's patterns are, which is how GitHub reads these.
+function covered(file) {
+  return FILTERS.some((filter) => patternRegExp(filter).test(file));
 }
 
 // Every local module reached from the suites' entry points.
@@ -201,35 +203,6 @@ function commandScripts(scripts, name, seen = new Set()) {
   return [...scripts[name].matchAll(/\bnpm run ([\w:-]+)|\b(scripts\/[\w.-]+\.(?:js|sh))\b/g)].flatMap(([, command, file]) =>
     command ? commandScripts(scripts, command, seen) : [file]
   );
-}
-
-// The extension's files git tracks, so a file the system leaves in the
-// folder doesn't count.
-function extensionFiles() {
-  return execFileSync('git', ['ls-files', '-z', '--', 'extension'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
-}
-
-// The extension's files the workflow doesn't run for: the popup's page with
-// its script and styles, and the toolbar's icons, which are pictures. The
-// suites ask the background script for what the popup's message would
-// (harness.js), so they never load the popup's files. Every other file of
-// the extension can reach the sound, a script put among the icons included.
-const NOT_RECORDED = [/^extension\/popup\.(?:css|html|js)$/, /^extension\/assets\/[^/]+\.(?:png|svg)$/];
-
-// What is wrong with how the workflow's paths split the extension's files:
-// one that can reach the sound and isn't in them, a new file included, or
-// one the suites never load that is.
-function extensionPathProblems(files, filters) {
-  const problems = [];
-  for (const file of files) {
-    const left = NOT_RECORDED.some((pattern) => pattern.test(file));
-    const runs = covered(file, filters);
-    if (left && runs) problems.push(`the audio workflow runs for ${file}, which the suites never load`);
-    if (!left && !runs) {
-      problems.push(`${file} isn't the popup's or an icon, so it can reach the sound, but the audio workflow doesn't run for it`);
-    }
-  }
-  return problems;
 }
 
 // The lines of these files that match, as "file:line". A line that is only
@@ -440,43 +413,103 @@ describe('the audio workflow', () => {
     );
   });
 
-  test("runs for the extension's files that can reach the sound, and not for the popup's or the icons", () => {
-    const files = extensionFiles();
-    for (const file of ['extension/settings.js', 'extension/manifest.json', 'extension/popup.js', 'extension/assets/icon128.png']) {
+  test('its paths are the ones the map gives the hosted audio suites', () => {
+    const map = readMap();
+    assert.equal(map.checks['audio-hosted'].workflow, '.github/workflows/audio-capture-trial.yml');
+    // Nothing else in the workflow narrows or widens what starts it for a
+    // pull request, and no other kind of pull request event starts it.
+    assert.equal(workflow.match(/^ {4}paths:$/gm)?.length, 1);
+    assert.doesNotMatch(workflow, /paths-ignore|branches|pull_request_target/);
+    assert.deepEqual(
+      workflow.match(/^ {2}\w+:$/gm).filter((key) => /pull_request|push/.test(key)),
+      ['  pull_request:']
+    );
+    const files = trackedFiles();
+    for (const file of ['extension/settings.js', 'extension/popup.js', 'e2e/audio-capture/README.md', 'package.json']) {
       assert.ok(files.includes(file), `git ls-files didn't list ${file}`);
     }
-    assert.deepEqual(extensionPathProblems(files, FILTERS), []);
-    // The reasons the popup's files are left out: the suites don't open the
-    // popup, the extension doesn't open it by itself, and nothing but the
-    // popup's page loads its script and styles.
+    assert.deepEqual(workflowPathProblems(files, FILTERS, map, 'audio-hosted'), []);
+    // Of the extension's files, those that can reach the sound: not the
+    // popup's or the icons.
+    const heard = trackedFiles('extension').filter((file) => checksFor(map, file).includes('audio-hosted'));
+    assert.deepEqual(
+      heard,
+      ['background.js', 'content.js', 'manifest.json', 'settings.js', 'spotify-bridge.js', 'spotify-main.js', 'youtube-main.js'].map(
+        (name) => `extension/${name}`
+      )
+    );
+  });
+
+  test("finds paths it can't read whole, or that the workflow doesn't start by", () => {
+    const list = "      - 'scripts/firefox-release.js'\n";
+    assert.equal(workflow.split(list).length, 2);
+    const refused = (text, message) => assert.throws(() => workflowPaths(text, 'pull_request'), message);
+    // Paths written in ways the reader above doesn't take in.
+    refused(workflow.replace(list, `${list}      - "!extension/settings.js"\n`), /can't read "- "!extension\/settings\.js"" in pull_request's paths/);
+    refused(workflow.replace(list, `${list}      - "site/demo-audio.js"\n`), /can't read/);
+    refused(workflow.replace(list, `${list}      - site/demo-audio.js\n`), /can't read/);
+    refused(workflow.replace('    paths:\n', "    paths: ['extension/**']\n    ignored:\n"), /needs one paths: list/);
+    // The same list, but leaving these paths out, or for another event.
+    refused(workflow.replace('    paths:\n', '    paths-ignore:\n'), /has a paths-ignore/);
+    refused(workflow.replace('    paths:\n', "    paths-ignore:\n      - 'site/**'\n    paths:\n"), /has a paths-ignore/);
+    refused(workflow.replace('  pull_request:\n', '  push:\n'), /doesn't start for pull_request/);
+    refused(workflow.replace(/ {4}paths:\n(?: {6}.*\n)+/, '    paths:\n'), /paths: list is empty/);
+    // A single-quoted exclusion is read, and then isn't a pattern the map reads.
+    const excluded = workflowPaths(workflow.replace(list, `${list}      - '!extension/settings.js'\n`), 'pull_request');
+    assert.equal(excluded.at(-1), '!extension/settings.js');
+    assert.throws(() => workflowPathProblems(trackedFiles(), excluded, readMap(), 'audio-hosted'), /is not a pattern this map reads/);
+    // And the workflow as it is reads whole.
+    assert.equal(workflowPaths(workflow, 'pull_request').length, 19);
+  });
+
+  test('nothing but the toolbar opens the popup, and only its page loads its script and styles', () => {
+    // Why the map leaves the popup's files out of the hosted audio suites:
+    // the suites don't open the popup, the extension doesn't open it by
+    // itself, and nothing but the popup's page loads its script and styles.
     const sources = Object.fromEntries(suiteModules().map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')]));
     assert.deepEqual(popupUses(sources), []);
     const others = Object.fromEntries(
-      files
+      trackedFiles('extension')
         .filter((file) => /\.(?:js|json)$/.test(file) && file !== 'extension/popup.js')
         .map((file) => [file, fs.readFileSync(path.join(root, file), 'utf8')])
     );
+    assert.ok(Object.keys(others).includes('extension/manifest.json'));
     assert.deepEqual(popupLoads(others), []);
   });
 
-  test("finds a file of the extension on the wrong side of the workflow's paths", () => {
-    const files = extensionFiles();
-    // A file that reaches the sound taken out, and a new file nobody placed.
-    assert.deepEqual(extensionPathProblems(files, FILTERS.filter((filter) => filter !== 'extension/settings.js')), [
-      "extension/settings.js isn't the popup's or an icon, so it can reach the sound, but the audio workflow doesn't run for it"
-    ]);
-    assert.deepEqual(extensionPathProblems([...files, 'extension/pitch-main.js'], FILTERS), [
-      "extension/pitch-main.js isn't the popup's or an icon, so it can reach the sound, but the audio workflow doesn't run for it"
-    ]);
-    // Only pictures count as icons.
-    assert.deepEqual(extensionPathProblems([...files, 'extension/assets/helper.js', 'extension/assets/icon64.png'], FILTERS), [
-      "extension/assets/helper.js isn't the popup's or an icon, so it can reach the sound, but the audio workflow doesn't run for it"
+  test('finds paths and a map that disagree', () => {
+    const map = readMap();
+    const files = trackedFiles();
+    // A file that reaches the sound taken out of the workflow.
+    assert.deepEqual(workflowPathProblems(files, FILTERS.filter((filter) => filter !== 'extension/settings.js'), map, 'audio-hosted'), [
+      "checks.json gives extension/settings.js audio-hosted, but it isn't in the workflow's paths",
+      "extension/settings.js needs audio-hosted, but the workflow doesn't run for it"
     ]);
     // The whole folder again, as it was: the popup's files and every icon.
-    const whole = extensionPathProblems(files, [...FILTERS, 'extension/**']);
-    assert.equal(whole.length, files.filter((file) => NOT_RECORDED.some((pattern) => pattern.test(file))).length);
-    assert.ok(whole.includes("the audio workflow runs for extension/popup.css, which the suites never load"), whole.join('\n'));
-    assert.ok(whole.length > 3);
+    const whole = workflowPathProblems(files, [...FILTERS, 'extension/**'], map, 'audio-hosted');
+    assert.equal(whole[0], "extension/** is in the workflow's paths, but checks.json doesn't give it audio-hosted");
+    assert.ok(whole.includes("the workflow runs for extension/popup.css, which doesn't need audio-hosted"), whole.join('\n'));
+    assert.ok(whole.includes("the workflow runs for extension/assets/icon128.png, which doesn't need audio-hosted"));
+    // The map changed alone: the popup's script given the suites, and the
+    // settings no longer.
+    const copy = JSON.parse(fs.readFileSync(path.join(root, 'checks.json'), 'utf8'));
+    copy.rules.find((rule) => rule.paths.includes('extension/popup.js')).needs.push('audio-hosted');
+    copy.rules.find((rule) => rule.paths.includes('extension/settings.js')).needs = ['repo'];
+    assert.deepEqual(workflowPathProblems(files, FILTERS, readMap(JSON.stringify(copy)), 'audio-hosted'), [
+      "checks.json gives extension/popup.html audio-hosted, but it isn't in the workflow's paths",
+      "checks.json gives extension/popup.js audio-hosted, but it isn't in the workflow's paths",
+      "extension/settings.js is in the workflow's paths, but checks.json doesn't give it audio-hosted",
+      "extension/popup.html needs audio-hosted, but the workflow doesn't run for it",
+      "extension/popup.js needs audio-hosted, but the workflow doesn't run for it",
+      "the workflow runs for extension/settings.js, which doesn't need audio-hosted"
+    ]);
+    // Only pictures are icons: a script put among them is a path the map
+    // doesn't know, which a test of the map finds.
+    assert.equal(ruleFor(map, 'extension/assets/helper.js'), null);
+    assert.ok(ruleFor(map, 'extension/assets/icon64.png').paths.includes('extension/assets/*.png'));
+    // Documentation in the suite's folder is the one difference allowed.
+    assert.ok(patternRegExp('e2e/audio-capture/**').test('e2e/audio-capture/README.md'));
+    assert.ok(!checksFor(map, 'e2e/audio-capture/README.md').includes('audio-hosted'));
   });
 
   test("finds a suite that opens the popup, or a script that loads the popup's files or opens it", () => {

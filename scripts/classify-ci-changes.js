@@ -1,68 +1,146 @@
 'use strict';
 
-// Decides whether a change needs the browser smoke tests. CI always runs the
-// repository checks; this only says whether the browser tests may be skipped.
-// The browser tests cover the extension, the popup's layout and the website,
-// so the website and the scripts those tests serve them with count too.
+// Decides whether a change needs the browser smoke tests, from the map of
+// which checks a change needs (checks.json). CI always runs the repository
+// checks; this only says whether the browser tests may be skipped.
 //
 // Reads the changed paths, NUL-separated, on standard input (git diff
 // --no-renames --name-only -z, so a rename lists the old path as well as the
 // new one) and prints "browser=true" or "browser=false".
 //
-// CI runs the copy of this file from the pull request's base commit, not the
-// one in the pull request, so a change can't choose its own checks. It first
-// asks that copy for its policy version (--policy-version); a base commit
-// without this file, or with a copy that doesn't answer POLICY_VERSION, has no
-// policy CI can read, so CI runs everything. The copy runs alone from a
-// temporary folder, so it can't require other repository files.
+// CI runs the copies of this file and of the map from the pull request's
+// base commit, not the ones in the pull request, so a change can't choose
+// its own checks. It first asks this file's copy for its policy version
+// (--policy-version); a base commit without this file or the map, or with a
+// copy that doesn't answer POLICY_VERSION, has no policy CI can read, so CI
+// runs everything. The copies run alone from a temporary folder laid out
+// like the repository (this file in scripts/, the map above it), so this
+// file can't require other repository files.
 
 const fs = require('node:fs');
+const path = require('node:path');
 
-const POLICY_VERSION = '2';
+const POLICY_VERSION = '3';
+const MAP_FILE = path.join(__dirname, '..', 'checks.json');
 
-const NON_BROWSER_PATHS = new Set([
-  '.gitattributes',
-  '.gitignore',
-  '.npmrc',
-  'eslint.config.js',
-  'scripts/release.js',
-  'scripts/render-icons.js',
-  'scripts/stamp-site-assets.js',
-  'scripts/sync-site-popup.js',
-  'scripts/render-store-assets.js',
-  'wrangler.jsonc'
-]);
+// The CI job this file decides. The map names the job of each check CI runs.
+const BROWSER_JOB = 'browser-smoke';
 
-const NON_BROWSER_DIRECTORIES = ['.github/', 'store-assets/', 'tests/'];
+const WHO = ['ci', 'workflow', 'hand'];
 
-// What decides and enforces which checks run: the workflows (including
-// Dependabot's action updates) and this file. Changing them runs everything.
-const CHECK_INFRASTRUCTURE_DIRECTORIES = ['.github/workflows/'];
-const CHECK_INFRASTRUCTURE_PATHS = new Set(['scripts/classify-ci-changes.js']);
+// Everything the map may say. A key outside these is refused, so a
+// misspelled one isn't silently left out.
+const MAP_KEYS = ['about', 'checks', 'rules'];
+const CHECK_KEYS = ['by', 'job', 'workflow', 'run', 'when', 'steps', 'about'];
+const RULE_KEYS = ['about', 'paths', 'needs'];
 
-function isDocumentation(file) {
-  return file === 'LICENSE' || file.endsWith('.md');
+// A pattern is a path, with * for part of one name, ** for anything, and
+// **/ for any folders, none included. GitHub's path filters read these the
+// same way; nothing else they allow (?, !, [], {}) is read here.
+function patternRegExp(pattern) {
+  if (typeof pattern !== 'string' || !/^[\w.*/-]+$/.test(pattern) || /\*{3}|^\/|\/$|\/\/|(^|\/)\.\.?(\/|$)/.test(pattern)) {
+    throw new Error(`checks.json: "${pattern}" is not a pattern this map reads`);
+  }
+  const source = pattern
+    .split(/(\*\*\/|\*\*|\*)/)
+    .map((part) => {
+      if (part === '**/') return '(?:.*/)?';
+      if (part === '**') return '.*';
+      if (part === '*') return '[^/]*';
+      return part.replace(/[.\\+?^${}()|[\]]/g, '\\$&');
+    })
+    .join('');
+  // Git allows any character in a path, a newline included.
+  return new RegExp(`^${source}$`, 's');
 }
 
-function isCheckInfrastructure(file) {
-  return (
-    CHECK_INFRASTRUCTURE_PATHS.has(file) ||
-    CHECK_INFRASTRUCTURE_DIRECTORIES.some((directory) => file.startsWith(directory))
-  );
+function fail(message) {
+  throw new Error(`checks.json: ${message}`);
 }
 
-function needsBrowser(file) {
-  if (isCheckInfrastructure(file)) return true;
-  return !(
-    isDocumentation(file) ||
-    NON_BROWSER_PATHS.has(file) ||
-    NON_BROWSER_DIRECTORIES.some((directory) => file.startsWith(directory))
-  );
+function isText(value) {
+  return typeof value === 'string' && value !== '';
+}
+
+function isStrings(value) {
+  return Array.isArray(value) && value.length > 0 && value.every(isText);
+}
+
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// The first of an object's keys the map doesn't read, if any.
+function unread(object, known) {
+  return Object.keys(object).find((key) => !known.includes(key));
+}
+
+// The map, checked, with each rule's patterns ready to match. A map this
+// file can't read whole decides nothing: it throws instead.
+function readMap(source = fs.readFileSync(MAP_FILE, 'utf8')) {
+  const map = JSON.parse(source);
+  if (!isObject(map)) fail('is not an object');
+  if (unread(map, MAP_KEYS)) fail(`has "${unread(map, MAP_KEYS)}", which this map doesn't read`);
+  const { checks, rules } = map;
+  if (!isObject(checks) || Object.keys(checks).length === 0) fail('has no checks');
+  for (const [name, check] of Object.entries(checks)) {
+    if (!isObject(check) || !WHO.includes(check.by)) fail(`check "${name}" doesn't say who runs it (${WHO.join(', ')})`);
+    if (unread(check, CHECK_KEYS)) fail(`check "${name}" has "${unread(check, CHECK_KEYS)}", which this map doesn't read`);
+    if (!isText(check.about)) fail(`check "${name}" has no description`);
+    if (check.run !== undefined && !isStrings(check.run)) fail(`check "${name}" has commands that aren't text`);
+    for (const key of ['job', 'workflow', 'when', 'steps']) {
+      if (check[key] !== undefined && !isText(check[key])) fail(`check "${name}" has a "${key}" that isn't text`);
+    }
+    // What each kind of check has to say, and what only its kind may.
+    if ((check.by === 'ci') !== (check.job !== undefined)) fail(`check "${name}" needs a CI job if, and only if, CI runs it`);
+    if ((check.by === 'workflow') !== (check.workflow !== undefined)) {
+      fail(`check "${name}" needs a workflow if, and only if, a workflow of its own runs it`);
+    }
+    if (check.by === 'ci' && check.run === undefined) fail(`check "${name}" has no commands for CI to run`);
+    if (check.by === 'hand' && check.run === undefined && check.when === undefined) {
+      fail(`check "${name}" is done by hand, so it needs commands or a condition`);
+    }
+    if (check.steps !== undefined && check.when === undefined) fail(`check "${name}" has steps but no condition to do them under`);
+  }
+  if (!Array.isArray(rules) || rules.length === 0) fail('has no rules');
+  const seen = new Set();
+  const read = rules.map((rule, index) => {
+    const where = `rule ${index + 1}`;
+    if (!isObject(rule)) fail(`${where} is not an object`);
+    if (unread(rule, RULE_KEYS)) fail(`${where} has "${unread(rule, RULE_KEYS)}", which this map doesn't read`);
+    if (!isText(rule.about)) fail(`${where} has no description`);
+    if (!isStrings(rule.paths)) fail(`${where} has no paths`);
+    if (!isStrings(rule.needs)) fail(`${where} has no checks`);
+    for (const name of rule.needs) {
+      if (!Object.hasOwn(checks, name)) fail(`${where} needs "${name}", which is not a check`);
+    }
+    if (new Set(rule.needs).size !== rule.needs.length) fail(`${where} names a check twice`);
+    for (const pattern of rule.paths) {
+      if (seen.has(pattern)) fail(`"${pattern}" is in two rules, and only the first would count`);
+      seen.add(pattern);
+    }
+    return { about: rule.about, paths: rule.paths, needs: rule.needs, matchers: rule.paths.map(patternRegExp) };
+  });
+  return { checks, rules: read };
+}
+
+// The first rule that matches a path, or null.
+function ruleFor(map, file) {
+  return map.rules.find((rule) => rule.matchers.some((matcher) => matcher.test(file))) ?? null;
+}
+
+// The checks a path needs: its rule's, or every check CI decides for a path
+// no rule matches.
+function checksFor(map, file) {
+  const rule = ruleFor(map, file);
+  if (rule) return rule.needs;
+  return Object.keys(map.checks).filter((name) => map.checks[name].by === 'ci');
 }
 
 // An empty list means the comparison found nothing, which shouldn't happen
 // for a real change, so it runs everything too.
-function classifyFiles(files) {
+function classifyFiles(files, map = readMap()) {
+  const needsBrowser = (file) => checksFor(map, file).some((name) => map.checks[name].job === BROWSER_JOB);
   return { browser: files.length === 0 || files.some(needsBrowser) };
 }
 
@@ -83,4 +161,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { POLICY_VERSION, classifyFiles, parsePaths };
+module.exports = { BROWSER_JOB, POLICY_VERSION, checksFor, classifyFiles, parsePaths, patternRegExp, readMap, ruleFor };

@@ -15,6 +15,7 @@ const { root } = require('./helpers/load-script');
 
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
 const CLASSIFIER = 'scripts/classify-ci-changes.js';
+const MAP = 'checks.json';
 
 // The text of a job, from its key to the next job.
 function jobText(name) {
@@ -85,8 +86,17 @@ if (process.argv[2] === '--policy-version') process.stdout.write('${POLICY_VERSI
 else process.stdout.write('browser=false\\n');
 `;
 
-// A throwaway repository whose first commit has the real classifier.
-function repository(t, { classifier = fs.readFileSync(path.join(root, CLASSIFIER), 'utf8') } = {}) {
+// A map by which nothing needs the browser tests.
+const lenientMap = JSON.stringify({
+  checks: { repo: { by: 'ci', job: 'repository-checks', run: ['npm run check'], about: 'Every change.' } },
+  rules: [{ about: 'Everything.', paths: ['**'], needs: ['repo'] }]
+});
+
+// A throwaway repository whose first commit has the real classifier and map.
+function repository(
+  t,
+  { classifier = fs.readFileSync(path.join(root, CLASSIFIER), 'utf8'), map = fs.readFileSync(path.join(root, MAP), 'utf8') } = {}
+) {
   const dir = temporary(t);
   const env = {
     ...process.env,
@@ -125,6 +135,7 @@ function repository(t, { classifier = fs.readFileSync(path.join(root, CLASSIFIER
   repo.write('README.md', '# Readme\n');
   repo.write('site/index.html', '<p>Site</p>\n');
   if (classifier !== null) repo.write(CLASSIFIER, classifier);
+  if (map !== null) repo.write(MAP, map);
   repo.base = repo.commit('Base');
   return repo;
 }
@@ -332,6 +343,61 @@ describe('CI classification step', () => {
       policy: 'base',
       browser: 'false'
     });
+  });
+
+  test("the pull request's own map doesn't decide its checks", (t) => {
+    const repo = repository(t);
+    repo.write(MAP, lenientMap);
+    repo.write('extension/runtime.js', 'console.log("changed");\n');
+    const head = repo.commit('Tampered map');
+
+    // Run as the head would, with its own map, the classifier skips the
+    // browser tests.
+    const headDecision = spawnSync(process.execPath, [path.join(repo.dir, CLASSIFIER)], {
+      input: `extension/runtime.js\0${MAP}\0`,
+      encoding: 'utf8'
+    });
+    assert.equal(headDecision.stdout, 'browser=false\n');
+
+    const result = repo.pullRequest(repo.base, head);
+    assert.equal(result.status, 0, result.log);
+    assert.deepEqual(result.outputs, { policy: 'base', browser: 'true' });
+
+    // The map's change alone runs them too.
+    repo.git('checkout', '--quiet', repo.base, '--', 'extension/runtime.js');
+    assert.deepEqual(repo.pullRequest(repo.base, repo.commit('Only the map')).outputs, { policy: 'base', browser: 'true' });
+  });
+
+  test("the base commit's map decides, even when it is the lenient one", (t) => {
+    const repo = repository(t, { map: lenientMap });
+    repo.write(MAP, fs.readFileSync(path.join(root, MAP), 'utf8'));
+    repo.write('extension/runtime.js', 'console.log("changed");\n');
+
+    assert.deepEqual(repo.pullRequest(repo.base, repo.commit('Stricter map')).outputs, {
+      policy: 'base',
+      browser: 'false'
+    });
+  });
+
+  test('runs everything when the base has the classifier but no map', (t) => {
+    const repo = repository(t, { map: null });
+    repo.write('PRIVACY.md', '# Privacy\n');
+    const result = repo.pullRequest(repo.base, repo.commit('Privacy'));
+
+    assert.equal(result.status, 0, result.log);
+    assert.deepEqual(result.outputs, { policy: 'none', browser: 'true' });
+    assert.match(result.log, /The baseline has no checks\.json, so every check runs/);
+  });
+
+  test("fails when the base's map can't be read whole", (t) => {
+    for (const map of ['{', '{"checks": {}, "rules": []}', lenientMap.replace('"**"', '"!**"')]) {
+      const repo = repository(t, { map });
+      repo.write('PRIVACY.md', '# Privacy\n');
+      const result = repo.pullRequest(repo.base, repo.commit('Privacy'));
+
+      assert.notEqual(result.status, 0, map);
+      assert.deepEqual(result.outputs, {}, map);
+    }
   });
 
   test('runs everything when the base has no classifier or one without a policy version', (t) => {
