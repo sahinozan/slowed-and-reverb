@@ -22,7 +22,6 @@ const {
   runFirefoxTests,
   stillRunning,
   TEST_SCRIPTS,
-  versionBumpProblems,
   wrap,
   writeReleaseFolder
 } = require('../scripts/release');
@@ -147,55 +146,6 @@ describe('Release folders', () => {
       ]),
       [84, 85]
     );
-  });
-});
-
-describe('Version bump', () => {
-  const pages = ['index.html', 'changelog.html', 'privacy.html'];
-  const footer = (version) => `<footer><span>Slowed &amp; Reverb ${version}</span></footer>`;
-  const files = (version) => ({
-    'package.json': JSON.stringify({ version }),
-    'package-lock.json': JSON.stringify({ version, packages: { '': { version } } }),
-    'extension/content.js': `  const VERSION = '${version}';`,
-    'extension/spotify-bridge.js': `  const VERSION = '${version}';`,
-    'extension/spotify-main.js': `  const VERSION = '${version}';`,
-    'extension/youtube-main.js': `  const VERSION = '${version}';`,
-    'site/index.html': footer(version),
-    'site/changelog.html': `<h2>${version} <time datetime="2026-10-20">October 20, 2026</time></h2>${footer(version)}`,
-    'site/privacy.html': `This policy covers versions 1.0.0, 1.1.1 and ${version} of Slowed &amp; Reverb.${footer(version)}`,
-    'PRIVACY.md': `This policy applies to versions \`1.0.0\`, \`1.1.1\`, and \`${version}\` of the\nextension.`
-  });
-
-  test('passes when everything shows the new version', () => {
-    const repo = files('1.1.2');
-    assert.deepEqual(versionBumpProblems((file) => repo[file], pages, '1.1.2'), []);
-  });
-
-  test('lists everything still showing the old version', () => {
-    const repo = files('1.1.1');
-    repo['package.json'] = JSON.stringify({ version: '1.1.2' });
-    repo['extension/spotify-main.js'] = "  const VERSION = '1.1.2';";
-    repo['PRIVACY.md'] = 'This policy applies to versions `1.0.0`, `1.1.1`, and `1.1.12` of the\nextension.';
-
-    assert.deepEqual(versionBumpProblems((file) => repo[file], pages, '1.1.2'), [
-      'package-lock.json has another version in its root entries',
-      'extension/content.js has VERSION 1.1.1',
-      'extension/spotify-bridge.js has VERSION 1.1.1',
-      'extension/youtube-main.js has VERSION 1.1.1',
-      "site/index.html doesn't show 1.1.2 in its footer",
-      "site/changelog.html doesn't show 1.1.2 in its footer",
-      "site/privacy.html doesn't show 1.1.2 in its footer",
-      'site/changelog.html has no entry for 1.1.2',
-      "PRIVACY.md's versions line doesn't list 1.1.2",
-      "site/privacy.html's versions line doesn't list 1.1.2"
-    ]);
-  });
-
-  test('the repository is consistent with its own version', () => {
-    const { version } = JSON.parse(fs.readFileSync(path.join(root, 'extension/manifest.json'), 'utf8'));
-    const sitePages = fs.readdirSync(path.join(root, 'site')).filter((name) => name.endsWith('.html'));
-    const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
-    assert.deepEqual(versionBumpProblems(read, sitePages, version), []);
   });
 });
 

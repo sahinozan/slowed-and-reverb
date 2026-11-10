@@ -53,6 +53,7 @@ npm run site:popup        # copy the current popup into the website after popup 
 npm run site:serve        # preview the website locally, served like Cloudflare
 npm run site:stamp        # refresh the website's stylesheet and script version stamps
 npm run audit:dependencies -- <folder> # ask the npm registry for advisories, development tools included
+npm run version:set -- X.Y.Z # write a release's new version everywhere it goes, and say what is left to do by hand
 npm run release -- <commit> # build, check and record a release's store packages from main
 ```
 

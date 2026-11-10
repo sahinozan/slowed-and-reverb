@@ -121,6 +121,7 @@
         "scripts/render-store-assets.js",
         "scripts/stamp-site-assets.js",
         "scripts/sync-site-popup.js",
+        "scripts/version-set.js",
         "tests/**",
         "wrangler.jsonc"
       ],
