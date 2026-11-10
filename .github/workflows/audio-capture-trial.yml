@@ -34,6 +34,8 @@ on:
       - 'extension/youtube-main.js'
       - 'package.json'
       - 'package-lock.json'
+      # Builds the copy of the extension the suites load.
+      - 'scripts/build-extension.js'
       # The suites' server reads its request targets with this.
       - 'scripts/request-target.js'
       - 'scripts/ci-package-downloads.sh'

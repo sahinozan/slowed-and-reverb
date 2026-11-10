@@ -140,9 +140,13 @@ request's runs) isn't counted, even if the commit is merged later.
   the extension is in neither group (`tests/audio-workflow.test.js`). They
   read the names as written in the code, so they can't see one put together
   while it runs. The owner asked the agent session
-  planning the work to decide this, and it did, on that day. The change
-  touches the workflow's own file, so every setup's count starts again
-  after its merge.
+  planning the work to decide this, and it did, on that day. The same
+  change adds `scripts/build-extension.js` to what the workflow runs for:
+  it builds the copy of the extension the suites load, and was missing, so
+  a change to the build alone ran no suite and didn't start the counts
+  again. The owner chose that on the same day. The change touches the
+  workflow's own file, so every setup's count starts again after its
+  merge.
 
 ## Records
 

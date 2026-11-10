@@ -192,6 +192,17 @@ function suiteModules() {
   return [...seen];
 }
 
+// The repository's scripts a package command runs, through the commands it
+// runs with npm run.
+function commandScripts(scripts, name, seen = new Set()) {
+  if (seen.has(name) || typeof scripts[name] !== 'string') return [];
+  seen.add(name);
+  // In the order the command runs them.
+  return [...scripts[name].matchAll(/\bnpm run ([\w:-]+)|\b(scripts\/[\w.-]+\.(?:js|sh))\b/g)].flatMap(([, command, file]) =>
+    command ? commandScripts(scripts, command, seen) : [file]
+  );
+}
+
 // The extension's files git tracks, so a file the system leaves in the
 // folder doesn't count.
 function extensionFiles() {
@@ -416,7 +427,17 @@ describe('the audio workflow', () => {
     // And every script a step runs.
     const scripts = [...workflow.matchAll(/\b(scripts\/[\w.-]+\.(?:js|sh))\b/g)].map((match) => match[1]);
     assert.ok(scripts.includes('scripts/firefox-release.js'));
-    for (const file of [...seen, ...scripts]) assert.ok(covered(file), `${file} is used by the audio workflow but not in its paths`);
+    // And every script the suites' own commands run first, such as the
+    // build of the copy they load.
+    const commands = BROWSERS.flatMap((browser) => [`test:audio:${browser}`, `test:audio-trial:${browser}`]);
+    const built = commands.flatMap((name) => commandScripts(packageJson.scripts, name));
+    assert.ok(built.includes('scripts/build-extension.js'));
+    for (const file of [...seen, ...scripts, ...built]) assert.ok(covered(file), `${file} is used by the audio workflow but not in its paths`);
+    // A command that ran another script first would have to be in the paths too.
+    assert.deepEqual(
+      commandScripts({ 'test:audio:chromium': 'npm run prepare:audio && node --test e2e/x.js', 'prepare:audio': 'node scripts/prepare.js && npm run build:chromium', 'build:chromium': 'node scripts/build-extension.js chromium' }, 'test:audio:chromium'),
+      ['scripts/prepare.js', 'scripts/build-extension.js']
+    );
   });
 
   test("runs for the extension's files that can reach the sound, and not for the popup's or the icons", () => {
