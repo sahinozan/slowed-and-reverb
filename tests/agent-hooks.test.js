@@ -302,8 +302,7 @@ describe('an edit to a part that is generated', () => {
       // A second start marker, so the generator couldn't tell which.
       edit('RELEASE-CHECKLIST.md', '# Release checklist', `# Release checklist\n\n${list.start}`),
       hunk('RELEASE-CHECKLIST.md', '@@', `-${list.end}`),
-      { tool_name: 'apply_patch', cwd: root, tool_input: { command: '*** Begin Patch\n*** Delete File: RELEASE-CHECKLIST.md\n*** End Patch' } },
-      { tool_name: 'apply_patch', cwd: root, tool_input: { command: `*** Begin Patch\n*** Update File: extension/popup.html\n*** Move to: extension/popup-old.html\n@@\n-${title}\n+${title} \n*** End Patch` } },
+      hunk('extension/popup.html', '@@', `-${lineWith(popup, logo.start)}`),
       // The file written again by a patch, without the part.
       { tool_name: 'apply_patch', cwd: root, tool_input: { command: '*** Begin Patch\n*** Add File: RELEASE-CHECKLIST.md\n+# Release checklist\n*** End Patch' } }
     ];
@@ -325,46 +324,83 @@ describe('an edit to a part that is generated', () => {
       writeWhole('extension/popup.html', popup.replace(title, `${title}\n  <!-- The mark is between ${logo.start} and ${logo.end}. -->`)),
       // The part moved within the file in one edit.
       writeWhole('RELEASE-CHECKLIST.md', `${part}\n${checklist.replace(part, '')}`),
-      // Codex patches outside the part: a line changed, a line added after
-      // the part's end, lines added at the file's end, two hunks.
+      // Codex patches outside the part: a line changed, a line added
+      // before the part's start and after its end (the marker as the file
+      // has it, and without the spaces it starts with), lines added at the
+      // file's end, two hunks.
       hunk('RELEASE-CHECKLIST.md', '@@', '-# Release checklist', '+# The release checklist'),
+      hunk('RELEASE-CHECKLIST.md', '@@', '+A line before the part.', '+', ` ${list.start}`),
       hunk('RELEASE-CHECKLIST.md', '@@', ` ${list.end}`, '+', '+A line after the part.'),
       hunk('RELEASE-CHECKLIST.md', '@@', '+', '+## One more section'),
       hunk('RELEASE-CHECKLIST.md', '@@ ## After publishing', '+', '+A line under the heading.'),
       hunk('extension/popup.html', '@@', `-${title}`, `+${title} `, '@@', ` ${lineWith(popup, logo.end)}`, '+          <!-- after the mark -->'),
+      hunk('extension/popup.html', '@@', ` ${logo.end}`, '+          <!-- after the mark -->'),
+      // Lines of the part kept, around a change that is past its end.
+      hunk('RELEASE-CHECKLIST.md', '@@', ` ${item}`, ` ${list.end}`, ' ', '-## After publishing', '+## After the stores publish'),
+      // A line of the part taken out and put back as it was.
+      hunk('RELEASE-CHECKLIST.md', '@@', `-${item}`, `+${item}`),
       // A patch that names the file among others.
       { tool_name: 'apply_patch', cwd: root, tool_input: { command: `*** Begin Patch\n*** Update File: extension/popup.js\n@@\n-a\n+b\n*** Update File: extension/popup.html\n@@\n-${title}\n+${title} \n*** Add File: extension/new.js\n+new\n*** End Patch` } },
-      // A patch whose lines aren't in the file can't be followed, and
-      // wouldn't apply.
+      // The file moved away and back in one patch, changed outside the part.
+      { tool_name: 'apply_patch', cwd: root, tool_input: { command: '*** Begin Patch\n*** Update File: RELEASE-CHECKLIST.md\n*** Move to: temporary.md\n@@\n-# Release checklist\n+# The release checklist\n*** Update File: temporary.md\n*** Move to: RELEASE-CHECKLIST.md\n@@\n-## After publishing\n+## After the stores publish\n*** End Patch' } },
+      // A patch whose lines aren't in the file wouldn't apply.
       hunk('RELEASE-CHECKLIST.md', '@@', '-a line the checklist does not have', '+another'),
-      hunk('extension/popup.html', '@@ a line the popup does not have', `-${mark}`, '+<svg>'),
       hunk('extension/popup.html', 'neither a hunk nor a line of one')
     ];
     for (const input of allowed) assert.equal(refusal(input), null, JSON.stringify(input.tool_input).slice(0, 160));
   });
 
-  test('a patch is followed as Codex applies it', () => {
-    // Checked on a file of its own: what the patch leaves, by the part
-    // staying whole or not.
+  test('a patch is refused only when it surely changes the part', () => {
+    // On a file of its own. "same" is a line of the part and of the rest
+    // of the file; "made" is a line of the part alone.
     const base = folder();
     fs.mkdirSync(path.join(base, '.git'));
-    const file = path.join(base, 'RELEASE-CHECKLIST.md');
-    const text = ['one', 'two', list.start, 'made', 'made too', list.end, 'two', 'three', ''].join('\n');
-    write(file, text);
-    const follows = (...lines) => refusal({ tool_name: 'apply_patch', cwd: base, tool_input: { command: ['*** Begin Patch', '*** Update File: RELEASE-CHECKLIST.md', ...lines, '*** End Patch'].join('\n') } }, base);
-    // The first "two" is before the part and the second after it: a hunk
-    // is looked for from where the last one ended.
-    assert.equal(follows('@@', '-two', '+2', '@@', '-two', '+2'), null);
-    assert.equal(follows('@@', '-one', '+1', '@@', '-three', '+3'), null);
-    assert.equal(follows('@@ made too', ` ${list.end}`, '-two', '+2'), null);
-    // An empty line in a hunk is a line kept, and a hunk's last empty
-    // line may be one past the file's end.
-    assert.equal(follows('@@', '-three', '+3', ''), null);
-    assert.equal(follows('@@', '-three', '+3', '', ''), null);
-    assert.ok(follows('@@', ' made', '-made too'));
-    assert.ok(follows('@@', '-made', '+made again', '@@', '-three', '+3'));
-    assert.ok(follows('@@ two', '+made first', ' made'));
-    assert.ok(follows('@@', '-made   ', '+made again'));
+    const text = ['anchor', 'same', `  ${list.start}`, 'made', 'same', `  ${list.end}`, '  anchor', 'same', ''].join('\n');
+    const crlf = folder();
+    fs.mkdirSync(path.join(crlf, '.git'));
+    write(path.join(base, 'RELEASE-CHECKLIST.md'), text);
+    write(path.join(crlf, 'RELEASE-CHECKLIST.md'), text.replaceAll('\n', '\r\n'));
+    const refuses = (lines, from = base) => refusal({ tool_name: 'apply_patch', cwd: from, tool_input: { command: ['*** Begin Patch', '*** Update File: RELEASE-CHECKLIST.md', ...lines, '*** End Patch', ''].join('\n') } }, from) !== null;
+    const sure = [
+      ['@@', '-made', '+made again'],
+      ['@@', ' made', '-same'],
+      ['@@', '+made first', ' made'],
+      ['@@', ` ${list.start}`, '+made first'],
+      ['@@', '+made last', ` ${list.end}`],
+      ['@@', ' made', '+made second', ' same'],
+      // Looser than the file has it: spaces at the ends, and the marker
+      // with a typographic apostrophe, hyphen and space for its plain ones.
+      ['@@', '-  made   ', '+made again'],
+      ['@@', `-${list.start.replace("Don't", 'Don\u2019t').replace('checks.json by', 'checks.json\u00a0by').replace('-->', '\u2010->')}`],
+      // In a later hunk, and after a hunk that only adds lines.
+      ['@@', '-anchor', '+ANCHOR', '@@', '-made'],
+      ['@@', '+appendix', '@@', '-made', '+changed']
+    ];
+    for (const lines of sure) {
+      assert.ok(refuses(lines), lines.join(' | '));
+      assert.ok(refuses(lines, crlf), `with CRLF: ${lines.join(' | ')}`);
+    }
+    const not = [
+      // A line the part shares with the rest of the file: Codex may mean
+      // either, by where the hunk is, a line before it or the file's end.
+      ['@@', '-same', '+changed'],
+      ['@@', '-same', '+changed', '*** End of File'],
+      ['@@   anchor', '-same', '+changed'],
+      ['@@ made', '-same', '+changed'],
+      // Changes next to the part, with its markers as lines kept.
+      ['@@', ` ${list.end}`, '-  anchor', '+ANCHOR'],
+      ['@@', '-same', '+changed', ` ${list.start}`],
+      ['@@', '+before', `   ${list.start}`],
+      ['@@', ` ${list.end}`, '+after'],
+      // Lines of the part kept and nothing changed beside them.
+      ['@@', ' made', ' same', ` ${list.end}`, '   anchor', '-same', '+changed'],
+      ['@@', '-made', '+made'],
+      ['@@', '+appendix']
+    ];
+    for (const lines of not) {
+      assert.ok(!refuses(lines), lines.join(' | '));
+      assert.ok(!refuses(lines, crlf), `with CRLF: ${lines.join(' | ')}`);
+    }
     assert.equal(read('RELEASE-CHECKLIST.md', base), text);
   });
 });
@@ -398,6 +434,12 @@ describe('a generated file reached by another name', () => {
       }
     }
     assert.ok(refusal(patch(['Update File: pages/checks.md'], links))?.startsWith('docs/checks.md is generated'));
+    // Deleting a link takes the link away, not the file it leads to.
+    fs.symlinkSync(path.join(root, 'docs', 'checks.md'), path.join(links, 'page.md'));
+    assert.equal(refusal(patch(['Delete File: page.md'], links)), null);
+    assert.equal(refusal(patch(['Delete File: checkout'], links)), null);
+    assert.ok(refusal(patch(['Update File: page.md'], links))?.startsWith('docs/checks.md is generated'));
+    assert.ok(refusal(patch(['Delete File: pages/checks.md'], links))?.startsWith('docs/checks.md is generated'));
     assert.equal(refusal(edit(path.join(links, 'checkout', 'extension', 'popup.js'), 'a', 'b', '')), null);
     assert.equal(refusal(edit(path.join(links, 'pages', 'notes.md'), 'a', 'b', '')), null);
   });
@@ -624,6 +666,7 @@ describe('the settings that run the hooks', () => {
   test('the hooks load only Node\'s own modules and each other, and nothing that reaches the network', () => {
     const scripts = tracked.filter((file) => file.startsWith(`${HOOKS}/`));
     assert.deepEqual(scripts, [`${HOOKS}/codex-patch.js`, `${HOOKS}/generated-files.js`, REFUSE, REGENERATE]);
+    assert.doesNotMatch(read(`${HOOKS}/codex-patch.js`), /\brequire\(/);
     for (const script of scripts) {
       const text = read(script);
       const loaded = [...text.matchAll(/\brequire\(([^)]*)\)/g)].map((match) => match[1]);
@@ -641,10 +684,11 @@ describe('the settings that run the hooks', () => {
     const { scripts } = JSON.parse(read('package.json'));
     assert.deepEqual(Object.keys(claude.permissions), ['allow', 'ask', 'deny']);
     for (const rule of claude.permissions.allow) {
-      // The command alone, or with what follows -- handed to the script.
-      // A * straight after the command would also take npm's own options,
-      // such as --prefix, which runs another folder's script.
-      const name = /^Bash\(npm (test)(?: -- \*)?\)$/.exec(rule)?.[1] ?? /^Bash\(npm run ([\w:-]+)(?: -- \*)?\)$/.exec(rule)?.[1];
+      // The command alone. With a * after it, npm's own options would be
+      // allowed too (--prefix runs another folder's script), and so would
+      // any file given to the tests, one outside the repository or one of
+      // the audio suites included.
+      const name = /^Bash\(npm (test)\)$/.exec(rule)?.[1] ?? /^Bash\(npm run ([\w:-]+)\)$/.exec(rule)?.[1];
       assert.ok(name && scripts[name], `${rule} is not one of package.json's scripts`);
       // Nothing that plays sound, reaches the network, starts a server or
       // writes the release or the store's images.
@@ -664,7 +708,7 @@ describe('the settings that run the hooks', () => {
     // A * anywhere but the end also matches a longer command that only
     // mentions main later, such as a push of a branch followed by
     // gh pr create --base main.
-    for (const rule of [...claude.permissions.allow, ...claude.permissions.deny]) assert.match(rule, /^Bash\([^*]+( \*)?\)$/, rule);
+    for (const rule of claude.permissions.deny) assert.match(rule, /^Bash\([^*]+( \*)?\)$/, rule);
   });
 
   test('no CLAUDE.md is tracked: Claude Code would read it in place of AGENTS.md', () => {

@@ -18,7 +18,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { filesNamed, textAfter: textAfterPatch } = require('./codex-patch');
+const { changes, parts } = require('./codex-patch');
 
 // One entry for each row of the "Generated files" table in AGENTS.md, in
 // the table's order, with the row's three cells as they are written there
@@ -169,8 +169,13 @@ function place(file, home = HOME) {
 
 // A path as the file system has it: links followed and, where names
 // ignore case, spelled as the file is. What isn't there yet keeps the
-// spelling given, under the nearest folder that is.
-function real(file) {
+// spelling given, under the nearest folder that is. With `itself`, a link
+// by that name is meant and not the file it leads to, as when it is
+// deleted.
+function real(file, itself = false) {
+  if (itself && fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    return path.join(real(path.dirname(file)), path.basename(file));
+  }
   const missing = [];
   for (let at = file; ; at = path.dirname(at)) {
     try {
@@ -187,16 +192,24 @@ function readInput() {
   return JSON.parse(fs.readFileSync(0, 'utf8'));
 }
 
-// The edit a hook is given, read once: the files it names and, for one of
-// them, the text it will hold afterward. Claude Code's Edit and Write name
-// one file; Write gives its text whole, and Edit a text to find and the
-// text to put there. Codex's apply_patch names each file in its patch, from
-// the session's folder. The text is null when the edit doesn't say or
-// can't be followed, and '' when it takes the file away.
+// The edit a hook is given, read once:
+//
+// - files: the files it names;
+// - textAfter(file, before): the text the file will hold, or null when the
+//   edit doesn't say;
+// - changesLines(file, inside, outside): whether it surely changes a
+//   stretch of the file's lines, for an edit that doesn't say what the
+//   file will hold.
+//
+// Claude Code's Edit and Write name one file; Write gives its text whole,
+// and Edit a text to find and the text to put there. Codex's apply_patch
+// names each file in its patch, from the session's folder. Only its
+// Add File gives a file's text; for its Update File, codex-patch.js says
+// what can be told.
 function readEdit(input) {
   const given = input?.tool_input ?? {};
   const from = typeof input?.cwd === 'string' ? input.cwd : process.cwd();
-  const whole = (file) => real(path.resolve(from, file));
+  const whole = (file, itself) => real(path.resolve(from, file), itself);
   if (typeof given.file_path === 'string') {
     const textAfter = (file, before) => {
       if (typeof given.content === 'string') return given.content;
@@ -204,12 +217,18 @@ function readEdit(input) {
       if (given.replace_all) return before.split(given.old_string).join(given.new_string);
       return before.replace(given.old_string, () => given.new_string);
     };
-    return { files: [whole(given.file_path)], textAfter };
+    return { files: [whole(given.file_path)], textAfter, changesLines: () => false };
   }
-  const patch = [given.command ?? []].flat().join('\n');
+  const named = parts([given.command ?? []].flat().join('\n')).map((part) => ({
+    ...part,
+    file: whole(part.file, part.does === 'Delete File'),
+    movedTo: part.movedTo && whole(part.movedTo)
+  }));
+  const of = (file, does) => named.filter((part) => part.file === file && part.does === does);
   return {
-    files: [...new Set(filesNamed(patch, whole))],
-    textAfter: (file, before) => textAfterPatch(patch, whole, file, before)
+    files: [...new Set(named.flatMap((part) => (part.movedTo ? [part.file, part.movedTo] : [part.file])))],
+    textAfter: (file) => of(file, 'Add File').map((part) => part.lines.filter((line) => line.startsWith('+')).map((line) => `${line.slice(1)}\n`).join('')).at(-1) ?? null,
+    changesLines: (file, inside, outside) => of(file, 'Update File').some((part) => changes(part.lines, inside, outside))
   };
 }
 
