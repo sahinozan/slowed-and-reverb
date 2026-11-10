@@ -167,6 +167,134 @@
     return curve;
   }
 
+  // ---- Limiter stage ----
+  // The same text in extension/youtube-main.js, extension/spotify-main.js and
+  // site/demo-audio.js: tests/limiter-stage.test.js keeps the copies equal,
+  // and e2e/ui/limiter.spec.js renders each in Chromium and in Firefox to
+  // check what it does to sound.
+  //
+  // The limiter is a DynamicsCompressorNode. Firefox's still has filters that
+  // Chromium removed in 2014 and the Web Audio standard doesn't have: four
+  // stages boost the treble before the compressor and four cut it again
+  // after (setEmphasisStageParameters and process in Firefox's
+  // dom/media/webaudio/blink/DynamicsCompressor.cpp). The tone of the sound
+  // comes out unchanged, but the compressor reacts to treble as if it were up
+  // to 14 dB louder than it is and turns the whole song down for it, so loud,
+  // bright music came out quieter and less clean than in Chromium. Where the
+  // compressor has those filters, the same cut goes before the node and the
+  // same boost after it: each pair cancels, the compressor hears the sound as
+  // it is, and the limiter does what Chromium's does.
+  const LIMITER = { threshold: -3, knee: 3, ratio: 20, attack: 0.003, release: 0.25 };
+
+  function createLimiter(context) {
+    const limiter = context.createDynamicsCompressor();
+    limiter.threshold.value = LIMITER.threshold;
+    limiter.knee.value = LIMITER.knee;
+    limiter.ratio.value = LIMITER.ratio;
+    limiter.attack.value = LIMITER.attack;
+    limiter.release.value = LIMITER.release;
+    return limiter;
+  }
+
+  // Firefox's treble boost as one filter, or the cut that undoes it, as the
+  // coefficients of an IIRFilterNode. Each of its four stages has one zero
+  // and one pole, worked out in single precision as Firefox works them out,
+  // and leaves 0 Hz as it is.
+  function limiterFilter(sampleRate, boost) {
+    const single = Math.fround;
+    const anchor = single(15000 / single(single(sampleRate) / 2));
+    const spread = single(1 - single(single(4.4) / 20));
+    // A list of coefficients times one stage's (a + b/z).
+    const times = (list, a, b) => [...list, 0].map((value, index) => value * a + (list[index - 1] ?? 0) * b);
+    let feedforward = [1];
+    let feedback = [1];
+    for (const divisor of [1, 2, 4, 8]) {
+      const frequency = single(anchor / divisor);
+      const low = single(Math.exp(single(-single(frequency * spread) * Math.PI)));
+      const high = single(Math.exp(single(-single(frequency / spread) * Math.PI)));
+      // The boost has its zero at the stage's lower frequency and its pole
+      // at the upper one; the cut has them the other way round.
+      const zero = boost ? low : high;
+      const pole = boost ? high : low;
+      const gain = (1 - pole) / (1 - zero);
+      feedforward = times(feedforward, gain, -gain * zero);
+      feedback = times(feedback, 1, -pole);
+    }
+    return { feedforward, feedback };
+  }
+
+  // Whether the compressor has those filters. Only Firefox is asked, so other
+  // browsers run nothing new, and Firefox is taken to have them until it has
+  // answered, a few milliseconds after this script starts, or if it can't
+  // answer. `known` settles once it has (the tests wait for it). Until then
+  // `undo` collects, for each limiter connected in the meantime, how to take
+  // its filters out again should the answer be no.
+  const LIMITER_IN_FIREFOX = window.navigator.userAgent.includes('Firefox');
+  const limiterFilters = { present: LIMITER_IN_FIREFOX, known: null, undo: LIMITER_IN_FIREFOX ? [] : null };
+
+  // Half a second of a 12 kHz tone at half scale, rendered without playing
+  // it, through a compressor with the limiter's settings. The tone is under
+  // the threshold, so a compressor that follows the standard leaves it alone
+  // and it comes out louder than it went in, by the compressor's make-up
+  // gain (+1.2 dB). Firefox's turns it down (-6.3 dB in Firefox 159). Only
+  // the end counts: a compressor's gain dips for the first 0.3 s of a sound.
+  async function limiterTurnsTrebleDown() {
+    const sampleRate = 48000;
+    const frames = sampleRate / 2;
+    const context = new window.OfflineAudioContext(1, frames, sampleRate);
+    const tone = context.createBuffer(1, frames, sampleRate);
+    const samples = tone.getChannelData(0);
+    // A quarter of the sample rate: 0, 0.5, 0, -0.5 and so on.
+    for (let i = 1; i < frames; i += 2) samples[i] = i % 4 === 1 ? 0.5 : -0.5;
+    const source = context.createBufferSource();
+    source.buffer = tone;
+    source.connect(createLimiter(context)).connect(context.destination);
+    source.start();
+    const rendered = (await context.startRendering()).getChannelData(0);
+    let power = 0;
+    for (let i = frames - 4096; i < frames; i++) power += rendered[i] * rendered[i];
+    // The tone's own power is 0.125.
+    return power / 4096 < 0.125;
+  }
+
+  limiterFilters.known = LIMITER_IN_FIREFOX
+    ? limiterTurnsTrebleDown().then(
+      (turnedDown) => {
+        limiterFilters.present = turnedDown;
+        if (!turnedDown) limiterFilters.undo.forEach((undo) => undo());
+        limiterFilters.undo = null;
+      },
+      () => { limiterFilters.undo = null; }
+    )
+    : Promise.resolve();
+
+  // Puts the limiter after `input` and returns the node its sound leaves by.
+  function connectLimiter(context, input) {
+    const limiter = createLimiter(context);
+    if (!limiterFilters.present) return input.connect(limiter);
+    const cut = limiterFilter(context.sampleRate, false);
+    const boost = limiterFilter(context.sampleRate, true);
+    const before = context.createIIRFilter(cut.feedforward, cut.feedback);
+    const after = context.createIIRFilter(boost.feedforward, boost.feedback);
+    input.connect(before).connect(limiter).connect(after);
+    if (!limiterFilters.undo) return after;
+    // The browser hasn't answered yet. Cancelling filters that aren't there
+    // would let peaks past the limiter, so the sound leaves by a node that
+    // stays, and the filters can be taken out from around the limiter if the
+    // answer is no.
+    const output = context.createGain();
+    after.connect(output);
+    limiterFilters.undo.push(() => {
+      input.disconnect(before);
+      before.disconnect();
+      limiter.disconnect(after);
+      after.disconnect();
+      input.connect(limiter).connect(output);
+    });
+    return output;
+  }
+  // ---- End of the limiter stage ----
+
   function connectStereoWidth(context, input, widthGain) {
     const splitter = context.createChannelSplitter(2);
     const merger = context.createChannelMerger(2);
@@ -354,13 +482,6 @@
       saturator.curve = saturationCurve;
       saturator.oversample = '4x';
 
-      const limiter = context.createDynamicsCompressor();
-      limiter.threshold.value = -3;
-      limiter.knee.value = 3;
-      limiter.ratio.value = 20;
-      limiter.attack.value = 0.003;
-      limiter.release.value = 0.25;
-
       const pan = context.createStereoPanner();
       const dry = createGain(context, 1);
       const wet = createGain(context, 0);
@@ -383,9 +504,7 @@
       delay.connect(createGain(context, 0.35)).connect(delay);
       delay.connect(echo).connect(mixed);
       eqHigh.connect(saturator).connect(saturation).connect(mixed);
-      connectStereoWidth(context, mixed, width)
-        .connect(pan)
-        .connect(limiter)
+      connectLimiter(context, connectStereoWidth(context, mixed, width).connect(pan))
         .connect(processed)
         .connect(context.destination);
 

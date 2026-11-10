@@ -125,7 +125,7 @@ npm run test:watch        # rerun tests while developing
 npx playwright install --no-shell chromium # one-time local browser install
 npm run test:e2e          # real Chromium extension smoke test
 npm run test:firefox      # real Firefox tests: effects stop when the extension is turned off; Spotify speed resets cause no gaps; an update asks for a reload
-npm run test:ui           # the popup's layout in every state and the website, in Chromium and the installed Firefox
+npm run test:ui           # the popup's layout in every state, the website and the limiter, in Chromium and the installed Firefox
 npm run test:audio:chromium   # record the engines' audio through past failures in Chromium (e2e/audio-capture/README.md)
 npm run test:audio:firefox    # the same in the installed Firefox
 npm run test:audio-trial:chromium # experiment the suite is built on: record the engines' audio in Chromium
@@ -249,6 +249,18 @@ Before its tests the Firefox test prints
 which Firefox it started, how long Firefox took to open its WebDriver BiDi port
 and what Firefox printed meanwhile; when Firefox doesn't start, it adds the
 browser's processes and how they ended.
+`npm run test:ui` also checks the limiter's sound, without playing any
+(`e2e/ui/limiter.spec.js`). Firefox's compressor still boosts the treble before
+it decides how far to turn the sound down, which Chromium stopped doing in
+2014, so the limiter turned loud, bright music down in Firefox only. Both
+engines and the website's demo carry the same limiter stage, which in Firefox
+puts a filter each side of the limiter to cancel that. The test renders the
+stage from each file offline in both browsers and checks that tones from
+100 Hz to 18 kHz, white noise and a bass note under bursts of treble, all
+below the limiter's threshold, come out at the same level in both; that the
+defect is heard when it is put back; that a compressor without the filters
+is left as it was; and that a limiter connected before the stage has checked
+the browser limits a loud tone exactly as one connected after.
 GitHub Actions runs `npm run check` for every change, and the browser tests on
 disposable Ubuntu and Windows machines unless the change can't affect them. The
 pull request's base commit decides that with its copy of

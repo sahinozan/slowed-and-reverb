@@ -57,7 +57,9 @@ covers the features and development commands in full.
   part of `npm run check`, CI's required check or releases, and they need a
   sound device (on Linux, a PulseAudio or PipeWire sink). Run them one at a
   time, with no other browser tests. A new audible defect gets a control in
-  `e2e/audio-capture/history.js`.
+  `e2e/audio-capture/history.js`. One the suite's song (two quiet low tones)
+  can't set off gets a silent test with a control of its own instead, as the
+  limiter's reaction to treble in Firefox has in `e2e/ui/limiter.spec.js`.
 - After changing dependencies, run `npm run audit:dependencies -- <folder>`
   (`npm audit` on the lockfile, development tools included) and read the
   `summary.md` it writes there; it prints only how the audit ended. It fails
@@ -69,8 +71,9 @@ covers the features and development commands in full.
   isn't part of `npm run check`, CI's required check or releases; the Dependency audit
   workflow runs it weekly and for dependency changes. Don't use
   `npm audit fix`, overrides or downgrades just to make it pass.
-- After changing the popup, the website, `scripts/popup-preview.js` or
-  `scripts/serve-site.js`, run `npm run test:ui`. It renders the popup page
+- After changing the popup, the website, the limiter stage,
+  `scripts/popup-preview.js` or `scripts/serve-site.js`, run
+  `npm run test:ui`. It renders the popup page
   in Chromium and in the installed Firefox's engine, Gecko, in each state that
   changes its layout (presets, tabs, themes, notices, reload and permission
   panels), and checks that it fits 340px wide without scrolling, with every
@@ -79,7 +82,11 @@ covers the features and development commands in full.
   sized right on a desktop and a phone, and no page requests anything from
   another site. Playing the demo in Firefox needs a sound device (on Linux, a
   PulseAudio or PipeWire sink); CI's Windows runners have none, so there the
-  tests tagged `@playback` run in Chromium only. A new popup state that changes the layout gets an entry in
+  tests tagged `@playback` run in Chromium only. It also renders the limiter
+  stage of both engines and the website's demo in both browsers, offline and
+  without sound, and checks that sound under the limiter's threshold is left
+  alone whatever its pitch, and that the defect is heard when it is put
+  back. A new popup state that changes the layout gets an entry in
   `STATES` in `e2e/ui/popup-layout.spec.js`; a layout defect fixed gets a
   control there. In Chromium, `npm run test:e2e` also checks the installed
   extension's popup this way and saves a screenshot.
@@ -116,6 +123,13 @@ The tests fail when the site's popup copy or stamps are out of date.
   are kept across updates. A test keeps those copies equal. A new setting
   goes in `settings.js`, the three copies, the popup's controls, and the
   audio graphs in `youtube-main.js` and `spotify-main.js`.
+- **Limiter stage:** the limiter is the same text in `youtube-main.js`,
+  `spotify-main.js` and `site/demo-audio.js`, between the "Limiter stage"
+  comments, and a test keeps the copies equal. Firefox's compressor reacts to
+  treble as if it were louder than it is (it has filters Chromium removed);
+  in Firefox the stage puts a filter each side of the limiter to cancel them,
+  and checks once that the compressor has them, leaving the limiter as it
+  was if not. Change all three together.
 - **Privacy:** the extension makes no network requests and has no analytics,
   telemetry or remote code. Don't add permissions; the optional site
   permissions are requested only when the user asks. The website loads

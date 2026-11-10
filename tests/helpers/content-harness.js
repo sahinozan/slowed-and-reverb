@@ -127,6 +127,7 @@ class FakeAudioContext {
     this.gains = [];
     this.sources = [];
     this.compressors = [];
+    this.iirFilters = [];
     this.panners = [];
     this.waveShapers = [];
     this.buffers = [];
@@ -182,6 +183,14 @@ class FakeAudioContext {
   createDynamicsCompressor() {
     const node = new FakeAudioNode('compressor', this);
     this.compressors.push(node);
+    return node;
+  }
+
+  createIIRFilter(feedforward, feedback) {
+    const node = new FakeAudioNode('iir-filter', this);
+    node.feedforward = [...feedforward];
+    node.feedback = [...feedback];
+    this.iirFilters.push(node);
     return node;
   }
 

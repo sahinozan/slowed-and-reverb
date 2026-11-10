@@ -3,8 +3,8 @@
 // What each Playwright configuration runs, as Playwright itself lists it
 // (playwright test --list, which starts no browser). npm run test:e2e must
 // run only the installed extension's tests, in Chromium; npm run test:ui the
-// popup layout and website tests, in Chromium and Gecko, with what only the
-// Firefox build shows in Gecko alone. Neither may pick up the audio suites,
+// popup layout, website and limiter tests, in Chromium and Gecko, with what
+// only the Firefox build shows in Gecko alone. Neither may pick up the audio suites,
 // which run under node --test, or list nothing.
 
 const assert = require('node:assert/strict');
@@ -58,16 +58,18 @@ describe('Playwright configurations', () => {
     assert.equal(new Set(tests.map(({ title }) => title)).size, tests.length);
   });
 
-  test('npm run test:ui runs the popup layout and website tests in both engines', () => {
+  test('npm run test:ui runs the popup layout, website and limiter tests in both engines', () => {
     const { projects, tests } = listed('playwright.ui.config.js');
     const files = [...new Set(tests.map(({ file }) => path.basename(file)))].sort();
+    // The limiter has two tests for each of the three files that carry it.
+    const least = { 'limiter.spec.js': 6, 'popup-layout.spec.js': 10, 'site.spec.js': 10 };
 
     assert.deepEqual(projects, ['chromium', 'firefox']);
-    assert.deepEqual(files, ['popup-layout.spec.js', 'site.spec.js']);
+    assert.deepEqual(files, Object.keys(least));
     for (const project of projects) {
       for (const file of files) {
         assert.ok(
-          count(tests, (run) => run.project === project && path.basename(run.file) === file) >= 10,
+          count(tests, (run) => run.project === project && path.basename(run.file) === file) >= least[file],
           `${project} runs ${file}`
         );
       }
