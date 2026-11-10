@@ -999,6 +999,11 @@ describe('popup behavior', () => {
       return [slider.value, field.value, field.getAttribute('aria-valuetext')];
     };
     const sentSpeeds = (harness) => audioUpdates(harness).map(({ message }) => message.settings.speed);
+    // What the popup has handed to the browser so far, before any answer:
+    // each change's speed and whether it turns the effect on.
+    const appliesSent = (harness) => harness.calls.runtimeMessages
+      .filter((message) => message.type === 'APPLY_TO_TAB')
+      .map((message) => [message.settings.speed, message.enabled]);
     const press = (harness, element, key, init = {}) => {
       const event = new harness.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
       element.dispatchEvent(event);
@@ -1134,6 +1139,11 @@ describe('popup behavior', () => {
       const typed = [
         ['0.834', 0.83],
         ['0.836', 0.84],
+        // Halves round up, also the ones a computer stores as a little less.
+        ['0.575', 0.58],
+        ['1.005', 1.01],
+        ['1.255', 1.26],
+        ['0.845', 0.85],
         ['2', 1.5],
         ['0.1', 0.5],
         ['0,9', 0.9],
@@ -1236,6 +1246,7 @@ describe('popup behavior', () => {
       // A drag reports the 0.01 step it is over, and goes to the nearest mark.
       moveTo('0.84');
       assert.deepEqual(shown(harness), ['0.85', '0.85', '0.85x']);
+      await settle();
       moveTo('0.86');
       moveTo('0.87');
       assert.deepEqual(shown(harness), ['0.85', '0.85', '0.85x']);
@@ -1273,7 +1284,9 @@ describe('popup behavior', () => {
       t.after(() => close(harness));
       const { up } = speedControls(harness);
 
-      for (let step = 0; step < 10; step++) up.click();
+      up.click();
+      await settle();
+      for (let step = 0; step < 9; step++) up.click();
       await settle();
       // The first step is on its way and the tab hasn't answered: the nine
       // after it wait as one.
@@ -1297,6 +1310,17 @@ describe('popup behavior', () => {
       assert.equal(harness.local.data.speed, 1.12);
       assert.equal(harness.session.data['tabState:9'].settings.speed, 1.12);
       assert.equal(harness.window.document.getElementById('power-toggle').checked, true);
+    });
+
+    test('sends steps made before the first has left as one change', async (t) => {
+      const harness = await createPopupHarness({ contentState: playingAt(1) });
+      t.after(() => close(harness));
+      const { up } = speedControls(harness);
+
+      for (let step = 0; step < 10; step++) up.click();
+      await settle();
+      assert.deepEqual(appliesSent(harness), [[1.1, true]]);
+      assert.equal(harness.local.data.speed, 1.1);
     });
 
     test('keeps the last choice when the effect is turned off while a change is on its way', async (t) => {
@@ -1456,9 +1480,10 @@ describe('popup behavior', () => {
         timers.advance(500);
         for (let repeat = 0; repeat < 5; repeat++) {
           press(harness, field, 'ArrowUp', { repeat: true });
+          // Each repeat is an event of its own, with time for a message to leave.
+          await settle();
           timers.advance(30);
         }
-        await settle();
         assert.deepEqual(sentSpeeds(harness), [1.01, 1.05, 0.9, 0.91]);
         timers.advance(300);
         await settle();
@@ -1500,6 +1525,7 @@ describe('popup behavior', () => {
         const power = harness.window.document.getElementById('power-toggle');
 
         up.click();
+        await settle();
         up.click();
         power.checked = false;
         power.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
@@ -1513,6 +1539,28 @@ describe('popup behavior', () => {
         assert.equal(power.checked, false);
       });
 
+      test('drops a waiting step when the page turns out to be blocked', async (t) => {
+        const tabState = deferredTabState();
+        const harness = await createPopupHarness({ ...FIREFOX, onTabMessage: tabState.onTabMessage });
+        t.after(() => close(harness));
+        const timers = fakeTimers(harness.window);
+        const { up } = speedControls(harness);
+
+        // The popup has opened and is still asking the tab about its state.
+        up.click();
+        await settle();
+        up.click();
+        const sent = appliesSent(harness).length;
+        tabState.release({ enabled: false, blocked: true, blockReason: 'drm' });
+        await settle();
+        timers.advance(1000);
+        await settle();
+
+        assert.equal(appliesSent(harness).length, sent);
+        assert.equal(harness.window.document.getElementById('power-toggle').checked, false);
+        assert.equal(up.disabled, true);
+      });
+
       test('sends a waiting speed when the popup closes', async (t) => {
         const harness = await createPopupHarness({ ...FIREFOX, contentState: playingAt(1) });
         t.after(() => close(harness));
@@ -1523,12 +1571,74 @@ describe('popup behavior', () => {
         await settle();
         up.click();
         up.click();
+        assert.deepEqual(appliesSent(harness), [[1.01, true]]);
         harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+        // Sent as it closes, with nothing left for a timer to do.
+        assert.deepEqual(appliesSent(harness), [[1.01, true], [1.03, true]]);
         await settle();
 
         assert.deepEqual(sentSpeeds(harness), [1.01, 1.03]);
-        assert.equal(audioUpdates(harness).at(-1).message.enabled, true);
         assert.equal(harness.session.data['tabState:9'].settings.speed, 1.03);
+      });
+
+      test('sends a step that waited from the start when the popup closes', async (t) => {
+        const harness = await createPopupHarness({ ...FIREFOX, contentState: playingAt(1) });
+        t.after(() => close(harness));
+        fakeTimers(harness.window);
+        const { field } = speedControls(harness);
+
+        // A held key's repeat is the first change this popup makes, so
+        // nothing has been sent to the tab before it.
+        press(harness, field, 'ArrowUp', { repeat: true });
+        assert.deepEqual(appliesSent(harness), []);
+        harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+        assert.deepEqual(appliesSent(harness), [[1.01, true]]);
+      });
+
+      test('keeps the repeats of Enter held down on a button for the end of the run', async (t) => {
+        const harness = await createPopupHarness({ ...FIREFOX, contentState: playingAt(1) });
+        t.after(() => close(harness));
+        const timers = fakeTimers(harness.window);
+        const { up } = speedControls(harness);
+
+        press(harness, up, 'Enter');
+        up.click();
+        await settle();
+        // The repeats begin after the wait is over.
+        timers.advance(500);
+        for (let repeat = 0; repeat < 3; repeat++) {
+          press(harness, up, 'Enter', { repeat: true });
+          up.click();
+          await settle();
+          timers.advance(30);
+        }
+        assert.deepEqual(sentSpeeds(harness), [1.01]);
+        timers.advance(300);
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.01, 1.04]);
+
+        // Once the key is let go, a click is a step of its own again.
+        up.dispatchEvent(new harness.window.KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+        timers.advance(1000);
+        up.click();
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.01, 1.04, 1.05]);
+      });
+
+      test('keeps a step back when it is made while the one before is looking up the tab', async (t) => {
+        const harness = await createPopupHarness({ ...FIREFOX, contentState: playingAt(1) });
+        t.after(() => close(harness));
+        const timers = fakeTimers(harness.window);
+        const { up } = speedControls(harness);
+
+        // Both steps are made before the first has been sent.
+        up.click();
+        up.click();
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), []);
+        timers.advance(300);
+        await settle();
+        assert.deepEqual(sentSpeeds(harness), [1.02]);
       });
     });
 
@@ -1542,20 +1652,47 @@ describe('popup behavior', () => {
       await settle();
       up.click();
       up.click();
+      // The tab hasn't answered the first step, so the popup has sent only that.
+      assert.deepEqual(appliesSent(harness), [[1.01, true]]);
       harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+      // The popup's own queue never runs again once it has closed, so the
+      // change has to leave at this moment.
+      assert.deepEqual(appliesSent(harness), [[1.01, true], [1.03, true]]);
+
+      // It is sent once, also if the popup lives on.
       while (tab.answers.length > 0) {
         tab.answers.shift()();
         await settle();
       }
-
-      assert.equal(sentSpeeds(harness).at(-1), 1.03);
+      assert.deepEqual(appliesSent(harness), [[1.01, true], [1.03, true]]);
       assert.equal(harness.session.data['tabState:9'].settings.speed, 1.03);
 
       // With nothing waiting, closing sends nothing.
-      const before = audioUpdates(harness).length;
       harness.window.dispatchEvent(new harness.window.Event('pagehide'));
       await settle();
-      assert.equal(audioUpdates(harness).length, before);
+      assert.deepEqual(appliesSent(harness), [[1.01, true], [1.03, true]]);
+    });
+
+    test('sends a change that was still looking up the tab when the popup closes', async (t) => {
+      const tab = slowTab(1);
+      const harness = await createPopupHarness({ onTabMessage: tab.onTabMessage });
+      t.after(() => close(harness));
+      const { up } = speedControls(harness);
+      const power = harness.window.document.getElementById('power-toggle');
+
+      up.click();
+      await settle();
+      // Turned off while the step is on its way...
+      power.checked = false;
+      power.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+      // ...and from here on the popup's lookups of the tab don't come back.
+      harness.api.tabs.query = () => new Promise(() => {});
+      tab.answers.shift()();
+      await settle();
+      assert.deepEqual(appliesSent(harness), [[1.01, true]]);
+
+      harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+      assert.deepEqual(appliesSent(harness), [[1.01, true], [1.01, false]]);
     });
   });
 });

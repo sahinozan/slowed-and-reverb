@@ -105,7 +105,10 @@ const SPEED_SETTLE_MS = IS_FIREFOX ? 300 : 0;
 const el = (id) => document.getElementById(id);
 const toInt = (value) => Number.parseInt(value, 10);
 const percent = (value) => `(${value}%)`;
-const toHundredths = (speed) => Math.round(speed * 100);
+// A speed as whole hundredths. 0.575 is stored as a little less than that,
+// and times 100 it is 57.49999999999999, which would round down; rounding
+// the product to 12 digits first makes it the 57.5 that was meant.
+const toHundredths = (speed) => Math.round(Number((speed * 100).toPrecision(12)));
 
 async function recallTabState(tabId, url) {
   return api.runtime
@@ -113,8 +116,13 @@ async function recallTabState(tabId, url) {
     .catch(() => null);
 }
 
+// The tab the popup was opened on. The last one found is kept for the moment
+// the popup closes, when there is no time to ask again (sendOnClose).
+let lastActiveTab = null;
+
 async function getActiveTab() {
   const [tab] = await api.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id !== undefined) lastActiveTab = tab;
   return tab;
 }
 
@@ -313,12 +321,11 @@ let activePresetId = null;
 let blocked = false;
 let liveBlocked = false;
 let applyRevision = 0;
-let applyInFlight = false;
-let waitingApply = null;
-let lastAppliedTab = null;
+let applyBusy = false;
+let unsentApply = null;
+let unsentApplyHeld = false;
 let shownSpeed = DEFAULT_SETTINGS.speed;
 let speedSettleTimer = null;
-let speedHeld = false;
 let presetWriteQueue = Promise.resolve();
 let spotifyPermissionTabId = null;
 let tabOnSpotify = false;
@@ -623,18 +630,18 @@ function sliderMark(speed, direction = 0) {
 }
 
 // Moves the slider and the field to a speed and, if that changed the speed,
-// sends it. `keyRepeat` says the change came from a key being held down.
-function changeSpeed(speed, keyRepeat = false) {
+// sends it. `heldDown` says the change came from a key being held down.
+function changeSpeed(speed, heldDown = false) {
   const next = validSpeed(speed);
   const changed = toHundredths(next) !== toHundredths(shownSpeed);
   speedSlider.value = String(next);
   updateValueDisplays();
-  if (changed) applySpeedChange(keyRepeat);
+  if (changed) applySpeedChange(heldDown);
   return changed;
 }
 
-function stepSpeed(direction, keyRepeat = false) {
-  return changeSpeed((toHundredths(shownSpeed) + direction) / 100, keyRepeat);
+function stepSpeed(direction, heldDown = false) {
+  return changeSpeed((toHundredths(shownSpeed) + direction) / 100, heldDown);
 }
 
 // Takes what was typed in the field. Text that isn't a speed is dropped, and
@@ -644,40 +651,6 @@ function commitSpeedField() {
   const typed = parseSpeed(els.speedInput.value);
   if (typed === null) showSpeed();
   else changeSpeed(typed);
-}
-
-// Sends a change of speed: at once, or in Firefox after a run of them has
-// stopped (see SPEED_SETTLE_MS).
-function applySpeedChange(keyRepeat) {
-  if (SPEED_SETTLE_MS === 0) {
-    saveAndApplySettings(true);
-    return;
-  }
-
-  // A key's repeats begin a while after its first press, often later than
-  // the wait, and still belong to the run that press began.
-  if (speedSettleTimer !== null || keyRepeat) {
-    window.clearTimeout(speedSettleTimer);
-    speedHeld = true;
-    // What sending it will show.
-    setPowerUI(true);
-  } else {
-    saveAndApplySettings(true);
-  }
-  speedSettleTimer = window.setTimeout(settleSpeed, SPEED_SETTLE_MS);
-}
-
-function settleSpeed() {
-  speedSettleTimer = null;
-  if (speedHeld) saveAndApplySettings(true);
-}
-
-// Ends a run of speed changes. Whatever is sent next carries the speed that
-// was waiting.
-function dropHeldSpeed() {
-  window.clearTimeout(speedSettleTimer);
-  speedSettleTimer = null;
-  speedHeld = false;
 }
 
 function updateAdvancedBadge() {
@@ -691,55 +664,108 @@ function updateAdvancedBadge() {
   );
 }
 
-// Saves the settings the popup shows and sends them to the tab. One change is
-// on its way at a time: a change made meanwhile waits for that one's answer,
-// and a newer change takes its place. So holding a button or a key gives the
-// tab the newest settings, always including the last, without a message for
-// every step before them.
-function saveAndApplySettings(enabled) {
+// Sends a change of speed: at once, or in Firefox after a run of them has
+// stopped (see SPEED_SETTLE_MS). `heldDown` says the change came from a key
+// being held down.
+function applySpeedChange(heldDown) {
+  if (SPEED_SETTLE_MS === 0) {
+    saveAndApplySettings(true);
+    return;
+  }
+
+  // A key's repeats begin a while after its first press, often later than
+  // the wait, and still belong to the run that press began.
+  const inRun = speedSettleTimer !== null || heldDown;
+  saveAndApplySettings(true, inRun);
+  speedSettleTimer = window.setTimeout(settleSpeed, SPEED_SETTLE_MS);
+}
+
+function settleSpeed() {
+  speedSettleTimer = null;
+  if (!unsentApplyHeld) return;
+  unsentApplyHeld = false;
+  if (!applyBusy) sendUnsentApplies();
+}
+
+// Saves the settings the popup shows and sends them to the tab.
+//
+// The newest change that hasn't been sent is kept in one place, `unsentApply`,
+// and a newer change takes its place there. One change is on its way at a
+// time, and the next is sent when its answer has come. So holding a button or
+// a key gives the tab the newest settings, always including the last, without
+// a message for every step before them. `hold` keeps this change back until
+// a run of speed changes has stopped; any change after it sends it at once.
+function saveAndApplySettings(enabled, hold = false) {
   // Enforce blocking here because every preset and control funnels through this path.
   const active = blocked ? false : enabled;
   const request = { settings: getCurrentSettings(), enabled: active, revision: ++applyRevision };
 
-  dropHeldSpeed();
   setPowerUI(active);
 
-  if (!applyInFlight) return sendApply(request);
-
-  if (!waitingApply) {
-    waitingApply = {};
-    waitingApply.result = new Promise((resolve, reject) => {
-      waitingApply.resolve = resolve;
-      waitingApply.reject = reject;
+  if (!unsentApply) {
+    unsentApply = {};
+    unsentApply.result = new Promise((resolve, reject) => {
+      unsentApply.resolve = resolve;
+      unsentApply.reject = reject;
     });
   }
-  waitingApply.request = request;
-  return waitingApply.result;
+  unsentApply.request = request;
+  const { result } = unsentApply;
+
+  window.clearTimeout(speedSettleTimer);
+  speedSettleTimer = null;
+  unsentApplyHeld = hold;
+  if (!hold && !applyBusy) sendUnsentApplies();
+  return result;
 }
 
-async function sendApply(request) {
-  applyInFlight = true;
+// Sends what is waiting, one change at a time. A change stays in
+// `unsentApply` until the moment it is handed to the browser, so that closing
+// the popup can still send it (sendOnClose).
+async function sendUnsentApplies() {
+  applyBusy = true;
   try {
-    return await applyToActiveTab(request);
+    while (unsentApply && !unsentApplyHeld) {
+      let apply = null;
+      try {
+        const tab = await getActiveTab();
+        // A change made during the lookup has taken this one's place. If it
+        // is being kept back, it waits for its run to stop.
+        if (unsentApplyHeld) continue;
+        apply = takeUnsentApply();
+        if (!apply) continue;
+        if (tab?.id === undefined) {
+          apply.resolve(null);
+          continue;
+        }
+        apply.resolve(await sendApply(tab, apply.request));
+      } catch (error) {
+        (apply ?? takeUnsentApply())?.reject(error);
+      }
+    }
   } finally {
-    applyInFlight = false;
-    const waiting = waitingApply;
-    waitingApply = null;
-    if (waiting) sendApply(waiting.request).then(waiting.resolve, waiting.reject);
+    applyBusy = false;
   }
 }
 
-async function applyToActiveTab({ settings, enabled: active, revision }) {
-  const tab = await getActiveTab();
-  if (tab?.id === undefined) return null;
-  lastAppliedTab = tab;
+function takeUnsentApply() {
+  const apply = unsentApply;
+  unsentApply = null;
+  unsentApplyHeld = false;
+  return apply;
+}
 
+function applyMessage(tab, { settings, enabled }) {
+  return { type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled };
+}
+
+async function sendApply(tab, request) {
   const reportsBefore = tabReports;
   const result = await api.runtime
-    .sendMessage({ type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled: active })
+    .sendMessage(applyMessage(tab, request))
     .catch(() => ({ success: false, blocked: true, blockReason: 'unsupported' }));
 
-  if (revision !== applyRevision) return result;
+  if (request.revision !== applyRevision) return result;
 
   if (!result?.success) {
     setBlocked(true, result?.blockReason ?? 'unsupported');
@@ -753,19 +779,21 @@ async function applyToActiveTab({ settings, enabled: active, revision }) {
 }
 
 // Closing the popup ends its timers and its waits, so a change that hasn't
-// been sent yet goes now, without them.
-function sendUnsentChange() {
-  if (blocked || !lastAppliedTab || !(speedHeld || waitingApply)) return;
-  dropHeldSpeed();
-  api.runtime
-    .sendMessage({
-      type: 'APPLY_TO_TAB',
-      tabId: lastAppliedTab.id,
-      url: lastAppliedTab.url,
-      settings: getCurrentSettings(),
-      enabled: els.power.checked
-    })
-    .catch(() => {});
+// been sent yet goes now, without them, to the tab the popup last found.
+function sendOnClose() {
+  if (!unsentApply || !lastActiveTab) return;
+  const apply = takeUnsentApply();
+  window.clearTimeout(speedSettleTimer);
+  speedSettleTimer = null;
+  api.runtime.sendMessage(applyMessage(lastActiveTab, apply.request)).catch(() => {});
+  apply.resolve(null);
+}
+
+// A page that turns out to be blocked gets nothing that was being kept back.
+function dropHeldApply() {
+  window.clearTimeout(speedSettleTimer);
+  speedSettleTimer = null;
+  if (unsentApplyHeld) takeUnsentApply().resolve(null);
 }
 
 function dbToY(db) {
@@ -969,7 +997,7 @@ function setBlocked(isBlocked, reason) {
   setEqDisabled(isBlocked);
 
   if (isBlocked) {
-    dropHeldSpeed();
+    dropHeldApply();
     setActiveTab(tabButtons, tabPanels, 'presets');
     setActiveTab(effectTabButtons, effectTabPanels, 'basic');
     els.footer.classList.remove('no-divider');
@@ -1254,11 +1282,20 @@ function bindSpeedStepButton(button, direction) {
   for (const type of ['pointerup', 'pointerleave', 'pointercancel', 'blur']) {
     button.addEventListener(type, stop);
   }
+  // Enter held down on the button clicks it again and again.
+  let keyHeldDown = false;
+  button.addEventListener('keydown', (event) => {
+    keyHeldDown = event.repeat;
+  });
+  button.addEventListener('keyup', () => {
+    keyHeldDown = false;
+  });
   button.addEventListener('click', (event) => {
     // A click made with the keyboard (its detail is 0) has no hold before it.
-    const endsHold = held && event.detail !== 0;
+    const fromKeyboard = event.detail === 0;
+    const endsHold = held && !fromKeyboard;
     held = false;
-    if (!endsHold) stepSpeed(direction);
+    if (!endsHold) stepSpeed(direction, fromKeyboard && keyHeldDown);
   });
 }
 
@@ -1294,7 +1331,7 @@ function bindSpeedControls() {
   bindSpeedStepButton(els.speedDown, -1);
   bindSpeedStepButton(els.speedUp, 1);
 
-  window.addEventListener('pagehide', sendUnsentChange);
+  window.addEventListener('pagehide', sendOnClose);
 }
 
 function bindControls() {
