@@ -116,11 +116,10 @@ Privacy policy: https://slowedreverbapp.com/privacy
 YouTube and YouTube Music are trademarks of Google LLC, and Spotify is a trademark of Spotify AB. This extension is made independently and isn't affiliated with, endorsed by or sponsored by either company.
 ```
 
-Firefox release notes for 1.2.0:
+Firefox release notes for 1.2.1:
 
 ```markdown
-- After the extension updates, a YouTube, YouTube Music or Spotify tab that's still running the old version keeps the effect off until you reload the page, and the panel says so, with a button to reload. Before, that tab kept using the old version.
-- The extension is stricter about the pages it runs on: only YouTube, YouTube Music and Spotify, over a secure connection, and the same goes for keyboard shortcuts.
+- In Firefox, loud songs with a lot of treble no longer come out quieter and less clear while the extension is on. Firefox was turning the whole song down whenever the treble got loud. Loud sound is now handled the same way as in other browsers.
 ```
 
 ## Screenshot captions

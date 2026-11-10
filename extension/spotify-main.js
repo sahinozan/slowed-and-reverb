@@ -10,7 +10,7 @@
   // and Firefox can later put the new bridge next to it (when the extension
   // is turned off and on again). tests/settings.test.js keeps this equal to
   // the bridge's and the manifest's version.
-  const VERSION = '1.2.0';
+  const VERSION = '1.2.1';
   // Copies of SlowedReverbSettings.DEFAULTS and BOUNDS (settings.js). This script
   // stays self-contained because its registration outlives extension updates;
   // tests/settings.test.js keeps the copies equal.
