@@ -97,11 +97,20 @@ drawn by `npm run store:assets` together with the store art.
 
 Cloudflare serves this folder at `slowedreverbapp.com`, connected to this
 repository. `wrangler.jsonc` in the repository root is the whole
-configuration: no build step, no Worker script. Wrangler runs in Cloudflare's
-build container, so it is not a dependency here.
+configuration of what is served: no build step, no Worker script. Wrangler
+runs in Cloudflare's build container, so it is not a dependency here.
 
-- Cloudflare redeploys on every push to `main` and gives other branches a
-  preview URL.
+- Cloudflare is set to redeploy on a push to `main`, and to give another
+  branch a preview URL, when the push changes `site/` or `wrangler.jsonc`.
+  Whatever the paths say, it also builds for a push with no changed files,
+  with 3,000 or more changed files, or with 20 or more commits.
+- Those build watch paths (`site/*` and `wrangler.jsonc`) are a setting in
+  Cloudflare, not in this repository, and this Worker has it twice, once in
+  each build trigger: one trigger for `main`, and one named "Deploy
+  non-production branches". To change the paths, change both. On this Worker
+  the dashboard's field (Settings > Build > Build watch paths) changed only
+  `main`'s, so set the other trigger's `path_includes` through Cloudflare's
+  Builds API (`PATCH /accounts/{account_id}/builds/triggers/{trigger_uuid}`).
 - Pages are served without `.html` (`/guide`, `/privacy`). The canonical and
   Open Graph URLs in each page's `<head>` and `sitemap.xml` use those addresses;
   they are the only places the domain is written out.
