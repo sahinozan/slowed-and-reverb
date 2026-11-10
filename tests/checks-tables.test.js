@@ -86,23 +86,50 @@ describe('the tables made from the map of checks', () => {
     const text = `Before.\n\n${START}\nold\nold\n${END}\n\nAfter.\n`;
     assert.equal(withTables(text, 'new'), `Before.\n\n${START}\nnew\n${END}\n\nAfter.\n`);
     assert.equal(withTables(withTables(text, 'new'), 'new'), withTables(text, 'new'));
+    // A file that doesn't end with a line break keeps that.
+    assert.equal(withTables(`${START}\nold\n${END}`, 'new'), `${START}\nnew\n${END}`);
     for (const broken of [
       'No markers.\n',
       `${START}\nold\n`,
       `old\n${END}\n`,
       `${END}\nold\n${START}\n`,
-      `${START}\nold\n${END}\n${START}\nold\n${END}\n`
+      `${START}\nold\n${END}\n${START}\nold\n${END}\n`,
+      // A marker that isn't a line by itself, or with another kind of line end.
+      `See ${START}\nold\n${END}\n`,
+      `${START}\nold\n${END} and more\n`,
+      `${START}\r\nold\r\n${END}\r\n`
     ]) {
       assert.throws(() => withTables(broken, 'new'), /expected the two marker lines, once each and in order/, broken);
     }
   });
 
-  test('the command says the files are up to date and changes nothing', () => {
+  test('keeps any text the map may hold on one line of a table or a list', () => {
+    const odd = changed((copy) => {
+      copy.checks.listen.when = 'the sound(effect) changed\n  or a | bar';
+      copy.checks.listen.steps = 'Listen.\nThen listen again.';
+      copy.checks.ui.about = 'The popup,\nand a | bar.';
+    });
+    const tables = agentsTables(odd).split('\n');
+    assert.equal(tables.length, agentsTables(map).split('\n').length);
+    assert.ok(tables.includes('| `ui` | CI\'s required check | `npm run test:ui`. The popup, and a \\| bar. |'));
+    assert.ok(tables.some((line) => line.startsWith('| `listen` | by hand, when the sound(effect) changed or a \\| bar | ')));
+    const items = checklistItems(odd).split('\n');
+    assert.equal(items.length, checklistItems(map).split('\n').length);
+    assert.match(items[0], /^- \[ \] \*\*The sound\(effect\) changed or a \| bar\*\*\. Listen\. Then listen again\. It can happen in a change to /);
+  });
+
+  // Run with --check, which writes nothing: a test shouldn't put the files
+  // right while another is failing because they are out of date.
+  test('the command can say whether the files are up to date without writing them', () => {
+    const script = path.join(root, 'scripts', 'render-checks-tables.js');
     const before = renderAll(map).map(({ before }) => before);
-    const result = spawnSync(process.execPath, [path.join(root, 'scripts', 'render-checks-tables.js')], { encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr);
+    const result = spawnSync(process.execPath, [script, '--check'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.equal(result.stdout, 'AGENTS.md: already up to date\nRELEASE-CHECKLIST.md: already up to date\n');
     assert.ok(renderAll(map).every(({ before: now }, index) => now === before[index]));
+    const unexpected = spawnSync(process.execPath, [script, '--force'], { encoding: 'utf8' });
+    assert.equal(unexpected.status, 2);
+    assert.equal(unexpected.stdout, '');
     const { scripts } = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     assert.equal(scripts['checks:tables'], 'node scripts/render-checks-tables.js');
   });

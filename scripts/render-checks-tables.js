@@ -3,7 +3,8 @@
 // Writes the tables of which checks a change needs into AGENTS.md and
 // RELEASE-CHECKLIST.md, from the map (checks.json), between the two marker
 // lines in each file. Run after changing the map (npm run checks:tables);
-// tests/checks-tables.test.js fails until the files match.
+// tests/checks-tables.test.js fails until the files match. With --check it
+// writes nothing and only says whether they do.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,8 +17,11 @@ const END = '<!-- The end of the part made from checks.json. -->';
 
 const code = (text) => `\`${text}\``;
 const list = (items) => items.map(code).join(', ');
+// Text from the map on one line: a line break would end a table's row or
+// a list's item.
+const oneLine = (text) => text.replace(/\s*\n\s*/g, ' ');
 // Text in a table's cell: a bar would end the cell.
-const cell = (text) => text.replaceAll('|', '\\|');
+const cell = (text) => oneLine(text).replaceAll('|', '\\|');
 const capital = (text) => text[0].toUpperCase() + text.slice(1);
 
 // Who runs a check, for the first table.
@@ -67,8 +71,8 @@ function checklistItems(map) {
     .filter(([, check]) => check.by === 'hand' && check.when)
     .map(([name, check]) => {
       // The condition's first words in bold, up to any detail in brackets.
-      const [, head, detail] = /^([^(]*?)( \(.*)?$/.exec(check.when);
-      return `- [ ] **${capital(head)}**${detail ?? ''}. ${check.steps ?? check.about} It can happen in a change to ${list(pathsNeeding(map, name))}.`;
+      const [, head, detail] = /^(.*?)( \(.*)?$/.exec(oneLine(check.when));
+      return `- [ ] **${capital(head)}**${detail ?? ''}. ${oneLine(check.steps ?? check.about)} It can happen in a change to ${list(pathsNeeding(map, name))}.`;
     })
     .join('\n');
 }
@@ -78,14 +82,16 @@ const TARGETS = [
   { file: 'RELEASE-CHECKLIST.md', render: checklistItems }
 ];
 
-// The file's text with the part between its marker lines made again.
+// The file's text with the part between its marker lines made again. Each
+// marker has to be a line by itself.
 function withTables(text, made) {
-  const start = text.split(`${START}\n`);
-  const end = text.split(`\n${END}\n`);
-  if (start.length !== 2 || end.length !== 2 || text.indexOf(START) > text.indexOf(END)) {
+  const lines = text.split('\n');
+  const at = (marker) => lines.flatMap((line, index) => (line === marker ? [index] : []));
+  const [starts, ends] = [at(START), at(END)];
+  if (starts.length !== 1 || ends.length !== 1 || starts[0] > ends[0]) {
     throw new Error('expected the two marker lines, once each and in order');
   }
-  return `${start[0]}${START}\n${made}\n${END}\n${end[1]}`;
+  return [...lines.slice(0, starts[0] + 1), made, ...lines.slice(ends[0])].join('\n');
 }
 
 // Each file as it is and as the map makes it.
@@ -100,10 +106,25 @@ function renderAll(map = readMap()) {
   });
 }
 
+// Writes the files, or with --check only says which are out of date.
 if (require.main === module) {
-  for (const { file, before, after } of renderAll()) {
-    if (after !== before) fs.writeFileSync(path.join(root, file), after);
-    console.log(`${file}: ${after === before ? 'already up to date' : 'written'}`);
+  const args = process.argv.slice(2);
+  const check = args.length === 1 && args[0] === '--check';
+  if (args.length > 0 && !check) {
+    process.stderr.write(`Unexpected arguments: ${args.join(' ')}\n`);
+    process.exitCode = 2;
+  } else {
+    for (const { file, before, after } of renderAll()) {
+      if (after === before) {
+        console.log(`${file}: already up to date`);
+      } else if (check) {
+        console.log(`${file}: out of date; run npm run checks:tables`);
+        process.exitCode = 1;
+      } else {
+        fs.writeFileSync(path.join(root, file), after);
+        console.log(`${file}: written`);
+      }
+    }
   }
 }
 
