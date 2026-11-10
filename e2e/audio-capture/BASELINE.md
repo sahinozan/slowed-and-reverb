@@ -120,6 +120,33 @@ request's runs) isn't counted, even if the commit is merged later.
   but no longer need a runner of their own; and nightly runs build the
   hosted count without anyone starting them. The change touches what the
   workflow runs for, so every setup's count starts again after its merge.
+- **November 10, 2026:** of the extension's files, the workflow now runs
+  only for those that can reach the sound a run records: the background
+  script, the content scripts (`content.js`, `spotify-bridge.js`), the
+  engines, `settings.js` and the manifest. It no longer runs for the
+  popup's files (`popup.html`, `popup.js`, `popup.css`) or the icons
+  (`extension/assets/`), so a merge that changes only those no longer
+  starts the counts again. Why: the suites ask the background script for
+  what the popup's message would and never open the popup, and nothing but
+  the popup's page loads its script and styles, so a change to them can't
+  change a recording, and the runs before and after it measure the same
+  thing. The icons are the pictures on the toolbar's button: the background
+  script sets one at the end of each change and ignores a failure, so a new
+  picture isn't expected to change a recording either. `settings.js` stays
+  because the background script and every injection of `content.js` load
+  it, and the manifest because it decides what is injected where. Tests
+  fail if the suites or the extension's other scripts name the popup's
+  page, or its script or styles, where they shouldn't, or if a new file of
+  the extension is in neither group (`tests/audio-workflow.test.js`). They
+  read the names as written in the code, so they can't see one put together
+  while it runs. The owner asked the agent session
+  planning the work to decide this, and it did, on that day. The same
+  change adds `scripts/build-extension.js` to what the workflow runs for:
+  it builds the copy of the extension the suites load, and was missing, so
+  a change to the build alone ran no suite and didn't start the counts
+  again. The owner chose that on the same day. The change touches the
+  workflow's own file, so every setup's count starts again after its
+  merge.
 
 ## Records
 
