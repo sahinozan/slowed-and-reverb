@@ -229,7 +229,7 @@ describe('Release record', () => {
     const note = (privacyChanges) => releaseRecord({ ...release, privacyChanges }).replace(/\s+/g, ' ');
     const none = { changed: [], added: [], removed: [] };
 
-    assert.match(note({ same: true, ...none }), /It is the same as the 1\.1\.1 copy\./);
+    assert.match(note({ same: true, ...none }), /It is the same as the 1\.1\.1 copy, so there is nothing to paste\./);
     assert.match(
       note({ same: false, ...none, removed: ['Optional site permissions are recorded and managed by the browser.'] }),
       /Compared with the 1\.1\.1 copy, 1 line removed \("Optional site permissions are recorded and…"\)\./

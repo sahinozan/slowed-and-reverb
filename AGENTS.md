@@ -164,9 +164,10 @@ The tests fail when the site's popup copy or stamps, or what is made from
 A version bump touches `extension/manifest.json`, `package.json`, the root
 entries of `package-lock.json`, `VERSION` in `extension/content.js`,
 `extension/spotify-bridge.js`, `extension/spotify-main.js` and
-`extension/youtube-main.js`, the footer of every `site/*.html` page, a new
-entry in `site/changelog.html`, and the version line in `PRIVACY.md` and
-`site/privacy.html`. `npm run version:set -- X.Y.Z` writes all of these, or
+`extension/youtube-main.js`, the footer of every `site/*.html` page, and a
+new entry in `site/changelog.html`. The privacy policy isn't one of them: it
+covers version 1.0.0 and later, so it changes only when what the extension
+stores or sends does. `npm run version:set -- X.Y.Z` writes all of these, or
 nothing if it can't write them all, and prints what is left to do by hand:
 the release notes, in place of the TODO comment in the changelog entry it
 adds (the tests fail until they are written), and the Firefox release notes in
