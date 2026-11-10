@@ -93,15 +93,6 @@ const SPEED_SLIDER_KEYS = Object.freeze({ ArrowUp: 1, ArrowRight: 1, ArrowDown: 
 // How long a − or + button is held before it starts to repeat, and how fast.
 const STEP_HOLD_DELAY_MS = 400;
 const STEP_REPEAT_MS = 60;
-// In Firefox the player clicks when its speed changes, so the audio engines
-// fade the sound out and back in around every change (PLAYER_CHANGE_DELAY_MS
-// in youtube-main.js and spotify-main.js). A run of steps sent one by one
-// would be heard as a run of gaps. So there the first step is sent at once,
-// the steps after it wait, and when they have stopped for this long the speed
-// they ended on is sent. Chromium's player doesn't click when its speed
-// changes, so there every step is sent as it is made.
-const SPEED_SETTLE_MS = IS_FIREFOX ? 300 : 0;
-
 const el = (id) => document.getElementById(id);
 const toInt = (value) => Number.parseInt(value, 10);
 const percent = (value) => `(${value}%)`;
@@ -323,9 +314,7 @@ let liveBlocked = false;
 let applyRevision = 0;
 let applyBusy = false;
 let unsentApply = null;
-let unsentApplyHeld = false;
 let shownSpeed = DEFAULT_SETTINGS.speed;
-let speedSettleTimer = null;
 let presetWriteQueue = Promise.resolve();
 let spotifyPermissionTabId = null;
 let tabOnSpotify = false;
@@ -570,11 +559,6 @@ function getCurrentSettings() {
 }
 
 function applySettingsToUI(settings) {
-  // A speed step kept back for the end of its run was made on what the
-  // controls showed before. Sent later, it would put that back, on top of
-  // what they show from here on.
-  dropHeldApply();
-
   for (const slider of SLIDERS) {
     const value = settings[slider.key] ?? DEFAULT_SETTINGS[slider.key];
     slider.input.value =
@@ -635,18 +619,18 @@ function sliderMark(speed, direction = 0) {
 }
 
 // Moves the slider and the field to a speed and, if that changed the speed,
-// sends it. `heldDown` says the change came from a key being held down.
-function changeSpeed(speed, heldDown = false) {
+// sends it.
+function changeSpeed(speed) {
   const next = validSpeed(speed);
   const changed = toHundredths(next) !== toHundredths(shownSpeed);
   speedSlider.value = String(next);
   updateValueDisplays();
-  if (changed) applySpeedChange(heldDown);
+  if (changed) saveAndApplySettings(true);
   return changed;
 }
 
-function stepSpeed(direction, heldDown = false) {
-  return changeSpeed((toHundredths(shownSpeed) + direction) / 100, heldDown);
+function stepSpeed(direction) {
+  return changeSpeed((toHundredths(shownSpeed) + direction) / 100);
 }
 
 // Takes what was typed in the field. Text that isn't a speed is dropped, and
@@ -669,38 +653,14 @@ function updateAdvancedBadge() {
   );
 }
 
-// Sends a change of speed: at once, or in Firefox after a run of them has
-// stopped (see SPEED_SETTLE_MS). `heldDown` says the change came from a key
-// being held down.
-function applySpeedChange(heldDown) {
-  if (SPEED_SETTLE_MS === 0) {
-    saveAndApplySettings(true);
-    return;
-  }
-
-  // A key's repeats begin a while after its first press, often later than
-  // the wait, and still belong to the run that press began.
-  const inRun = speedSettleTimer !== null || heldDown;
-  saveAndApplySettings(true, inRun);
-  speedSettleTimer = window.setTimeout(settleSpeed, SPEED_SETTLE_MS);
-}
-
-function settleSpeed() {
-  speedSettleTimer = null;
-  if (!unsentApplyHeld) return;
-  unsentApplyHeld = false;
-  if (!applyBusy) sendUnsentApplies();
-}
-
 // Saves the settings the popup shows and sends them to the tab.
 //
 // The newest change that hasn't been sent is kept in one place, `unsentApply`,
 // and a newer change takes its place there. One change is on its way at a
 // time, and the next is sent when its answer has come. So holding a button or
 // a key gives the tab the newest settings, always including the last, without
-// a message for every step before them. `hold` keeps this change back until
-// a run of speed changes has stopped; any change after it sends it at once.
-function saveAndApplySettings(enabled, hold = false) {
+// a message for every step before them.
+function saveAndApplySettings(enabled) {
   // Enforce blocking here because every preset and control funnels through this path.
   const active = blocked ? false : enabled;
   const request = { settings: getCurrentSettings(), enabled: active, revision: ++applyRevision };
@@ -717,10 +677,7 @@ function saveAndApplySettings(enabled, hold = false) {
   unsentApply.request = request;
   const { result } = unsentApply;
 
-  window.clearTimeout(speedSettleTimer);
-  speedSettleTimer = null;
-  unsentApplyHeld = hold;
-  if (!hold && !applyBusy) sendUnsentApplies();
+  if (!applyBusy) sendUnsentApplies();
   return result;
 }
 
@@ -730,13 +687,12 @@ function saveAndApplySettings(enabled, hold = false) {
 async function sendUnsentApplies() {
   applyBusy = true;
   try {
-    while (unsentApply && !unsentApplyHeld) {
+    while (unsentApply) {
       let apply = null;
       try {
         const tab = await getActiveTab();
-        // A change made during the lookup has taken this one's place. If it
-        // is being kept back, it waits for its run to stop.
-        if (unsentApplyHeld) continue;
+        // The newest change by now: one made during the lookup has taken
+        // the place of the one the lookup began for.
         apply = takeUnsentApply();
         if (!apply) continue;
         if (tab?.id === undefined) {
@@ -756,7 +712,6 @@ async function sendUnsentApplies() {
 function takeUnsentApply() {
   const apply = unsentApply;
   unsentApply = null;
-  unsentApplyHeld = false;
   return apply;
 }
 
@@ -788,17 +743,8 @@ async function sendApply(tab, request) {
 function sendOnClose() {
   if (!unsentApply || !lastActiveTab) return;
   const apply = takeUnsentApply();
-  window.clearTimeout(speedSettleTimer);
-  speedSettleTimer = null;
   api.runtime.sendMessage(applyMessage(lastActiveTab, apply.request)).catch(() => {});
   apply.resolve(null);
-}
-
-// Gives up a change that was being kept back (see applySettingsToUI).
-function dropHeldApply() {
-  window.clearTimeout(speedSettleTimer);
-  speedSettleTimer = null;
-  if (unsentApplyHeld) takeUnsentApply().resolve(null);
 }
 
 function dbToY(db) {
@@ -1286,20 +1232,11 @@ function bindSpeedStepButton(button, direction) {
   for (const type of ['pointerup', 'pointerleave', 'pointercancel', 'blur']) {
     button.addEventListener(type, stop);
   }
-  // Enter held down on the button clicks it again and again.
-  let keyHeldDown = false;
-  button.addEventListener('keydown', (event) => {
-    keyHeldDown = event.repeat;
-  });
-  button.addEventListener('keyup', () => {
-    keyHeldDown = false;
-  });
   button.addEventListener('click', (event) => {
     // A click made with the keyboard (its detail is 0) has no hold before it.
-    const fromKeyboard = event.detail === 0;
-    const endsHold = held && !fromKeyboard;
+    const endsHold = held && event.detail !== 0;
     held = false;
-    if (!endsHold) stepSpeed(direction, fromKeyboard && keyHeldDown);
+    if (!endsHold) stepSpeed(direction);
   });
 }
 
@@ -1316,7 +1253,7 @@ function bindSpeedControls() {
     if (!Object.hasOwn(SPEED_SLIDER_KEYS, event.key)) return;
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     event.preventDefault();
-    changeSpeed(sliderMark(shownSpeed, SPEED_SLIDER_KEYS[event.key]), event.repeat);
+    changeSpeed(sliderMark(shownSpeed, SPEED_SLIDER_KEYS[event.key]));
   });
 
   els.speedInput.addEventListener('keydown', (event) => {
@@ -1327,7 +1264,7 @@ function bindSpeedControls() {
       // From what is typed, if that is a speed.
       const from = validSpeed(parseSpeed(els.speedInput.value) ?? shownSpeed);
       const direction = event.key === 'ArrowUp' ? 1 : -1;
-      changeSpeed((toHundredths(from) + direction) / 100, event.repeat);
+      changeSpeed((toHundredths(from) + direction) / 100);
     }
   });
   els.speedInput.addEventListener('blur', commitSpeedField);
