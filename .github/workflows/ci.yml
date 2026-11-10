@@ -16,10 +16,11 @@ concurrency:
 jobs:
   # The repository checks run for every change. This job only decides whether
   # a change may skip the browser smoke tests, using the policy in the base
-  # commit's scripts/classify-ci-changes.js rather than the pull request's own
-  # copy. The workflow itself still comes from the pull request, so this keeps
-  # a change from choosing its checks by accident; it isn't a security
-  # boundary. Changing the workflow or the classifier runs every check.
+  # commit's checks.json, read by its scripts/classify-ci-changes.js, rather
+  # than the pull request's own copies. The workflow itself still comes from
+  # the pull request, so this keeps a change from choosing its checks by
+  # accident; it isn't a security boundary. Changing the workflow, the
+  # classifier or the map runs every check.
   classify:
     name: Classify changes
     runs-on: ubuntu-latest
@@ -59,7 +60,11 @@ jobs:
           set -euo pipefail
 
           classifier=scripts/classify-ci-changes.js
-          policy_copy="${RUNNER_TEMP:?}/ci-policy/classify-ci-changes.js"
+          map=checks.json
+          # Laid out like the repository: the classifier reads the map from
+          # the folder above its own.
+          policy_dir="${RUNNER_TEMP:?}/ci-policy"
+          policy_copy="$policy_dir/$classifier"
 
           case "$EVENT_NAME" in
             pull_request) baseline="$BASE_SHA" range="$BASE_SHA...$HEAD_SHA" ;;
@@ -84,9 +89,12 @@ jobs:
               mkdir -p "$(dirname "$policy_copy")"
               git show "$baseline:$classifier" > "$policy_copy"
               version=$(node "$policy_copy" --policy-version < /dev/null)
-              if [[ "$version" != 2 ]]; then
+              if [[ "$version" != 3 ]]; then
                 echo "::notice::The baseline's $classifier has another policy format, so every check runs."
+              elif ! git cat-file -e "$baseline:$map" 2>/dev/null; then
+                echo "::notice::The baseline has no $map, so every check runs."
               else
+                git show "$baseline:$map" > "$policy_dir/$map"
                 # --no-renames lists a renamed file's old path too.
                 decision=$(git diff --no-renames --name-only -z "$range" | node "$policy_copy")
                 case "$decision" in

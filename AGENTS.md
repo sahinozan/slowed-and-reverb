@@ -202,8 +202,11 @@ permission and revoking steps too.
 Branch from `main` and open a pull request; don't push to `main`. CI's
 required check is "Lint, test, and package". It needs `npm run check` to pass
 for every change, and the browser tests too unless the base commit's
-`scripts/classify-ci-changes.js` says the change can't affect them; changing
-the workflows or the classifier always runs them. Every review conversation
+`checks.json`, the map of which checks a change needs, says the change can't
+affect them (`scripts/classify-ci-changes.js` reads it); changing the
+workflows, the classifier or the map always runs them. A new file needs a
+rule in `checks.json`: a test fails until it has one, and CI runs every
+check for a path the map doesn't know. Every review conversation
 must be resolved before merging. Don't merge unless asked. Commit messages
 and pull request descriptions are plain prose about what changed and why.
 

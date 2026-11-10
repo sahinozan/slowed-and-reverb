@@ -263,9 +263,10 @@ is left as it was; and that a limiter connected before the stage has checked
 the browser limits a loud tone exactly as one connected after.
 GitHub Actions runs `npm run check` for every change, and the browser tests on
 disposable Ubuntu and Windows machines unless the change can't affect them. The
-pull request's base commit decides that with its copy of
-`scripts/classify-ci-changes.js`, and changes to the workflows or the
-classifier always run them. A separate Dependency audit workflow runs the
+pull request's base commit decides that with its copies of `checks.json`, the
+map of which checks a change needs, and of `scripts/classify-ci-changes.js`,
+which reads it; changes to the workflows, the classifier or the map always run
+them. A separate Dependency audit workflow runs the
 audit every week and for dependency changes; it isn't one of the checks a pull
 request needs. What the automated tests don't check today, the real sites,
 the browsers' own windows and prompts, and real sound, is done by hand before
