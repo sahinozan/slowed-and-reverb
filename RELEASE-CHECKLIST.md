@@ -61,23 +61,16 @@ YouTube Music and Spotify:
 
 ## When it applies
 
-- [ ] **The popup's frame changed in CSS:** look at the real popup in
-      Firefox, with its rounded panel corners.
-- [ ] **The permission code changed** (the manifest's permissions, or how
-      the extension asks for access or handles it): in each browser, also
-      outside a release, the YouTube Music step under "The entry points"
-      (Firefox's YouTube Music prompt), "Permission prompts", a reload of each
-      site with the effect on, and revoking access.
-- [ ] **A change can affect how the effect sounds** (the audio graph's
-      wiring, an effect's code, gains, fades, presets or defaults, or a
-      browser change to Web Audio): listen to reverb, echo, EQ, width and
-      saturation with music. The audio suite keeps echo, saturation and EQ
-      neutral, so it can't hear this. Compare a loud, bright song in Chromium
-      and Firefox too: they should sound alike, and in each, turning the
-      extension on with every setting at its default should only make the
-      song a little louder (the limiter stage).
-- [ ] **New store art:** look at each image at the size the store shows it
-      (`store-assets/README.md`).
+These items are made from `checks.json`, the map of which checks a change
+needs (`npm run checks:tables`), so change them there. For a release, look
+at what changed since the last one.
+
+<!-- Made from checks.json by npm run checks:tables. Don't edit between these two lines. -->
+- [ ] **A change can affect how the effect sounds** (the audio graph's wiring, an effect's code, gains, fades, presets or defaults, what the popup sends to the tab and how often, or a browser change to Web Audio). Listen to reverb, echo, EQ, width and saturation with music. The audio suite keeps echo, saturation and EQ neutral, so it can't hear this. Compare a loud, bright song in Chromium and Firefox too: they should sound alike, and in each, turning the extension on with every setting at its default should only make the song a little louder (the limiter stage). It can happen in a change to `extension/spotify-main.js`, `extension/youtube-main.js`, `extension/background.js`, `extension/content.js`, `extension/spotify-bridge.js`, `extension/settings.js`, `extension/popup.html`, `extension/popup.js`.
+- [ ] **The popup's frame changed in CSS**. Look at the real popup in Firefox, with its rounded panel corners. It can happen in a change to `extension/popup.css`.
+- [ ] **The permission code changed** (the manifest's permissions, or how the extension asks for access or handles it). In each browser, also outside a release: the YouTube Music step under "The entry points" above (Firefox's YouTube Music prompt), "Permission prompts", a reload of each site with the effect on, and revoking access. It can happen in a change to `extension/background.js`, `extension/content.js`, `extension/spotify-bridge.js`, `extension/manifest.json`, `extension/popup.html`, `extension/popup.js`, `scripts/build-extension.js`.
+- [ ] **There is new store art**. Look at each image at the size the store shows it (`store-assets/README.md`). It can happen in a change to `store-assets/**`.
+<!-- The end of the part made from checks.json. -->
 
 ## After publishing
 

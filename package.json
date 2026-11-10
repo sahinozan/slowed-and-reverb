@@ -8,6 +8,7 @@
     "build:chromium": "node scripts/build-extension.js chromium",
     "build:firefox": "node scripts/build-extension.js firefox",
     "check": "npm run lint && npm test && npm run lint:firefox",
+    "checks:tables": "node scripts/render-checks-tables.js",
     "icons": "node scripts/render-icons.js",
     "lint": "eslint . --max-warnings=0 && npm run lint:whitespace",
     "lint:whitespace": "node scripts/check-whitespace.js",
