@@ -345,8 +345,9 @@ describe('Spotify main-world audio engine', () => {
   });
 
   // Spotify sets its player back to normal speed every few seconds, and to 0
-  // while it seeks. Firefox clicks at any change of speed, and putting the
-  // speed back afterward needed a silent gap, heard as a skip.
+  // while it seeks. Firefox clicks at a change of speed to or from normal
+  // speed, and putting the speed back afterward needed a silent gap, heard
+  // as a skip.
   test('keeps the effect speed through Spotify setting the player to normal speed', async () => {
     const harness = setup({ userAgent: FIREFOX_USER_AGENT });
     harness.apply(true, { ...SETTINGS, keepPitch: false });
@@ -432,6 +433,81 @@ describe('Spotify main-world audio engine', () => {
     harness.media.playbackRate = 1;
     await settle();
     assert.equal(harness.media.playbackRate, SETTINGS.speed);
+
+    harness.dom.window.close();
+  });
+
+  // Firefox's player clicks when its speed goes to normal speed, away from
+  // it, or from one side of it to the other; a change that stays on one side
+  // makes no click, so it is made at once with nothing faded out.
+  test('changes the speed at once in Firefox unless the change touches or crosses normal speed', async () => {
+    const harness = setup({ userAgent: FIREFOX_USER_AGENT });
+    harness.apply(true, { ...SETTINGS, keepPitch: false });
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    const context = FakeAudioContext.instances[0];
+    const processed = outputGains(context)[1];
+
+    context.currentTime = 2;
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 0.76 });
+    assert.equal(harness.media.playbackRate, 0.76);
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 0.95 });
+    assert.equal(harness.media.playbackRate, 0.95);
+    await settle();
+    for (const time of [2.01, 2.03, 2.06, 2.1, 2.2]) assert.equal(processed.gain.valueAt(time), 1);
+
+    // Across normal speed: the player waits until the output is silent.
+    context.currentTime = 3;
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 1.05 });
+    assert.equal(harness.media.playbackRate, 0.95);
+    await settle();
+    assert.equal(harness.media.playbackRate, 1.05);
+    assert.equal(processed.gain.valueAt(3.07), 0);
+    assert.equal(processed.gain.valueAt(3.2), 1);
+
+    // Above it, at once again.
+    context.currentTime = 4;
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 1.5 });
+    assert.equal(harness.media.playbackRate, 1.5);
+    await settle();
+    for (const time of [4.01, 4.03, 4.06, 4.1, 4.2]) assert.equal(processed.gain.valueAt(time), 1);
+
+    harness.dom.window.close();
+  });
+
+  test('fades in Firefox for a change to normal speed and away from it, and never without changing the speed', async () => {
+    const harness = setup({ userAgent: FIREFOX_USER_AGENT });
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 0.9989 });
+    harness.media.dispatchEvent(new harness.window.Event('playing'));
+    await settle();
+    const context = FakeAudioContext.instances[0];
+    const processed = outputGains(context)[1];
+
+    // Within a thousandth of the player's speed, the player isn't changed,
+    // so the output must not go silent for it either.
+    context.currentTime = 2;
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 0.9991 });
+    await settle();
+    assert.equal(harness.media.playbackRate, 0.9989);
+    for (const time of [2.01, 2.03, 2.07, 2.1, 2.2]) assert.equal(processed.gain.valueAt(time), 1);
+
+    // To normal speed: silent while the player changes.
+    context.currentTime = 3;
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 1 });
+    assert.equal(harness.media.playbackRate, 0.9989);
+    await settle();
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(processed.gain.valueAt(3.07), 0);
+    assert.equal(processed.gain.valueAt(3.2), 1);
+
+    // Away from it, by the smallest step the popup makes.
+    context.currentTime = 4;
+    harness.apply(true, { ...SETTINGS, keepPitch: false, speed: 1.01 });
+    assert.equal(harness.media.playbackRate, 1);
+    await settle();
+    assert.equal(harness.media.playbackRate, 1.01);
+    assert.equal(processed.gain.valueAt(4.07), 0);
+    assert.equal(processed.gain.valueAt(4.2), 1);
 
     harness.dom.window.close();
   });

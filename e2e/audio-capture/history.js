@@ -93,6 +93,39 @@ const HISTORY = [
     ]
   },
   {
+    // Not a defect from the past: the control for the rule that Firefox's
+    // player may change speed at once only while it stays on one side of
+    // normal speed. With the rule widened to every change of speed, the
+    // changes across normal speed are made while they can be heard.
+    id: 'speed-across-normal',
+    commit: null,
+    defect: "A click in Firefox when the speed changes from one side of normal speed to the other: the player changed while it could be heard",
+    kind: 'surrogate',
+    note: 'Never shipped. It is what the engines would do if every change of speed were made at once, as the changes away from normal speed are.',
+    browsers: ['firefox'],
+    check: 'transitions',
+    sites: ['youtube', 'spotify'],
+    mutations: [
+      {
+        file: 'youtube-main.js',
+        find: 'return FIREFOX && speedSide(media.playbackRate) !== speedSide(speed);',
+        replace: 'return false;',
+        label: 'every change of speed is made at once'
+      },
+      {
+        file: 'spotify-main.js',
+        find: 'return FIREFOX && speedSide(media.playbackRate) !== speedSide(speed);',
+        replace: 'return false;',
+        label: 'every change of speed is made at once'
+      }
+    ],
+    // In 90 changes to, from or across normal speed with no fade, in
+    // Firefox 159 and 160, 89 were over the click threshold and one, from
+    // 0.8 to normal speed, was at 0.036. Every change from one side to the
+    // other was at 0.53 or more, so the control asks for those.
+    expect: [{ code: 'click', during: ['during speed 1.1, across normal speed', 'during speed 0.9, back across normal speed'] }]
+  },
+  {
     id: '3fbb1c3',
     commit: '3fbb1c3',
     defect: 'Jumps when changes overlap: a change started from where the setting was 20 ms before it began',
