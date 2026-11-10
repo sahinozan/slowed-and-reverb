@@ -196,11 +196,9 @@ describe('an edit to a generated file', () => {
     const others = [
       'AGENTS.md',
       'README.md',
-      'RELEASE-CHECKLIST.md',
       'checks.json',
       'extension/assets/logo.svg',
       'extension/popup.css',
-      'extension/popup.html',
       'extension/popup.js',
       'extension/settings.js',
       'scripts/render-icons.js',
@@ -247,37 +245,73 @@ describe('an edit to a generated file', () => {
 describe('an edit to a part that is generated', () => {
   const checklist = read('RELEASE-CHECKLIST.md');
   const popup = read('extension/popup.html');
-  const item = '- [ ] **There is new store art**.';
-  const mark = '<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">';
+  const [list] = GENERATED[3].between;
+  const [logo] = GENERATED[4].between;
+  // A line inside each part, and one outside it.
+  const lineWith = (text, piece) => text.split('\n').find((line) => line.includes(piece));
+  const item = lineWith(checklist, '- [ ] **There is new store art**.');
+  const mark = lineWith(popup, '<svg width="128" height="128" viewBox="0 0 128 128"');
+  const title = lineWith(popup, '<title>');
+  const refusedList = 'The items under "When it applies" in RELEASE-CHECKLIST.md are generated, so an edit by hand would be lost or fail the tests. Leave them and the two marker lines as they are.';
+  const refusedLogo = "The popup's header mark in extension/popup.html is generated, so an edit by hand would be lost or fail the tests. Leave it and the two marker lines as they are.";
+  // A Codex patch to one file, from its hunks' lines.
+  const hunk = (file, ...lines) => ({ tool_name: 'apply_patch', cwd: root, tool_input: { command: ['*** Begin Patch', `*** Update File: ${file}`, ...lines, '*** End Patch', ''].join('\n') } });
 
   test('the test\'s texts are where it takes them to be', () => {
-    const [list] = GENERATED[3].between;
-    const [logo] = GENERATED[4].between;
     const inside = (text, part, piece) => text.indexOf(part.start) < text.indexOf(piece) && text.indexOf(piece) < text.indexOf(part.end);
     assert.ok(inside(checklist, list, item) && checklist.split(item).length === 2);
     assert.ok(inside(popup, logo, mark) && popup.split(mark).length === 2);
-    assert.ok(checklist.includes('# Release checklist') && popup.includes('<title>'));
+    assert.ok(checklist.split('\n').includes('# Release checklist') && checklist.split('\n').includes('## After publishing'));
+    assert.ok(title && !inside(popup, logo, title));
   });
 
   test('is refused when it changes what is between the markers', () => {
     const cases = [
-      [edit('RELEASE-CHECKLIST.md', item, '- [ ] **New art**.'), 'The items under "When it applies" in RELEASE-CHECKLIST.md are generated', 3],
-      [writeWhole('RELEASE-CHECKLIST.md', checklist.replace(item, '- [ ] **New art**.')), 'The items under "When it applies" in RELEASE-CHECKLIST.md are generated', 3],
-      [{ tool_name: 'Edit', tool_input: { ...edit('RELEASE-CHECKLIST.md', '**', '__').tool_input, replace_all: true } }, 'The items under "When it applies" in RELEASE-CHECKLIST.md are generated', 3],
-      [edit('extension/popup.html', mark, mark.replaceAll('128', '64')), "The popup's header mark in extension/popup.html is generated", 4],
-      [writeWhole('extension/popup.html', popup.replace(mark, '<svg>')), "The popup's header mark in extension/popup.html is generated", 4]
+      [edit('RELEASE-CHECKLIST.md', item, '- [ ] **New art**.'), refusedList, 3],
+      [writeWhole('RELEASE-CHECKLIST.md', checklist.replace(item, '- [ ] **New art**.')), refusedList, 3],
+      [{ tool_name: 'Edit', tool_input: { ...edit('RELEASE-CHECKLIST.md', '**', '__').tool_input, replace_all: true } }, refusedList, 3],
+      [edit('extension/popup.html', mark, mark.replaceAll('128', '64')), refusedLogo, 4],
+      [writeWhole('extension/popup.html', popup.replace(mark, '<svg>')), refusedLogo, 4],
+      // A Codex patch: a line changed, with and without lines around it,
+      // found by a line before it, and a line added inside.
+      [hunk('RELEASE-CHECKLIST.md', '@@', `-${item}`, '+- [ ] **New art**.'), refusedList, 3],
+      [hunk('RELEASE-CHECKLIST.md', '@@ ## When it applies', ` ${list.start}`, `+- [ ] **One more**.`), refusedList, 3],
+      [hunk('RELEASE-CHECKLIST.md', `@@ ${list.start}`, `-${item}`), refusedList, 3],
+      [hunk('extension/popup.html', '@@', ` ${logo.start}`, `-${mark}`, `+${mark.replaceAll('128', '64')}`), refusedLogo, 4],
+      // Lines found although the patch leaves out the spaces they start with.
+      [hunk('extension/popup.html', '@@', `-${mark.trim()}`, `+${mark.trim().replaceAll('128', '64')}`), refusedLogo, 4],
+      // Two hunks, the second inside the part.
+      [hunk('extension/popup.html', '@@', `-${title}`, `+${title} `, '@@', `-${mark}`, '+<svg>'), refusedLogo, 4]
     ];
     for (const [input, start, row] of cases) {
       const why = refusal(input);
-      assert.ok(why?.startsWith(start), `${start}: ${why}`);
+      assert.ok(why?.startsWith(start), `${JSON.stringify(input.tool_input).slice(0, 160)}: ${why}`);
       assert.ok(why.includes(`Change the source (${plain(GENERATED[row].source)}), then run ${plain(GENERATED[row].command)}.`), why);
     }
     assert.equal(run(REFUSE, cases[0][0]).status, 2);
+    assert.equal(run(REFUSE, cases[5][0]).status, 2);
+  });
+
+  test('is refused when it takes the part or a marker away', () => {
+    const part = checklist.slice(checklist.indexOf(list.start), checklist.indexOf(list.end) + list.end.length);
+    const cases = [
+      writeWhole('RELEASE-CHECKLIST.md', checklist.replace(part, '')),
+      // The mark changed and its start marker gone.
+      writeWhole('extension/popup.html', popup.replace(`${logo.start}\n`, '').replace(mark, '<svg>')),
+      edit('extension/popup.html', logo.end, ''),
+      // A second start marker, so the generator couldn't tell which.
+      edit('RELEASE-CHECKLIST.md', '# Release checklist', `# Release checklist\n\n${list.start}`),
+      hunk('RELEASE-CHECKLIST.md', '@@', `-${list.end}`),
+      { tool_name: 'apply_patch', cwd: root, tool_input: { command: '*** Begin Patch\n*** Delete File: RELEASE-CHECKLIST.md\n*** End Patch' } },
+      { tool_name: 'apply_patch', cwd: root, tool_input: { command: `*** Begin Patch\n*** Update File: extension/popup.html\n*** Move to: extension/popup-old.html\n@@\n-${title}\n+${title} \n*** End Patch` } },
+      // The file written again by a patch, without the part.
+      { tool_name: 'apply_patch', cwd: root, tool_input: { command: '*** Begin Patch\n*** Add File: RELEASE-CHECKLIST.md\n+# Release checklist\n*** End Patch' } }
+    ];
+    for (const input of cases) assert.ok(refusal(input)?.includes(' generated, so an edit by hand'), JSON.stringify(input.tool_input).slice(0, 160));
   });
 
   test('is not refused when it leaves that as it is', () => {
-    const [list] = GENERATED[3].between;
-    const moved = checklist.slice(checklist.indexOf(list.start), checklist.indexOf(list.end) + list.end.length);
+    const part = checklist.slice(checklist.indexOf(list.start), checklist.indexOf(list.end) + list.end.length);
     const allowed = [
       edit('RELEASE-CHECKLIST.md', '# Release checklist', '# The release checklist'),
       writeWhole('RELEASE-CHECKLIST.md', checklist.replace('# Release checklist', '# The release checklist')),
@@ -285,14 +319,53 @@ describe('an edit to a part that is generated', () => {
       writeWhole('extension/popup.html', popup.replace('<title>', '<title lang="en">')),
       // An edit that finds nothing changes nothing.
       edit('RELEASE-CHECKLIST.md', 'a text the checklist does not have', 'another'),
-      // Moving the part: taken out whole, then put in elsewhere.
-      writeWhole('RELEASE-CHECKLIST.md', checklist.replace(moved, '')),
-      writeWhole('RELEASE-CHECKLIST.md', `${moved}\n${checklist.replace(moved, '')}`),
-      // A Codex patch doesn't say what the file will be: the generator, run
-      // after it, and the tests catch a changed part.
-      patch(['Update File: RELEASE-CHECKLIST.md', 'Update File: extension/popup.html'])
+      // A marker quoted in a sentence isn't the marker: that is a line of
+      // its own.
+      edit('RELEASE-CHECKLIST.md', '# Release checklist', `# Release checklist\n\nThe line "${list.start}" starts the part made from the map.`),
+      writeWhole('extension/popup.html', popup.replace(title, `${title}\n  <!-- The mark is between ${logo.start} and ${logo.end}. -->`)),
+      // The part moved within the file in one edit.
+      writeWhole('RELEASE-CHECKLIST.md', `${part}\n${checklist.replace(part, '')}`),
+      // Codex patches outside the part: a line changed, a line added after
+      // the part's end, lines added at the file's end, two hunks.
+      hunk('RELEASE-CHECKLIST.md', '@@', '-# Release checklist', '+# The release checklist'),
+      hunk('RELEASE-CHECKLIST.md', '@@', ` ${list.end}`, '+', '+A line after the part.'),
+      hunk('RELEASE-CHECKLIST.md', '@@', '+', '+## One more section'),
+      hunk('RELEASE-CHECKLIST.md', '@@ ## After publishing', '+', '+A line under the heading.'),
+      hunk('extension/popup.html', '@@', `-${title}`, `+${title} `, '@@', ` ${lineWith(popup, logo.end)}`, '+          <!-- after the mark -->'),
+      // A patch that names the file among others.
+      { tool_name: 'apply_patch', cwd: root, tool_input: { command: `*** Begin Patch\n*** Update File: extension/popup.js\n@@\n-a\n+b\n*** Update File: extension/popup.html\n@@\n-${title}\n+${title} \n*** Add File: extension/new.js\n+new\n*** End Patch` } },
+      // A patch whose lines aren't in the file can't be followed, and
+      // wouldn't apply.
+      hunk('RELEASE-CHECKLIST.md', '@@', '-a line the checklist does not have', '+another'),
+      hunk('extension/popup.html', '@@ a line the popup does not have', `-${mark}`, '+<svg>'),
+      hunk('extension/popup.html', 'neither a hunk nor a line of one')
     ];
-    for (const input of allowed) assert.equal(refusal(input), null, JSON.stringify(input.tool_input).slice(0, 120));
+    for (const input of allowed) assert.equal(refusal(input), null, JSON.stringify(input.tool_input).slice(0, 160));
+  });
+
+  test('a patch is followed as Codex applies it', () => {
+    // Checked on a file of its own: what the patch leaves, by the part
+    // staying whole or not.
+    const base = folder();
+    fs.mkdirSync(path.join(base, '.git'));
+    const file = path.join(base, 'RELEASE-CHECKLIST.md');
+    const text = ['one', 'two', list.start, 'made', 'made too', list.end, 'two', 'three', ''].join('\n');
+    write(file, text);
+    const follows = (...lines) => refusal({ tool_name: 'apply_patch', cwd: base, tool_input: { command: ['*** Begin Patch', '*** Update File: RELEASE-CHECKLIST.md', ...lines, '*** End Patch'].join('\n') } }, base);
+    // The first "two" is before the part and the second after it: a hunk
+    // is looked for from where the last one ended.
+    assert.equal(follows('@@', '-two', '+2', '@@', '-two', '+2'), null);
+    assert.equal(follows('@@', '-one', '+1', '@@', '-three', '+3'), null);
+    assert.equal(follows('@@ made too', ` ${list.end}`, '-two', '+2'), null);
+    // An empty line in a hunk is a line kept, and a hunk's last empty
+    // line may be one past the file's end.
+    assert.equal(follows('@@', '-three', '+3', ''), null);
+    assert.equal(follows('@@', '-three', '+3', '', ''), null);
+    assert.ok(follows('@@', ' made', '-made too'));
+    assert.ok(follows('@@', '-made', '+made again', '@@', '-three', '+3'));
+    assert.ok(follows('@@ two', '+made first', ' made'));
+    assert.ok(follows('@@', '-made   ', '+made again'));
+    assert.equal(read('RELEASE-CHECKLIST.md', base), text);
   });
 });
 
@@ -313,6 +386,30 @@ function repository() {
     inside: worktree(path.join(main, '.claude', 'worktrees', 'inside'), 'inside')
   };
 }
+
+describe('a generated file reached by another name', () => {
+  test('is refused through a link to its folder', () => {
+    const links = folder();
+    fs.symlinkSync(path.join(root, 'docs'), path.join(links, 'pages'));
+    fs.symlinkSync(root, path.join(links, 'checkout'));
+    for (const file of [path.join(links, 'pages', 'checks.md'), path.join(links, 'checkout', 'site', 'popup', 'popup.js'), path.join(links, 'checkout', 'dist', 'chromium', 'popup.js')]) {
+      for (const input of [edit(file, 'a', 'b', ''), writeWhole(file, 'new', ''), patch([`Update File: ${file}`], links)]) {
+        assert.ok(refusal(input)?.includes(' is generated'), `${input.tool_name} of ${file}`);
+      }
+    }
+    assert.ok(refusal(patch(['Update File: pages/checks.md'], links))?.startsWith('docs/checks.md is generated'));
+    assert.equal(refusal(edit(path.join(links, 'checkout', 'extension', 'popup.js'), 'a', 'b', '')), null);
+    assert.equal(refusal(edit(path.join(links, 'pages', 'notes.md'), 'a', 'b', '')), null);
+  });
+
+  test('is refused in other letter case, where the file system takes the two for one file', () => {
+    const one = fs.existsSync(path.join(root, 'DOCS', 'CHECKS.MD'));
+    for (const file of ['DOCS/CHECKS.MD', 'Site/Popup/Popup.JS', 'release-checklist.MD']) {
+      const input = file.startsWith('release') ? writeWhole(file, '# Release checklist\n') : edit(file);
+      assert.equal(refusal(input) !== null, one, file);
+    }
+  });
+});
 
 describe('the checkout a file is in', () => {
   test('is found from the file, whichever checkout the hook runs from', () => {
@@ -336,6 +433,14 @@ describe('the checkout a file is in', () => {
     for (const checkout of [other.main, other.beside, other.inside, loose]) {
       assert.equal(refusal(edit('site/popup/popup.js', 'a', 'b', checkout), main), null, checkout);
     }
+    // A checkout whose git folder is somewhere else (git init
+    // --separate-git-dir) is a repository of its own.
+    const apart = path.join(loose, 'apart');
+    fs.mkdirSync(path.join(loose, 'apart.git'));
+    write(path.join(apart, '.git'), `gitdir: ${path.join(loose, 'apart.git')}\n`);
+    assert.ok(refusal(edit('site/popup/popup.js', 'a', 'b', apart), apart)?.startsWith('site/popup/popup.js is generated'));
+    assert.equal(refusal(edit('site/popup/popup.js', 'a', 'b', apart), main), null);
+    assert.equal(refusal(edit('site/popup/popup.js', 'a', 'b', main), apart), null);
     // A .git file that names no repository, as a broken worktree has.
     write(path.join(loose, 'broken', '.git'), 'gitdir: /nowhere/at/all\n');
     assert.equal(refusal(edit('site/popup/popup.js', 'a', 'b', path.join(loose, 'broken')), main), null);
@@ -518,13 +623,12 @@ describe('the settings that run the hooks', () => {
 
   test('the hooks load only Node\'s own modules and each other, and nothing that reaches the network', () => {
     const scripts = tracked.filter((file) => file.startsWith(`${HOOKS}/`));
-    assert.deepEqual(scripts, [`${HOOKS}/generated-files.js`, REFUSE, REGENERATE]);
+    assert.deepEqual(scripts, [`${HOOKS}/codex-patch.js`, `${HOOKS}/generated-files.js`, REFUSE, REGENERATE]);
     for (const script of scripts) {
       const text = read(script);
       const loaded = [...text.matchAll(/\brequire\(([^)]*)\)/g)].map((match) => match[1]);
-      assert.ok(loaded.length > 0, script);
       for (const name of loaded) {
-        assert.ok(["'node:fs'", "'node:path'", "'node:child_process'", "'./generated-files'"].includes(name), `${script} loads ${name}`);
+        assert.ok(["'node:fs'", "'node:path'", "'node:child_process'", "'./codex-patch'", "'./generated-files'"].includes(name), `${script} loads ${name}`);
       }
       assert.doesNotMatch(text, /\bimport\b|\bfetch\(|https?:|node:(http|https|http2|net|tls|dgram|dns)\b/, script);
     }
@@ -537,13 +641,16 @@ describe('the settings that run the hooks', () => {
     const { scripts } = JSON.parse(read('package.json'));
     assert.deepEqual(Object.keys(claude.permissions), ['allow', 'ask', 'deny']);
     for (const rule of claude.permissions.allow) {
-      const name = /^Bash\(npm (test)(?: \*)?\)$/.exec(rule)?.[1] ?? /^Bash\(npm run ([\w:-]+)(?: \*)?\)$/.exec(rule)?.[1];
+      // The command alone, or with what follows -- handed to the script.
+      // A * straight after the command would also take npm's own options,
+      // such as --prefix, which runs another folder's script.
+      const name = /^Bash\(npm (test)(?: -- \*)?\)$/.exec(rule)?.[1] ?? /^Bash\(npm run ([\w:-]+)(?: -- \*)?\)$/.exec(rule)?.[1];
       assert.ok(name && scripts[name], `${rule} is not one of package.json's scripts`);
       // Nothing that plays sound, reaches the network, starts a server or
       // writes the release or the store's images.
       assert.doesNotMatch(name, /^(test:audio|test:firefox|test:watch|audit|release|icons|store|site:serve)/, rule);
     }
-    assert.ok(claude.permissions.allow.includes('Bash(npm run check)') && claude.permissions.allow.includes('Bash(npm test *)'));
+    assert.ok(claude.permissions.allow.includes('Bash(npm run check)') && claude.permissions.allow.includes('Bash(npm test)'));
     assert.deepEqual(claude.permissions.ask, ['Edit(audit-exceptions.json)']);
     assert.ok(tracked.includes('audit-exceptions.json'));
     assert.deepEqual(claude.permissions.deny, [

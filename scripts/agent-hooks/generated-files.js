@@ -12,10 +12,13 @@
 // They only see an agent's edit tools. A command that writes a file, as the
 // generators themselves do, isn't stopped. They read the edit from standard
 // input, read and write files in this repository only, load nothing but
-// Node's own modules and make no network requests.
+// Node's own modules and each other, and make no network requests.
+// Claude Code loads its settings only in a session started at a checkout's
+// root, so a session started in a folder below it has no hooks.
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { filesNamed, textAfter: textAfterPatch } = require('./codex-patch');
 
 // One entry for each row of the "Generated files" table in AGENTS.md, in
 // the table's order, with the row's three cells as they are written there
@@ -134,15 +137,17 @@ function checkoutOf(file) {
   }
 }
 
-// The repository a checkout belongs to. A worktree's .git is a file that
-// names its own folder inside the repository's .git, and a file there names
-// the way back to the repository's.
+// The repository a checkout belongs to, as its git folder. A checkout's
+// .git is that folder, or a file that names it. A worktree's names its own
+// folder inside the repository's, where a file, commondir, names the way
+// back to the repository's.
 function repositoryOf(checkout) {
   try {
     const dotGit = path.join(checkout, '.git');
     if (fs.statSync(dotGit).isDirectory()) return fs.realpathSync(dotGit);
     const own = path.resolve(checkout, /^gitdir: (.+)$/m.exec(fs.readFileSync(dotGit, 'utf8'))[1].trim());
-    return fs.realpathSync(path.resolve(own, fs.readFileSync(path.join(own, 'commondir'), 'utf8').trim()));
+    const back = path.join(own, 'commondir');
+    return fs.realpathSync(fs.existsSync(back) ? path.resolve(own, fs.readFileSync(back, 'utf8').trim()) : own);
   } catch {
     return null;
   }
@@ -162,20 +167,50 @@ function place(file, home = HOME) {
   return { checkout, file: path.relative(checkout, file).split(path.sep).join('/') };
 }
 
-// What a hook is given on standard input, and the files the edit names.
-// Claude Code's Edit and Write name one file. Codex's apply_patch names each
-// file in its patch, from the session's folder.
+// A path as the file system has it: links followed and, where names
+// ignore case, spelled as the file is. What isn't there yet keeps the
+// spelling given, under the nearest folder that is.
+function real(file) {
+  const missing = [];
+  for (let at = file; ; at = path.dirname(at)) {
+    try {
+      return path.join(fs.realpathSync.native(at), ...missing);
+    } catch {
+      if (at === path.dirname(at)) return file;
+      missing.unshift(path.basename(at));
+    }
+  }
+}
+
+// What a hook is given on standard input.
 function readInput() {
   return JSON.parse(fs.readFileSync(0, 'utf8'));
 }
 
-function editedFiles(input) {
+// The edit a hook is given, read once: the files it names and, for one of
+// them, the text it will hold afterward. Claude Code's Edit and Write name
+// one file; Write gives its text whole, and Edit a text to find and the
+// text to put there. Codex's apply_patch names each file in its patch, from
+// the session's folder. The text is null when the edit doesn't say or
+// can't be followed, and '' when it takes the file away.
+function readEdit(input) {
   const given = input?.tool_input ?? {};
   const from = typeof input?.cwd === 'string' ? input.cwd : process.cwd();
-  if (typeof given.file_path === 'string') return [path.resolve(from, given.file_path)];
+  const whole = (file) => real(path.resolve(from, file));
+  if (typeof given.file_path === 'string') {
+    const textAfter = (file, before) => {
+      if (typeof given.content === 'string') return given.content;
+      if (typeof given.old_string !== 'string' || typeof given.new_string !== 'string') return null;
+      if (given.replace_all) return before.split(given.old_string).join(given.new_string);
+      return before.replace(given.old_string, () => given.new_string);
+    };
+    return { files: [whole(given.file_path)], textAfter };
+  }
   const patch = [given.command ?? []].flat().join('\n');
-  const named = patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm);
-  return [...new Set([...named].map((match) => path.resolve(from, match[1].trim())))];
+  return {
+    files: [...new Set(filesNamed(patch, whole))],
+    textAfter: (file, before) => textAfterPatch(patch, whole, file, before)
+  };
 }
 
-module.exports = { GENERATED, HOME, editedFiles, matches, matchesAny, place, readInput };
+module.exports = { GENERATED, HOME, matches, matchesAny, place, readEdit, readInput };

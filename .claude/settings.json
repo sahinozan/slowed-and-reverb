@@ -4,17 +4,21 @@
       "Bash(npm run lint)",
       "Bash(npm run lint:whitespace)",
       "Bash(npm run lint:firefox)",
-      "Bash(npm test *)",
+      "Bash(npm test)",
+      "Bash(npm test -- *)",
       "Bash(npm run check)",
-      "Bash(npm run checks:for *)",
+      "Bash(npm run checks:for)",
+      "Bash(npm run checks:for -- *)",
       "Bash(npm run checks:tables)",
       "Bash(npm run site:popup)",
       "Bash(npm run site:stamp)",
       "Bash(npm run build:chromium)",
       "Bash(npm run build:firefox)",
       "Bash(npm run package)",
-      "Bash(npm run test:e2e *)",
-      "Bash(npm run test:ui *)"
+      "Bash(npm run test:e2e)",
+      "Bash(npm run test:e2e -- *)",
+      "Bash(npm run test:ui)",
+      "Bash(npm run test:ui -- *)"
     ],
     "ask": [
       "Edit(audit-exceptions.json)"

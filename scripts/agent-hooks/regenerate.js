@@ -9,7 +9,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { GENERATED, HOME, editedFiles, matches, matchesAny, place, readInput } = require('./generated-files');
+const { GENERATED, HOME, matches, matchesAny, place, readEdit, readInput } = require('./generated-files');
 
 const plain = (cell) => cell.replaceAll('`', '');
 
@@ -36,7 +36,7 @@ function contents(checkout, patterns) {
 function regenerate(input, home = HOME) {
   const lines = [];
   const done = new Set();
-  for (const edited of editedFiles(input)) {
+  for (const edited of readEdit(input).files) {
     const at = place(edited, home);
     if (!at) continue;
     for (const { command, regenerate: generator } of GENERATED) {
@@ -67,4 +67,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { regenerate, scriptName: path.basename(__filename) };
+module.exports = { regenerate };
