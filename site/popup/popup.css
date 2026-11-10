@@ -445,6 +445,9 @@ h1 {
 .effect-tab-btn:disabled,
 .theme-picker-btn:disabled,
 #preset-name-input:disabled,
+.speed-step-btn:disabled,
+#speed-input:disabled,
+#speed-input:disabled + .speed-unit,
 input[type="range"]:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -882,6 +885,78 @@ input[type="range"]:disabled {
   font-weight: 400;
   color: var(--accent);
   font-size: 12px;
+}
+
+/* The speed's − and + buttons with its number field between them, at the
+   right of the Speed label. They are taller than the label's line, and the
+   margins take that back so the row is no taller than it was: the popup has
+   only a few pixels to spare (see e2e/popup-geometry.js). More is taken
+   above than below, to stay clear of the slider's thumb under them. */
+.speed-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  margin: -4px 0 -2px;
+}
+
+.speed-step-btn {
+  width: 24px;
+  height: 22px;
+  flex: none;
+  background: var(--bg);
+  border: 1.5px solid hsl(var(--accent-hsl) / 0.35);
+  border-radius: var(--radius);
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  /* Not "all": that would also delay the buttons' visibility when something
+     above them is hidden. */
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.speed-step-btn:hover:not(:disabled) {
+  background: hsl(var(--accent-hsl) / 0.2);
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.speed-field {
+  position: relative;
+  display: flex;
+}
+
+/* Four characters wide (0.83), with room at the right for the x, which sits
+   inside the field's border but outside what can be typed over. */
+#speed-input {
+  width: calc(5ch + 19px);
+  height: 22px;
+  padding: 0 calc(1ch + 9px) 0 7px;
+  background: var(--bg);
+  border: 1.5px solid hsl(var(--accent-hsl) / 0.4);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: right;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+#speed-input:focus {
+  border-color: var(--accent);
+}
+
+.speed-unit {
+  position: absolute;
+  top: 0;
+  right: 8.5px;
+  font-size: 12px;
+  line-height: 22px;
+  color: var(--accent);
+  pointer-events: none;
 }
 
 input[type="range"] {

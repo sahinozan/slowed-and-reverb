@@ -78,14 +78,25 @@ test('loads the real popup page and applies audio settings to the active tab', a
   await popup.locator('#speed-slider').fill('0.8');
   await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
 
+  // The − and + buttons and the field set the speed in steps of 0.01, by the
+  // names a screen reader gives them, and the player follows.
+  await popup.getByRole('button', { name: 'Faster by 0.01x' }).click();
+  await expect(popup.locator('#speed-slider')).toHaveValue('0.81');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.81);
+  await popup.getByRole('spinbutton', { name: 'Exact speed' }).fill('0.83');
+  await popup.keyboard.press('Enter');
+  await expect(popup.locator('#speed-slider')).toHaveValue('0.83');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.83);
+
   await popup.locator('.header-power .switch-slider').click();
   await expect(popup.getByLabel('Toggle audio effects')).not.toBeChecked();
   await expect(popup.getByText('Off', { exact: true })).toBeVisible();
   await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 1);
 
   const stored = await extension.serviceWorker.evaluate(() => chrome.storage.local.get());
-  // The last settings: Reset Defaults, then the speed moved back to 0.8.
-  expect(stored.speed).toBe(0.8);
+  // The last settings: Reset Defaults, then the speed moved back to 0.8 and
+  // on to 0.83.
+  expect(stored.speed).toBe(0.83);
   expect(stored.reverb).toBe(0);
   expect(stored.uiTheme).toBe('midnight');
 });

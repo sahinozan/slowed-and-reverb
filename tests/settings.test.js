@@ -45,6 +45,10 @@ describe('shared settings', () => {
   test('compares speeds with a tolerance and everything else exactly', () => {
     const { PRESETS, match } = loadSettings();
     assert.ok(match(PRESETS.slowed, { ...PRESETS.slowed, speed: 0.8000001 }));
+    // The popup sets speeds in steps of 0.01: one step apart is a different
+    // speed, and the same speed reached by adding steps is the same.
+    assert.ok(!match(PRESETS.slowed, { ...PRESETS.slowed, speed: 0.81 }));
+    assert.ok(match({ speed: 0.83 }, { speed: 0.8 + 0.01 + 0.01 + 0.01 }));
     assert.ok(match({ speed: 1 }, {}));
     assert.ok(!match(PRESETS.slowed, PRESETS.nightcore));
     assert.ok(!match(PRESETS.slowed, { ...PRESETS.slowed, reverb: 45 }));

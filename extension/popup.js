@@ -83,9 +83,23 @@ const EQ_BANDS = [
   { band: 'high', key: 'eqHigh', x: 260 }
 ];
 
+const [SPEED_MIN, SPEED_MAX] = SlowedReverbSettings.BOUNDS.speed;
+// The field and the − and + buttons change the speed by 0.01x. The slider's
+// own moves (a drag, a click on its track, its keys) stay on the 0.05x marks.
+// Both are counted in hundredths, so 0.83 + 0.01 is 0.84 and not
+// 0.8400000000000001.
+const SPEED_SLIDER_MARK = 5;
+const SPEED_SLIDER_KEYS = Object.freeze({ ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 });
+// How long a − or + button is held before it starts to repeat, and how fast.
+const STEP_HOLD_DELAY_MS = 400;
+const STEP_REPEAT_MS = 60;
 const el = (id) => document.getElementById(id);
 const toInt = (value) => Number.parseInt(value, 10);
 const percent = (value) => `(${value}%)`;
+// A speed as whole hundredths. 0.575 is stored as a little less than that,
+// and times 100 it is 57.49999999999999, which would round down; rounding
+// the product to 12 digits first makes it the 57.5 that was meant.
+const toHundredths = (speed) => Math.round(Number((speed * 100).toPrecision(12)));
 
 async function recallTabState(tabId, url) {
   return api.runtime
@@ -93,8 +107,13 @@ async function recallTabState(tabId, url) {
     .catch(() => null);
 }
 
+// The tab the popup was opened on. The last one found is kept for the moment
+// the popup closes, when there is no time to ask again (sendOnClose).
+let lastActiveTab = null;
+
 async function getActiveTab() {
   const [tab] = await api.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id !== undefined) lastActiveTab = tab;
   return tab;
 }
 
@@ -216,6 +235,10 @@ const els = {
   presetNameInput: el('preset-name-input'),
   savePresetBtn: el('save-preset-btn'),
   customPresetsList: el('custom-presets-list'),
+  speedStepper: el('speed-stepper'),
+  speedInput: el('speed-input'),
+  speedDown: el('speed-down-btn'),
+  speedUp: el('speed-up-btn'),
   keepPitch: el('keep-pitch-toggle'),
   pitchWarning: el('pitch-warning-banner'),
   advancedBadge: el('advanced-badge'),
@@ -233,7 +256,9 @@ const SLIDERS = [
   {
     key: 'speed',
     parse: Number.parseFloat,
-    format: (value) => `(${value.toFixed(2)}x)`,
+    // The field next to the label shows the speed, so the label has nothing
+    // to add to it except on a live stream.
+    format: () => '',
     liveLabel: '(unavailable while live)',
     pinnedWhenLive: true
   },
@@ -253,6 +278,10 @@ const SLIDERS = [
   output: el(`${slider.key}-value`)
 }));
 
+// The slider holds the speed. The field and the buttons read it and set it.
+const speedSlider = el('speed-slider');
+const speedStepControls = [els.speedInput, els.speedDown, els.speedUp];
+
 const eqHandles = new Map(EQ_BANDS.map(({ band }) => [band, el(`eq-handle-${band}`)]));
 const eqValueLabels = new Map(EQ_BANDS.map(({ band }) => [band, el(`eq-${band}-value`)]));
 
@@ -270,6 +299,7 @@ const blockableControls = [
   els.savePresetBtn,
   themePickerBtn,
   ...SLIDERS.map((slider) => slider.input),
+  ...speedStepControls,
   ...presetButtons,
   ...tabButtons,
   ...effectTabButtons
@@ -282,6 +312,9 @@ let activePresetId = null;
 let blocked = false;
 let liveBlocked = false;
 let applyRevision = 0;
+let applyBusy = false;
+let unsentApply = null;
+let shownSpeed = DEFAULT_SETTINGS.speed;
 let presetWriteQueue = Promise.resolve();
 let spotifyPermissionTabId = null;
 let tabOnSpotify = false;
@@ -550,7 +583,63 @@ function updateValueDisplays() {
         ? slider.liveLabel
         : slider.format(slider.parse(slider.input.value));
   }
+  showSpeed();
   updateAdvancedBadge();
+}
+
+// The field follows the slider, and both are read out as the speed with its x.
+function showSpeed() {
+  shownSpeed = Number.parseFloat(speedSlider.value);
+  const text = shownSpeed.toFixed(2);
+  els.speedInput.value = text;
+  els.speedInput.setAttribute('aria-valuenow', String(shownSpeed));
+  els.speedInput.setAttribute('aria-valuetext', `${text}x`);
+  speedSlider.setAttribute('aria-valuetext', `${text}x`);
+}
+
+// What typed text means as a speed: a plain number, with a point or a comma,
+// with or without an x after it. Anything else isn't a speed.
+function parseSpeed(text) {
+  const typed = /^([+-]?(?:\d+[.,]?\d*|[.,]\d+))\s*[x×]?$/i.exec(text.trim());
+  return typed ? Number(typed[1].replace(',', '.')) : null;
+}
+
+// The nearest speed the popup can show: two decimals, inside the range.
+function validSpeed(speed) {
+  return Math.min(SPEED_MAX, Math.max(SPEED_MIN, toHundredths(speed) / 100));
+}
+
+// The slider's 0.05x mark nearest to a speed, or the next one up or down.
+function sliderMark(speed, direction = 0) {
+  const marks = toHundredths(speed) / SPEED_SLIDER_MARK;
+  const mark = direction > 0 ? Math.floor(marks) + 1
+    : direction < 0 ? Math.ceil(marks) - 1
+    : Math.round(marks);
+  return (mark * SPEED_SLIDER_MARK) / 100;
+}
+
+// Moves the slider and the field to a speed and, if that changed the speed,
+// sends it.
+function changeSpeed(speed) {
+  const next = validSpeed(speed);
+  const changed = toHundredths(next) !== toHundredths(shownSpeed);
+  speedSlider.value = String(next);
+  updateValueDisplays();
+  if (changed) saveAndApplySettings(true);
+  return changed;
+}
+
+function stepSpeed(direction) {
+  return changeSpeed((toHundredths(shownSpeed) + direction) / 100);
+}
+
+// Takes what was typed in the field. Text that isn't a speed is dropped, and
+// the field goes back to the speed in use.
+function commitSpeedField() {
+  if (els.speedInput.disabled) return;
+  const typed = parseSpeed(els.speedInput.value);
+  if (typed === null) showSpeed();
+  else changeSpeed(typed);
 }
 
 function updateAdvancedBadge() {
@@ -564,23 +653,79 @@ function updateAdvancedBadge() {
   );
 }
 
-async function saveAndApplySettings(enabled) {
+// Saves the settings the popup shows and sends them to the tab.
+//
+// The newest change that hasn't been sent is kept in one place, `unsentApply`,
+// and a newer change takes its place there. One change is on its way at a
+// time, and the next is sent when its answer has come. So holding a button or
+// a key gives the tab the newest settings, always including the last, without
+// a message for every step before them.
+function saveAndApplySettings(enabled) {
   // Enforce blocking here because every preset and control funnels through this path.
   const active = blocked ? false : enabled;
-  const settings = getCurrentSettings();
-  const revision = ++applyRevision;
+  const request = { settings: getCurrentSettings(), enabled: active, revision: ++applyRevision };
 
   setPowerUI(active);
 
-  const tab = await getActiveTab();
-  if (tab?.id === undefined) return null;
+  if (!unsentApply) {
+    unsentApply = {};
+    unsentApply.result = new Promise((resolve, reject) => {
+      unsentApply.resolve = resolve;
+      unsentApply.reject = reject;
+    });
+  }
+  unsentApply.request = request;
+  const { result } = unsentApply;
 
+  if (!applyBusy) sendUnsentApplies();
+  return result;
+}
+
+// Sends what is waiting, one change at a time. A change stays in
+// `unsentApply` until the moment it is handed to the browser, so that closing
+// the popup can still send it (sendOnClose).
+async function sendUnsentApplies() {
+  applyBusy = true;
+  try {
+    while (unsentApply) {
+      let apply = null;
+      try {
+        const tab = await getActiveTab();
+        // The newest change by now: one made during the lookup has taken
+        // the place of the one the lookup began for.
+        apply = takeUnsentApply();
+        if (!apply) continue;
+        if (tab?.id === undefined) {
+          apply.resolve(null);
+          continue;
+        }
+        apply.resolve(await sendApply(tab, apply.request));
+      } catch (error) {
+        (apply ?? takeUnsentApply())?.reject(error);
+      }
+    }
+  } finally {
+    applyBusy = false;
+  }
+}
+
+function takeUnsentApply() {
+  const apply = unsentApply;
+  unsentApply = null;
+  return apply;
+}
+
+function applyMessage(tab, { settings, enabled }) {
+  return { type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled };
+}
+
+async function sendApply(tab, request) {
   const reportsBefore = tabReports;
   const result = await api.runtime
-    .sendMessage({ type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled: active })
+    .sendMessage(applyMessage(tab, request))
     .catch(() => ({ success: false, blocked: true, blockReason: 'unsupported' }));
 
-  if (revision !== applyRevision) return result;
+  if (request.revision !== applyRevision) return result;
 
   if (!result?.success) {
     setBlocked(true, result?.blockReason ?? 'unsupported');
@@ -591,6 +736,15 @@ async function saveAndApplySettings(enabled) {
   }
 
   return result;
+}
+
+// Closing the popup ends its timers and its waits, so a change that hasn't
+// been sent yet goes now, without them, to the tab the popup last found.
+function sendOnClose() {
+  if (!unsentApply || !lastActiveTab) return;
+  const apply = takeUnsentApply();
+  api.runtime.sendMessage(applyMessage(lastActiveTab, apply.request)).catch(() => {});
+  apply.resolve(null);
 }
 
 function dbToY(db) {
@@ -760,6 +914,9 @@ function setLiveState(live) {
   for (const slider of SLIDERS) {
     if (slider.pinnedWhenLive) slider.input.disabled = live || blocked;
   }
+  // The label says why, so the field and the buttons make way for it.
+  els.speedStepper.hidden = live;
+  for (const control of speedStepControls) control.disabled = live || blocked;
   els.keepPitch.disabled = live || blocked;
 
   updateValueDisplays();
@@ -1047,13 +1204,91 @@ function renderCustomPresets() {
   updateCustomPresetsScrollGap();
 }
 
+// A − or + button steps once for a click, and keeps stepping while it is
+// held down.
+function bindSpeedStepButton(button, direction) {
+  let timer = null;
+  // Set once a hold has stepped, so the click that ends it doesn't step again.
+  let held = false;
+
+  const stop = () => {
+    window.clearTimeout(timer);
+    timer = null;
+  };
+  const repeat = () => {
+    timer = null;
+    if (button.disabled) return;
+    held = true;
+    // At the end of the range there is nothing left to repeat.
+    if (stepSpeed(direction)) timer = window.setTimeout(repeat, STEP_REPEAT_MS);
+  };
+
+  button.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || button.disabled) return;
+    stop();
+    held = false;
+    timer = window.setTimeout(repeat, STEP_HOLD_DELAY_MS);
+  });
+  for (const type of ['pointerup', 'pointerleave', 'pointercancel', 'blur']) {
+    button.addEventListener(type, stop);
+  }
+  button.addEventListener('click', (event) => {
+    // A click made with the keyboard (its detail is 0) has no hold before it.
+    const endsHold = held && event.detail !== 0;
+    held = false;
+    if (!endsHold) stepSpeed(direction);
+  });
+}
+
+function bindSpeedControls() {
+  // The slider's step is 0.01 so that it can show any speed, and a drag, a
+  // click on its track or Page Up moves it by that. Its own moves stay on the
+  // 0.05x marks: each goes to the nearest one.
+  // Moving the slider turns the effect on, as moving any slider does, also
+  // when it ends on the speed it had: the website's fader shows 1.00x while
+  // the effect is off, and moved to the speed the popup still holds, it
+  // gives the slider that same speed again.
+  speedSlider.addEventListener('input', () => {
+    const changed = changeSpeed(sliderMark(Number.parseFloat(speedSlider.value)));
+    if (!changed && !els.power.checked) saveAndApplySettings(true);
+  });
+  // Its arrow keys would move it by 0.01 and be put straight back, so they
+  // go to the next mark here.
+  speedSlider.addEventListener('keydown', (event) => {
+    if (!Object.hasOwn(SPEED_SLIDER_KEYS, event.key)) return;
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    changeSpeed(sliderMark(shownSpeed, SPEED_SLIDER_KEYS[event.key]));
+  });
+
+  els.speedInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      commitSpeedField();
+    } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      // From what is typed, if that is a speed.
+      const from = validSpeed(parseSpeed(els.speedInput.value) ?? shownSpeed);
+      const direction = event.key === 'ArrowUp' ? 1 : -1;
+      changeSpeed((toHundredths(from) + direction) / 100);
+    }
+  });
+  els.speedInput.addEventListener('blur', commitSpeedField);
+
+  bindSpeedStepButton(els.speedDown, -1);
+  bindSpeedStepButton(els.speedUp, 1);
+
+  window.addEventListener('pagehide', sendOnClose);
+}
+
 function bindControls() {
   for (const slider of SLIDERS) {
+    if (slider.input === speedSlider) continue;
     slider.input.addEventListener('input', () => {
       updateValueDisplays();
       saveAndApplySettings(true);
     });
   }
+  bindSpeedControls();
 
   els.keepPitch.addEventListener('change', () => {
     els.pitchWarning.hidden = !els.keepPitch.checked;
