@@ -88,6 +88,34 @@ function fakeTab(start = {}) {
   };
 }
 
+// Holds the answers to the changes the popup sends (APPLY_TO_TAB) on their
+// way back to it, until the test lets them go. The tab has each change at
+// once. An answer held in the tab itself would meet the half second the
+// fake runtime gives a listener to answer in; this one doesn't.
+function heldApplies(window) {
+  const { runtime } = window.chrome;
+  const send = runtime.sendMessage.bind(runtime);
+  const held = [];
+  let holding = false;
+  runtime.sendMessage = async (message, ...rest) => {
+    const answer = await send(message, ...rest);
+    if (holding && message?.type === 'APPLY_TO_TAB') {
+      await new Promise((resolve) => held.push(resolve));
+    }
+    return answer;
+  };
+  return {
+    held,
+    hold() {
+      holding = true;
+    },
+    letGo() {
+      holding = false;
+      for (const answer of held.splice(0)) answer();
+    }
+  };
+}
+
 // Puts the popup's timers in the test's hands, so a hold or a wait takes
 // no real time and ends exactly when the test says.
 function fakeTimers(window) {
@@ -2105,16 +2133,22 @@ describe('popup behavior', () => {
     // replaced what was shown, so the popup asks again once that has come.
     test('shows the tab again when what it waited for was the preset a new tab starts with', async (t) => {
       const tab = fakeTab({ enabled: false });
-      tab.hold('UPDATE_AUDIO');
-      const { harness, timers } = await open(t, tab);
+      let applies;
+      const { harness, timers } = await open(t, tab, {
+        beforeLoad(window) {
+          applies = heldApplies(window);
+          applies.hold();
+        }
+      });
       assert.equal(audioUpdates(harness).length, 1);
+      assert.equal(applies.held.length, 1);
 
       timers.advance(5000);
       await settle();
       assert.equal(shown(harness).panel, NOT_RESPONDING);
       assert.equal(shown(harness).usable, false);
 
-      tab.letGo();
+      applies.letGo();
       await settle();
       assert.equal(shown(harness).panel, null);
       assert.equal(shown(harness).usable, true);
@@ -2204,6 +2238,100 @@ describe('popup behavior', () => {
       assert.equal(shown(harness).on, true);
 
       letRecall();
+      await settle();
+      assert.equal(shown(harness).speed, '1.20');
+      assert.equal(shown(harness).on, true);
+    });
+
+    // The first look's second asking is still waiting, with its own time
+    // limit running, when the reload starts a new look. That limit must not
+    // put the notice over what the new look shows.
+    test('leaves the reloaded page shown when an older asking runs out of time', async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      tab.hold('GET_STATE');
+      const { harness, timers } = await open(t, tab);
+      timers.advance(5000);
+      await settle();
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+
+      // The first answer comes after all, and the look asks again; that
+      // question is held too.
+      tab.letGo(1);
+      await settle();
+      assert.equal(tab.held.length, 1);
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+
+      tab.hold(null);
+      tab.state.settings = { ...DEFAULT_SETTINGS, speed: 1.2 };
+      harness.window.document.getElementById('reload-btn').click();
+      await settle();
+      assert.equal(shown(harness).panel, null);
+      assert.equal(shown(harness).speed, '1.20');
+
+      timers.advance(5000);
+      await settle();
+      assert.equal(shown(harness).panel, null);
+      assert.equal(shown(harness).speed, '1.20');
+      assert.equal(shown(harness).usable, true);
+    });
+
+    // Once the popup has stopped waiting, a shortcut starts a look of its
+    // own. The first look's answer is then the older one twice over, and
+    // must not enable the controls while the new look is still waiting.
+    test('a shortcut then starts a new look, which the first answer, coming late, does not cut short', async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      tab.hold('GET_STATE');
+      const { harness, timers } = await open(t, tab);
+      timers.advance(5000);
+      await settle();
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+
+      // The shortcut is answered; the popup's new question is held.
+      tab.hold(null);
+      await harness.events.command.emit('toggle-nightcore');
+      tab.hold('GET_STATE');
+      await settle();
+      assert.equal(tab.state.settings.speed, 1.2);
+      assert.equal(tab.held.length, 2);
+
+      // The first answer, 0.80x and from before the shortcut.
+      tab.letGo(1);
+      await settle();
+      assert.equal(shown(harness).usable, false);
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+      assert.equal(audioUpdates(harness).length, 1);
+
+      // The new look has a time limit of its own.
+      timers.advance(5000);
+      await settle();
+      assert.equal(shown(harness).usable, false);
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+
+      tab.letGo();
+      await settle();
+      assert.equal(shown(harness).panel, null);
+      assert.equal(shown(harness).usable, true);
+      assert.equal(shown(harness).on, true);
+      assert.equal(shown(harness).speed, '1.20');
+    });
+
+    test('a shortcut the page does answer takes the notice away', async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      tab.hold('GET_STATE');
+      const { harness, timers } = await open(t, tab);
+      timers.advance(5000);
+      await settle();
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+
+      // From here on the page answers; the first question stays unanswered.
+      tab.hold(null);
+      await harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.equal(shown(harness).panel, null);
+      assert.equal(shown(harness).usable, true);
+      assert.equal(shown(harness).speed, '1.20');
+
+      tab.letGo();
       await settle();
       assert.equal(shown(harness).speed, '1.20');
       assert.equal(shown(harness).on, true);
@@ -2302,13 +2430,14 @@ describe('popup behavior', () => {
       assert.equal(asks(harness), 2);
       assert.equal(inert(), 4);
 
-      // The first answer comes, from before the shortcut. The popup asks
-      // again, still holding the controls.
+      // The first answer comes, from before the shortcut. The popup doesn't
+      // show it, and asks again, still holding the controls.
       tab.hold('GET_STATE');
       tab.letGo(1);
       await settle();
       assert.equal(asks(harness), 3);
       assert.equal(inert(), 4);
+      assert.equal(shown(harness).speed, '1.00');
 
       tab.letGo();
       await settle();
@@ -2339,26 +2468,138 @@ describe('popup behavior', () => {
       assert.equal(tab.state.settings.speed, 0.81);
     });
 
+    // After a change in the popup the look shows nothing at all, not even
+    // that the tab can't be reached: the change's own answer says how the
+    // tab took it.
+    for (const [name, asked, lateAnswer] of [
+      ['fails late', () => {}, (tab) => tab.drop()],
+      [
+        'says, late, that the page was blocked',
+        (tab) => Object.assign(tab.state, { blocked: true, blockReason: 'unsupported' }),
+        (tab) => tab.letGo()
+      ]
+    ]) {
+      test(`keeps a change made in the popup when the tab's answer ${name}`, async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        const harness = await createPopupHarness({ onTabMessage: tab.onTabMessage });
+        t.after(() => close(harness));
+        const document = harness.window.document;
+
+        // The held answer is the tab as it is when asked.
+        asked(tab);
+        tab.hold('GET_STATE');
+        await report(harness);
+        await settle();
+        assert.equal(tab.held.length, 1);
+        tab.state.blocked = false;
+
+        document.getElementById('speed-up-btn').click();
+        await settle();
+        assert.equal(tab.state.settings.speed, 0.81);
+
+        lateAnswer(tab);
+        await settle();
+        assert.equal(shown(harness).speed, '0.81');
+        assert.equal(shown(harness).on, true);
+        assert.equal(document.getElementById('reload-panel').hidden, true);
+        assert.equal(document.getElementById('speed-up-btn').disabled, false);
+      });
+    }
+
+    test("doesn't say the page isn't responding once a change made in the popup has been answered", async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      let timers;
+      const harness = await createPopupHarness({
+        onTabMessage: tab.onTabMessage,
+        beforeLoad(window) {
+          timers = fakeTimers(window);
+        }
+      });
+      t.after(() => close(harness));
+      const document = harness.window.document;
+
+      tab.hold('GET_STATE');
+      await report(harness);
+      await settle();
+      document.getElementById('speed-up-btn').click();
+      await settle();
+      assert.equal(tab.state.settings.speed, 0.81);
+
+      timers.advance(5000);
+      await settle();
+      assert.equal(document.getElementById('reload-panel').hidden, true);
+      assert.equal(document.getElementById('speed-up-btn').disabled, false);
+      assert.equal(shown(harness).speed, '0.81');
+    });
+
+    // The second asking has five seconds of its own, counted from when it
+    // began, and the first one's limit is gone with the first asking.
+    test('gives the asking after a shortcut a time limit of its own', async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      tab.hold('GET_STATE');
+      let timers;
+      const harness = await createPopupHarness({
+        onTabMessage: tab.onTabMessage,
+        beforeLoad(window) {
+          timers = fakeTimers(window);
+        }
+      });
+      t.after(() => close(harness));
+      const document = harness.window.document;
+      const inert = () => document.querySelectorAll('[inert]').length;
+      const notice = () => !document.getElementById('reload-panel').hidden;
+
+      timers.advance(3000);
+      await report(harness);
+      tab.letGo(1);
+      await settle();
+      assert.equal(asks(harness), 2);
+
+      timers.advance(4999);
+      await settle();
+      assert.equal(notice(), false);
+      assert.equal(inert(), 4);
+
+      timers.advance(1);
+      await settle();
+      assert.equal(notice(), true);
+      assert.equal(inert(), 0);
+      assert.equal(document.getElementById('power-toggle').disabled, true);
+
+      tab.letGo();
+      await settle();
+      assert.equal(notice(), false);
+      assert.deepEqual(shown(harness), {
+        on: true, status: 'On', speed: '0.80', reverb: '40', bar: 'Current Preset: Slowed + Reverb'
+      });
+    });
+
     // The popup's change goes by way of the background script, and a
     // question sent meanwhile could reach the tab first and be answered
     // with the state from before the change.
     test("asks the tab only once the popup's own change has been answered", async (t) => {
       const tab = fakeTab({ enabled: true, settings: SLOWED });
-      const harness = await createPopupHarness({ onTabMessage: tab.onTabMessage });
+      let applies;
+      const harness = await createPopupHarness({
+        onTabMessage: tab.onTabMessage,
+        beforeLoad(window) {
+          applies = heldApplies(window);
+        }
+      });
       t.after(() => close(harness));
       const document = harness.window.document;
       const asksBefore = asks(harness);
 
-      tab.hold('UPDATE_AUDIO');
+      applies.hold();
       document.getElementById('speed-up-btn').click();
       await settle();
-      assert.equal(tab.held.length, 1);
+      assert.equal(applies.held.length, 1);
 
       await report(harness);
       await settle();
       assert.equal(asks(harness), asksBefore);
 
-      tab.letGo();
+      applies.letGo();
       await settle();
       assert.equal(asks(harness), asksBefore + 1);
       assert.equal(shown(harness).speed, '0.81');

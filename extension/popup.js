@@ -364,10 +364,12 @@ let tabSlowTimer = null;
 // The looks at the tab so far (syncWithActiveTab). Only the newest shows
 // what it finds.
 let tabLook = 0;
-// The newest look is still waiting for the tab.
+// The popup is waiting for the newest look: it has neither ended nor taken
+// too long.
 let tabLookUnderWay = false;
-// The tab may have changed since the look under way asked it, so that look
-// asks again before it ends.
+// The tab has changed since the newest look asked it, or the popup has
+// stopped waiting for the look. What its pass is told is not shown, and the
+// look makes another pass.
 let tabLookAgain = false;
 let processingPending = false;
 let tabReports = 0;
@@ -1407,7 +1409,7 @@ function bindControls() {
 // Asking the tab again later needs no hold. After a reload or a permission
 // the controls are disabled, and the look enables them only once it has this
 // tab's settings to show. After a shortcut they are in use, and the look
-// doesn't show an answer over a change made meanwhile (showActiveTab).
+// shows nothing once a change has been made meanwhile (syncWithActiveTab).
 function holdControlsForTab() {
   controlsHeld = true;
   for (const part of heldForTab) part.setAttribute('inert', '');
@@ -1430,12 +1432,20 @@ function releaseControlsForTab() {
 // this when it opens, after a reload or a permission, and when a shortcut
 // has changed the tab (handleShortcutReport).
 //
-// A look waits on the browser and on the page, and a page that has stopped
+// A look asks the tab once or more: each asking is a pass (showActiveTab).
+// What a pass is told is shown only while it is still the state of things:
+// no newer look has begun, no shortcut has changed the tab since the pass
+// began, and nothing has been changed in the popup since. After a shortcut
+// the look makes another pass. After a change in the popup it shows
+// nothing: that change is the newer, the tab gets what the popup shows, and
+// the change's own answer says if the tab took it.
+//
+// A pass waits on the browser and on the page, and a page that has stopped
 // responding never answers. So after TAB_GIVE_UP_MS the popup stops waiting:
 // it says that the page isn't responding and offers to reload it, and this
-// returns. The look itself goes on, and if the answer comes after all it is
-// shown. A newer look takes over from an older one still waiting, which then
-// shows nothing: its answer is the older one.
+// returns. The pass itself goes on, and if it is answered after all the
+// look makes another pass, with a time limit of its own, and shows the tab.
+// Meanwhile a reload or a shortcut starts a new look, which takes over.
 async function syncWithActiveTab() {
   const look = ++tabLook;
   const newest = () => look === tabLook;
@@ -1445,24 +1455,38 @@ async function syncWithActiveTab() {
   const gaveUp = new Promise((resolve) => {
     stopWaiting = resolve;
   });
-  const giveUpTimer = window.setTimeout(() => {
+  const giveUp = (pass) => {
     if (newest()) {
-      showTabNotResponding();
-      // What the look has shown by then may be under this notice, so once
-      // the tab does answer, everything is asked for and shown again.
+      // A tab that has taken a change made in the popup meanwhile is
+      // responding, whatever became of this pass.
+      if (pass.revision === applyRevision) showTabNotResponding();
+      // The popup isn't waiting any more, so a shortcut now starts a look of
+      // its own. What this pass has shown may be under the notice, and what
+      // it is told will be old, so if the tab does answer, it is asked again.
+      tabLookUnderWay = false;
       tabLookAgain = true;
     }
     stopWaiting();
-  }, TAB_GIVE_UP_MS);
+  };
 
   const looked = (async () => {
     try {
       do {
         tabLookAgain = false;
-        await showActiveTab(newest);
+        const pass = {
+          // The newest change made in the popup when the pass began. The
+          // pass's own change, a new tab's preset, is counted in (sendOwn).
+          revision: applyRevision,
+          current: () => newest() && !tabLookAgain && pass.revision === applyRevision
+        };
+        const giveUpTimer = window.setTimeout(() => giveUp(pass), TAB_GIVE_UP_MS);
+        try {
+          await showActiveTab(pass);
+        } finally {
+          window.clearTimeout(giveUpTimer);
+        }
       } while (tabLookAgain && newest());
     } finally {
-      window.clearTimeout(giveUpTimer);
       if (newest()) tabLookUnderWay = false;
     }
   })();
@@ -1478,19 +1502,25 @@ function showTabNotResponding() {
   setPowerUI(false);
 }
 
-// One look at the tab. `newest` says whether this is still the newest look;
-// once it isn't, nothing more is shown.
-async function showActiveTab(newest) {
-  // What the popup itself has changed reaches the tab first, so that the
+// One pass of a look at the tab. After each wait, `pass.current()` says
+// whether what the pass has learned may still be shown.
+async function showActiveTab(pass) {
+  // The pass's own change is not one made in the popup since it began.
+  const sendOwn = (enabled) => {
+    const sent = saveAndApplySettings(enabled);
+    pass.revision = applyRevision;
+    return sent;
+  };
+
+  // What the popup has changed already reaches the tab first, so that the
   // tab's answer is not from before it.
   while (applyBusy) {
     await appliesSent;
-    if (!newest()) return;
+    if (!pass.current()) return;
   }
-  const revision = applyRevision;
 
   const tab = await getActiveTab();
-  if (!newest()) return;
+  if (!pass.current()) return;
   tabOnSpotify = isSpotifyUrl(tab?.url);
   spotifyPermissionTabId = tab?.id !== undefined && tabOnSpotify ? tab.id : null;
   if (tab?.id === undefined) return;
@@ -1499,7 +1529,7 @@ async function showActiveTab(newest) {
   const firefoxYouTubePermission = getFirefoxYouTubePermission(tab.url);
   if (spotify) {
     const allowed = await api.permissions.contains({ origins: [SPOTIFY_ORIGIN] });
-    if (!newest()) return;
+    if (!pass.current()) return;
     if (!allowed) {
       hideYouTubePermissionPanel();
       setBlocked(true, 'drm');
@@ -1512,7 +1542,7 @@ async function showActiveTab(newest) {
 
     hideYouTubePermissionPanel();
     await api.runtime.sendMessage({ type: 'SYNC_SPOTIFY_REGISTRATION' });
-    if (!newest()) return;
+    if (!pass.current()) return;
   } else if (!isYouTubeUrl(tab.url)) {
     hideSpotifyPermissionPanel();
     hideYouTubePermissionPanel();
@@ -1523,7 +1553,7 @@ async function showActiveTab(newest) {
   } else {
     if (firefoxYouTubePermission) {
       const allowed = await api.permissions.contains({ origins: [firefoxYouTubePermission.origin] });
-      if (!newest()) return;
+      if (!pass.current()) return;
       if (!allowed) {
         hideSpotifyPermissionPanel();
         setBlocked(true, 'unsupported');
@@ -1537,7 +1567,7 @@ async function showActiveTab(newest) {
     }
 
     const injected = await ensureContentScript(tab.id);
-    if (!newest()) return;
+    if (!pass.current()) return;
     if (!injected) {
       hideSpotifyPermissionPanel();
       hideYouTubePermissionPanel();
@@ -1556,7 +1586,7 @@ async function showActiveTab(newest) {
   } catch {
     answered = false;
   }
-  if (!newest()) return;
+  if (!pass.current()) return;
 
   if (!answered) {
     setBlocked(true, spotify ? 'drm' : 'unsupported');
@@ -1579,11 +1609,7 @@ async function showActiveTab(newest) {
   // Asked before the controls are enabled below, so that nothing can be
   // changed between their being enabled and this tab's settings being shown.
   const remembered = state?.enabled ? null : await recallTabState(tab.id, tab.url);
-  if (!newest()) return;
-  // A change made in the popup since this look began is newer than the
-  // tab's answer, and the tab gets what the popup shows. So the answer is
-  // not shown over it.
-  if (revision !== applyRevision) return;
+  if (!pass.current()) return;
 
   setBlocked(false);
   hideSpotifyPermissionPanel();
@@ -1601,7 +1627,7 @@ async function showActiveTab(newest) {
   if (remembered) {
     applySettingsToUI(remembered.settings);
     if (remembered.enabled) {
-      await saveAndApplySettings(true);
+      await sendOwn(true);
     } else {
       setPowerUI(false);
       setTabIcon(tab.id, false);
@@ -1611,15 +1637,16 @@ async function showActiveTab(newest) {
 
   // A tab with no prior state starts with the extension's primary preset enabled.
   applySettingsToUI(PRESETS.slowed);
-  await saveAndApplySettings(true);
+  await sendOwn(true);
 }
 
 // A keyboard shortcut is handled by the background script, and works while
 // the popup is open. The background script says when one has changed a tab
 // (applyShortcut in background.js), and the popup then looks at the tab
 // again, so that it shows what the shortcut did and the next change made
-// here is made on top of it. A look already under way may have asked before
-// the shortcut's change, so it asks again.
+// here is made on top of it. A look the popup is still waiting for may have
+// asked before the shortcut's change, so what it is told is not shown and it
+// asks again. A look the popup has stopped waiting for is taken over.
 function handleShortcutReport(message, sender) {
   if (message?.type !== 'SHORTCUT_APPLIED') return;
   // From the extension's own background script, not from a page's script.
