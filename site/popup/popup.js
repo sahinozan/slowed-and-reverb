@@ -42,8 +42,10 @@ const BLOCKED_TEXT = {
   outdated: 'Reload the page to finish updating the extension.',
   outdatedSpotify: 'Reload Spotify to finish updating the extension.',
   notResponding: "This page isn't responding. Reloading it usually fixes this.",
+  notRespondingSpotify: "This page isn't responding. Reloading it usually fixes this.",
   noPlayer: 'Play a song to start the effects.',
   loadingPlayer: 'The effects start once the song loads.',
+  loadingPage: 'This page is still loading.',
   spotifyEffects: 'Only speed works on Spotify here.'
 };
 
@@ -52,6 +54,7 @@ const RELOAD_ACTIONS = {
   unsupported: { button: 'Reload page', progress: 'Reloading the page…' },
   outdated: { button: 'Reload page', progress: 'Reloading the page…' },
   notResponding: { button: 'Reload page', progress: 'Reloading the page…' },
+  notRespondingSpotify: { button: 'Reload Spotify', progress: 'Reloading Spotify…' },
   outdatedSpotify: { button: 'Reload Spotify', progress: 'Reloading Spotify…' }
 };
 
@@ -114,10 +117,10 @@ async function recallTabState(tabId, url) {
 let lastActiveTab = null;
 
 // The background script makes a tab's changes one after another, the
-// popup's and the shortcuts'. This waits until those it has taken so far
-// have been made, and gives the tab's last shortcut by then, or null for
-// none. With no answer there is nothing to name, and the popup's changes
-// then name nothing.
+// popup's and the shortcuts'. This waits until those it had taken when it
+// was asked have been made, and gives the tab's last shortcut as of when it
+// was asked, or null for none. With no answer there is nothing to name, and
+// the popup's changes then name nothing.
 async function waitForTab(tabId) {
   const answer = await api.runtime.sendMessage({ type: 'WAIT_FOR_TAB', tabId }).catch(() => null);
   return answer?.shortcut;
@@ -328,9 +331,13 @@ const heldForTab = [
 // How long the tab may take to answer before the held parts dim.
 const TAB_SLOW_MS = 300;
 // How long a look at the tab may take before the popup stops waiting for it
-// and offers to reload the page (syncWithActiveTab). A page that is slow but
-// well answers sooner: its engine is given two seconds (ENGINE_TIMEOUT_MS in
-// content.js), and the rest takes a small part of one.
+// (syncWithActiveTab). A look waits for the popup's own change that is on
+// its way, for the scripts to be put into the page, for what the background
+// script is still doing to the tab, for the tab's answer, and on a new tab
+// for the answer to its starting preset. On a page that is well each takes
+// a small part of a second; the page's engine is given two seconds for its
+// answer (ENGINE_TIMEOUT_MS in content.js). A page that is still loading
+// can take longer, since the scripts wait for it.
 const TAB_GIVE_UP_MS = 5000;
 // What a held part's controls report is dropped before their own listeners
 // hear it. `inert` already keeps new clicks and keys away from them, but not
@@ -381,8 +388,11 @@ let tabOnSpotify = false;
 let youtubePermission = null;
 let tabSynced = false;
 let tabSlowTimer = null;
-// The looks at the tab so far (syncWithActiveTab). Only the newest shows
-// what it finds.
+// Which view of the tab the popup has. It is counted on when a look at the
+// tab begins (syncWithActiveTab), when a look's time is up, and when a
+// reload begins (forgetTabLook). A look shows what it finds, and the answer
+// to a change is taken, only while the count is still what it was when the
+// look began or the change was made. Zero until the first look.
 let tabLook = 0;
 // Settles when the newest look is over: it has shown the tab, has run out of
 // time, or has been given up for a reload.
@@ -1035,6 +1045,7 @@ function setBlocked(isBlocked, reason) {
   // An update is finished the same way on every site, but on Spotify the
   // reload panel names it.
   if (reason === 'outdated' && tabOnSpotify) reason = 'outdatedSpotify';
+  if (reason === 'notResponding' && tabOnSpotify) reason = 'notRespondingSpotify';
 
   if (isBlocked) {
     els.blockedBannerText.textContent = BLOCKED_TEXT[reason] ?? BLOCKED_TEXT.drm;
@@ -1552,7 +1563,7 @@ function lookAtTab() {
       // Counted on, as a newer look would: this one shows nothing more,
       // and neither does the answer to a change it has sent.
       timeUpAt = ++tabLook;
-      showTabNotResponding();
+      showTabNotAnswering(timeUpAt);
       resolve();
     }, TAB_GIVE_UP_MS);
     endTabLook = () => {
@@ -1582,15 +1593,49 @@ function forgetTabLook() {
   endTabLook = null;
 }
 
-function showTabNotResponding() {
+// What the popup shows when a look's time is up. `view` is what `tabLook`
+// was left at.
+//
+// A page that is still loading has not stopped responding: the scripts
+// wait for it, and reloading it would only start the loading again. So the
+// popup says that it is loading, and looks again when it has loaded. That
+// look has a time limit of its own, for a page that has loaded and then
+// doesn't answer.
+function showTabNotAnswering(view) {
   hideSpotifyPermissionPanel();
   hideYouTubePermissionPanel();
-  setBlocked(true, 'notResponding');
   setPowerUI(false);
+  const tab = lastActiveTab;
+  if (tab?.status !== 'loading') {
+    setBlocked(true, 'notResponding');
+    return;
+  }
+  setBlocked(true, 'loadingPage');
+
+  const lookAgain = () => {
+    api.tabs.onUpdated.removeListener(onUpdated);
+    if (view === tabLook) syncWithActiveTab().catch(() => {});
+  };
+  const onUpdated = (tabId, changeInfo) => {
+    // Something else has looked at the tab since, or a reload has begun.
+    if (view !== tabLook) api.tabs.onUpdated.removeListener(onUpdated);
+    else if (tabId === tab.id && changeInfo.status === 'complete') lookAgain();
+  };
+  api.tabs.onUpdated.addListener(onUpdated);
+  // The tab was loading when the look began; it may have loaded since.
+  getActiveTab().then((now) => {
+    if (now?.id !== tab.id || now.status !== 'loading') lookAgain();
+  }, () => {});
 }
 
-// What a look does. After each wait, `current()` says whether what it has
-// learned may still be shown.
+// What a look does. Two rules keep it right, and anything added here has to
+// keep them:
+// - After each wait, `current()` says whether what the look has learned may
+//   still be shown. If not, the look ends there.
+// - From the last of those checks to the end, nothing is waited for before
+//   a change is sent (sendSettings): the change is counted as made in the
+//   view the popup has at that moment (`tabLook`), which must be this look.
+//   So whatever a new tab's start needs is read before that check.
 async function showActiveTab(current) {
   // What the popup has changed already reaches the tab first, so that the
   // tab's answer is not from before it.
@@ -1691,8 +1736,8 @@ async function showActiveTab(current) {
     return;
   }
 
-  // Asked before the controls are enabled below, so that nothing can be
-  // changed between their being enabled and this tab's settings being shown.
+  // The last thing waited for. Nothing is shown before it, so that the
+  // tab's settings are shown and its controls enabled in one step.
   const remembered = state?.enabled ? null : await recallTabState(tab.id, tab.url);
   if (!current()) return;
 
@@ -1727,8 +1772,8 @@ async function showActiveTab(current) {
 }
 
 // A keyboard shortcut is handled by the background script, and works while
-// the popup is open. The background script says when one has changed a tab
-// (applyShortcut in background.js), and the popup then looks at the tab
+// the popup is open. The background script says when one has had its turn
+// with a tab (its onCommand listener), and the popup then looks at the tab
 // again, so that it shows what the shortcut did and the next change made
 // here is made on top of it. The new look takes over from one under way,
 // which may have asked before the shortcut's change.

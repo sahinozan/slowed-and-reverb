@@ -88,6 +88,7 @@ function startServer(extraRoutes = new Map()) {
 // - `answers: false`: nothing in the page answers GET_STATE.
 // - `answers: 'held'`: the page's answer to GET_STATE waits until the test
 //   calls `window.letTabAnswer()`.
+// - `loading: true`: the tab is still loading its page.
 //
 // For what happens after the popup has opened, the page gets three functions:
 // `window.holdTabAnswers()` holds the answers to GET_STATE from then on, until
@@ -102,10 +103,10 @@ function installPopupBrowserMock({
   theme, settings, customPresets = [],
   url = 'https://www.youtube.com/watch?v=store-preview', siteAccess = true,
   tab = {}, injects = true, answers = true, permissionRequest = 'granted',
-  reload = 'complete', firefox = false, storage = {}
+  reload = 'complete', firefox = false, storage = {}, loading = false
 }) {
   const localData = { uiTheme: theme, customPresets, ...settings, ...storage };
-  const activeTab = { id: 9, url };
+  const activeTab = { id: 9, url, status: loading ? 'loading' : 'complete' };
   const tabState = { enabled: true, settings, blocked: false, live: false, ...tab };
   const tabStatus = () => ({
     pending: Boolean(tabState.pending),

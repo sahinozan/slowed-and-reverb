@@ -2047,8 +2047,9 @@ describe('popup behavior', () => {
   // the controls are held until the answer, they stayed held and dimmed with
   // nothing to say why (issue #180). The popup now stops waiting after five
   // seconds and offers to reload the page.
-  // These tests hold answers back with no limit of real time, so each has a
-  // deadline: one that waits for an answer that never comes fails then.
+  // These tests hold answers back with no limit of real time, so the group
+  // has a deadline, which its tests share: one that waits for an answer
+  // that never comes fails when it is reached.
   describe("a tab that doesn't answer", { timeout: 20_000 }, () => {
     const NOT_RESPONDING = "This page isn't responding. Reloading it usually fixes this.";
     const settle = async () => {
@@ -2539,6 +2540,156 @@ describe('popup behavior', () => {
       await settle();
       assert.equal(shown(harness).panel, null);
       assert.equal(shown(harness).speed, '1.20');
+    });
+
+    // On Spotify the popup's reload buttons name it.
+    test('names Spotify on the reload button there', async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      tab.hold('GET_STATE');
+      const { harness, timers } = await open(t, tab, {
+        activeTab: { id: 9, url: 'https://open.spotify.com/track/example' },
+        grantedOrigins: ['https://open.spotify.com/*'],
+        beforeLoad(window) {
+          // A reload that takes its time, so that its progress line stays.
+          window.chrome.tabs.reload = async () => {};
+        }
+      });
+      assert.equal(tab.held.length, 1);
+
+      timers.advance(5000);
+      await settle();
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+      assert.equal(shown(harness).button, 'Reload Spotify');
+
+      harness.window.document.getElementById('reload-btn').click();
+      await settle();
+      assert.equal(shown(harness).status, 'Reloading Spotify…');
+    });
+
+    // A page that is still loading has not stopped responding: the scripts
+    // wait for it. Reloading it would only start the loading again.
+    describe('on a page that is still loading', () => {
+      const LOADING = 'This page is still loading.';
+      const banner = (harness) => {
+        const document = harness.window.document;
+        return document.getElementById('blocked-banner').hidden
+          ? null
+          : document.getElementById('blocked-banner-text').textContent;
+      };
+      const asks = (harness) =>
+        harness.calls.tabMessages.filter(({ message }) => message.type === 'GET_STATE').length;
+      const openOnLoadingPage = async (t, tab) => {
+        const activeTab = { id: 9, url: 'https://www.youtube.com/watch?v=example', status: 'loading' };
+        const opened = await open(t, tab, { activeTab });
+        const loaded = async () => {
+          activeTab.status = 'complete';
+          await opened.harness.events.tabUpdated.emit(9, { status: 'complete' }, { ...activeTab });
+        };
+        return { ...opened, activeTab, loaded };
+      };
+
+      test('says that it is loading, with no reload button, and shows the tab once it has loaded', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers, loaded } = await openOnLoadingPage(t, tab);
+
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+        assert.deepEqual(
+          { ...shown(harness), button: null, status: null },
+          { panel: null, button: null, status: null, on: false, usable: false, speed: '1.00', inert: 0, dimmed: false }
+        );
+        assert.equal(asks(harness), 1);
+
+        // The page has loaded, and answers from now on.
+        tab.hold(null);
+        await loaded();
+        await settle();
+        assert.equal(asks(harness), 2);
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).usable, true);
+        assert.equal(shown(harness).speed, '0.80');
+
+        // The first question's answer comes last, and nothing looks again.
+        tab.letGo();
+        await settle();
+        assert.equal(asks(harness), 2);
+        assert.equal(shown(harness).speed, '0.80');
+      });
+
+      test('shows the tab when its first answer comes after all', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers } = await openOnLoadingPage(t, tab);
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+
+        tab.letGo();
+        await settle();
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).usable, true);
+        assert.equal(shown(harness).speed, '0.80');
+      });
+
+      // The page was loading when the look began and has loaded since,
+      // with nothing to say so. The popup looks again, and that look has
+      // five seconds of its own.
+      test("says the page isn't responding when it has loaded and still doesn't answer", async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers, activeTab } = await openOnLoadingPage(t, tab);
+        activeTab.status = 'complete';
+
+        timers.advance(5000);
+        await settle();
+        assert.equal(asks(harness), 2);
+        assert.equal(shown(harness).panel, null);
+        assert.equal(shown(harness).inert, 4);
+
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).panel, NOT_RESPONDING);
+        assert.equal(shown(harness).inert, 0);
+      });
+
+      // Something else has looked at the tab since the notice; the page's
+      // having loaded then starts nothing more.
+      test('leaves it to a newer look when the page has loaded', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers, loaded } = await openOnLoadingPage(t, tab);
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+
+        tab.hold(null);
+        await dispatchRuntimeMessage(
+          harness.events.runtimeMessage, { type: 'SHORTCUT_APPLIED', tabId: 9 }, { id: 'example' }
+        );
+        await settle();
+        assert.equal(asks(harness), 2);
+        assert.equal(banner(harness), null);
+
+        await loaded();
+        await settle();
+        assert.equal(asks(harness), 2);
+        assert.equal(shown(harness).speed, '0.80');
+      });
+
+      test("says the page isn't responding when it had loaded before the look began", async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers } = await open(t, tab, {
+          activeTab: { id: 9, url: 'https://www.youtube.com/watch?v=example', status: 'complete' }
+        });
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).panel, NOT_RESPONDING);
+      });
     });
 
     // Any look can meet a page that doesn't answer, not only the first.
