@@ -113,6 +113,16 @@ async function recallTabState(tabId, url) {
 // the popup closes, when there is no time to ask again (sendOnClose).
 let lastActiveTab = null;
 
+// The background script makes a tab's changes one after another, the
+// popup's and the shortcuts'. This waits until those it has taken so far
+// have been made, and gives the tab's last shortcut by then, or null for
+// none. With no answer there is nothing to name, and the popup's changes
+// then name nothing.
+async function waitForTab(tabId) {
+  const answer = await api.runtime.sendMessage({ type: 'WAIT_FOR_TAB', tabId }).catch(() => null);
+  return answer?.shortcut;
+}
+
 async function getActiveTab() {
   const [tab] = await api.tabs.query({ active: true, currentWindow: true });
   if (tab?.id !== undefined) lastActiveTab = tab;
@@ -356,11 +366,11 @@ let blocked = false;
 let liveBlocked = false;
 let applyRevision = 0;
 let applyBusy = false;
-// The popup shows the tab as it is after every shortcut up to this time: all
-// those before it opened, and those it has been told of since. Each change
-// it sends says so, and the background script leaves out a change made
-// without knowing of the tab's last shortcut (APPLY_TO_TAB in background.js).
-let shortcutKnown = Date.now();
+// The tab's last shortcut when the popup read the settings it shows, as the
+// background script names it (waitForTab). Each change the popup sends says
+// so, and the background script leaves out a change made on top of settings
+// from before the tab's last shortcut (APPLY_TO_TAB in background.js).
+let shortcutSeen;
 let unsentApply = null;
 // Settles when the changes now on their way have all been sent and answered.
 let appliesSent = Promise.resolve();
@@ -737,7 +747,9 @@ function sendSettings(enabled) {
     settings: getCurrentSettings(),
     enabled: active,
     revision: ++applyRevision,
-    knowsShortcut: shortcutKnown
+    shortcut: shortcutSeen,
+    // The look the popup's view of the tab is from (syncWithActiveTab).
+    look: tabLook
   };
 
   setPowerUI(active);
@@ -790,8 +802,8 @@ function takeUnsentApply() {
   return apply;
 }
 
-function applyMessage(tab, { settings, enabled, knowsShortcut }) {
-  return { type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled, knowsShortcut };
+function applyMessage(tab, { settings, enabled, shortcut }) {
+  return { type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled, shortcut };
 }
 
 async function sendApply(tab, request) {
@@ -800,17 +812,20 @@ async function sendApply(tab, request) {
     .sendMessage(applyMessage(tab, request))
     .catch(() => ({ success: false, blocked: true, blockReason: 'unsupported' }));
 
-  // A shortcut changed the tab, and this change was made without knowing of
-  // it, so the background script left it out. The tab is as the shortcut
-  // left it, and the popup shows that instead. Its word of the shortcut is
-  // usually on its way too; this doesn't wait for it.
+  // A shortcut has changed the tab since the popup read the settings this
+  // change was made on top of, so the background script left the change
+  // out. The popup looks at the tab again, which waits for the shortcut's
+  // change to be made and then shows it. The background script's word of
+  // the shortcut is usually on its way too; this doesn't wait for it.
   if (result?.superseded) {
-    shortcutKnown = Math.max(shortcutKnown, result.shortcutAt);
     syncWithActiveTab().catch(() => {});
     return result;
   }
 
-  if (request.revision !== applyRevision) return result;
+  // The answer to a change is about the tab as it was then. Once a newer
+  // change has been made, or the popup has looked at the tab again or given
+  // up on that look, what it shows comes from there.
+  if (request.revision !== applyRevision || request.look !== tabLook) return result;
 
   if (!result?.success) {
     setBlocked(true, result?.blockReason ?? 'unsupported');
@@ -1517,14 +1532,18 @@ async function syncWithActiveTab() {
 // One look. Resolves when it is over, and rejects if it fails before that.
 function lookAtTab() {
   const look = ++tabLook;
-  const newest = () => look === tabLook;
-  let outOfTime = false;
+  // Whether what the look has learned may still be shown.
+  const current = () => look === tabLook;
+  // What `tabLook` was left at when the look's time was up.
+  let timeUpAt = 0;
   endTabLook?.();
 
   return new Promise((resolve, reject) => {
     // Ended with the look, also when a newer one takes over (endTabLook).
     const timer = window.setTimeout(() => {
-      outOfTime = true;
+      // Counted on, as a newer look would: this one shows nothing more,
+      // and neither does the answer to a change it has sent.
+      timeUpAt = ++tabLook;
       showTabNotResponding();
       resolve();
     }, TAB_GIVE_UP_MS);
@@ -1533,14 +1552,12 @@ function lookAtTab() {
       resolve();
     };
 
-    // Whether what the look has learned may still be shown.
-    const current = () => newest() && !outOfTime;
     const ended = (error) => {
       window.clearTimeout(timer);
-      if (newest() && outOfTime) {
-        // Something answered after all.
+      if (timeUpAt && timeUpAt === tabLook) {
+        // Something answered after all, and nothing has looked since.
         syncWithActiveTab().catch(() => {});
-      } else if (newest() && error) {
+      } else if (current() && error) {
         reject(error.reason);
         return;
       }
@@ -1633,6 +1650,11 @@ async function showActiveTab(current) {
     }
   }
 
+  // The tab's answer must not be from before a shortcut whose change is
+  // still being made.
+  const shortcut = await waitForTab(tab.id);
+  if (!current()) return;
+
   let state;
   let answered = true;
   const reportsBefore = tabReports;
@@ -1666,6 +1688,7 @@ async function showActiveTab(current) {
   const remembered = state?.enabled ? null : await recallTabState(tab.id, tab.url);
   if (!current()) return;
 
+  shortcutSeen = shortcut;
   setBlocked(false);
   hideSpotifyPermissionPanel();
   hideYouTubePermissionPanel();
@@ -1706,7 +1729,6 @@ function handleShortcutReport(message, sender) {
   // From the extension's own background script, not from a page's script.
   if (sender.id !== api.runtime.id || sender.tab) return;
   if (lastActiveTab && message.tabId !== lastActiveTab.id) return;
-  if (typeof message.at === 'number') shortcutKnown = Math.max(shortcutKnown, message.at);
   // The popup is still reading what is stored. Its first look comes after
   // that, and so after the shortcut's change.
   if (tabLook === 0) return;

@@ -110,7 +110,8 @@ function createBrowserApi(options = {}) {
           options.runtimeSender ?? {
             id: api.runtime.id,
             url: `chrome-extension://${api.runtime.id}/popup.html`
-          }
+          },
+          options.runtimeResponseTimeoutMs
         );
       }
     },
@@ -185,7 +186,10 @@ function createBrowserApi(options = {}) {
   return { api, calls, events, grantedOrigins, local, registeredContentScripts, session };
 }
 
-async function dispatchRuntimeMessage(event, message, sender = {}) {
+// A listener that returns true answers later. It is given `responseTimeoutMs`
+// of real time to do so, for the tests of messages nothing answers; null
+// waits for as long as it takes, for a test that holds an answer back itself.
+async function dispatchRuntimeMessage(event, message, sender = {}, responseTimeoutMs = 500) {
   let response;
   let responded = false;
 
@@ -202,11 +206,15 @@ async function dispatchRuntimeMessage(event, message, sender = {}) {
 
     if (result && typeof result.then === 'function') await result;
     if (result === true && !responded) {
+      if (responseTimeoutMs === null) {
+        await responseReady;
+        continue;
+      }
       let responseTimeout;
       await Promise.race([
         responseReady,
         new Promise((resolve) => {
-          responseTimeout = setTimeout(resolve, 500);
+          responseTimeout = setTimeout(resolve, responseTimeoutMs);
         })
       ]);
       clearTimeout(responseTimeout);
