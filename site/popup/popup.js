@@ -321,6 +321,9 @@ const TAB_SLOW_MS = 300;
 // being dragged go on moving.
 const HELD_EVENTS = ['pointerdown', 'click', 'keydown', 'input', 'change', 'blur'];
 let controlsHeld = false;
+// The settings the popup showed last (applySettingsToUI), to put a slider
+// that moved while it was held back where it was.
+let settingsShown = null;
 for (const part of heldForTab) {
   for (const type of HELD_EVENTS) {
     // Added before any other listener, and for the way down, so it comes
@@ -588,6 +591,7 @@ function getCurrentSettings() {
 }
 
 function applySettingsToUI(settings) {
+  settingsShown = settings;
   for (const slider of SLIDERS) {
     const value = settings[slider.key] ?? DEFAULT_SETTINGS[slider.key];
     slider.input.value =
@@ -1394,6 +1398,10 @@ function releaseControlsForTab() {
   tabSlowTimer = null;
   document.body.classList.remove('tab-slow');
   for (const part of heldForTab) part.removeAttribute('inert');
+  // A slider dragged through the hold has moved, though the popup took none
+  // of it. Most ways the first look ends show settings again and so put it
+  // back; this does it for those that don't, such as a window with no tab.
+  if (controlsHeld && settingsShown) applySettingsToUI(settingsShown);
   controlsHeld = false;
 }
 

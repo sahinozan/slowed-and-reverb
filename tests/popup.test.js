@@ -1699,6 +1699,48 @@ describe('popup behavior', () => {
       assert.equal(audioUpdates(harness).at(-1).message.settings.speed, 1.01);
     });
 
+    test('puts a slider that moved while held back when there is no tab to ask', async (t) => {
+      let letQueryAnswer;
+      const queried = new Promise((resolve) => {
+        letQueryAnswer = resolve;
+      });
+      const harness = await createPopupHarness({
+        activeTab: null,
+        local: { ...SLOWED },
+        beforeLoad(window) {
+          const { tabs } = window.chrome;
+          const query = tabs.query.bind(tabs);
+          tabs.query = async (...args) => {
+            await queried;
+            return query(...args);
+          };
+        }
+      });
+      t.after(() => close(harness));
+      const document = harness.window.document;
+      const slider = document.getElementById('speed-slider');
+      const reverb = document.getElementById('reverb-slider');
+      assert.equal(held(harness), true);
+      assert.equal(slider.value, '0.8');
+
+      // As a drag that began before the hold does in Chromium: the sliders
+      // move, and what they report is dropped.
+      slider.value = '1.31';
+      slider.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+      reverb.value = '90';
+      reverb.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+      await settle();
+      assert.equal(document.getElementById('speed-input').getAttribute('aria-valuetext'), '0.80x');
+
+      letQueryAnswer();
+      await settle();
+      assert.equal(held(harness), false);
+      assert.equal(slider.value, '0.8');
+      assert.equal(reverb.value, '40');
+      assert.equal(document.getElementById('speed-input').value, '0.80');
+      assert.equal(document.getElementById('reverb-value').textContent, '(40%)');
+    });
+
     // After a reload or a permission the popup asks the tab again. The
     // controls are disabled then, and are enabled only once the popup has
     // this tab's settings to show, so there is no moment to change them in.
