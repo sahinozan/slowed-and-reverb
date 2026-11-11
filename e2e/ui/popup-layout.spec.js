@@ -619,6 +619,249 @@ test.describe('speed controls', () => {
   });
 });
 
+// Until the tab has said what it is playing with, the popup shows the
+// settings used last in any tab, and the parts that set the effect are held:
+// they take no click and no key, and dim only when the answer is slow in
+// coming (holdControlsForTab in popup.js). What a held control reports all
+// the same, as a slider already being dragged does in Chromium, is dropped
+// (HELD_EVENTS there). The stub holds the tab's answer until the test lets
+// it go.
+test.describe("the controls before the tab's first answer", () => {
+  const HELD = { settings: SLOWED, answers: 'held' };
+  const shown = (page) => page.evaluate(() => ({
+    speed: document.getElementById('speed-input').value,
+    reverb: document.getElementById('reverb-slider').value,
+    on: document.getElementById('power-toggle').checked
+  }));
+  // The speed the popup has taken, which it writes for screen readers; the
+  // slider's own value moves with the mouse whatever the popup does.
+  const speedTaken = (page) => page.locator('#speed-input').getAttribute('aria-valuetext');
+  const HELD_PARTS = ['.header-power', '.presets-tabs-section', '.controls', '#reset-btn'];
+  const setInert = (page, inert) => page.evaluate(([parts, on]) => {
+    for (const part of parts) document.querySelector(part).toggleAttribute('inert', on);
+  }, [HELD_PARTS, inert]);
+  // The settings stored last, and the switch off: nothing was shown as on
+  // when the popup was last closed.
+  const AS_OPENED = { speed: '0.80', reverb: '40', on: false };
+  const opacity = (page, selector) =>
+    page.evaluate((query) => getComputedStyle(document.querySelector(query)).opacity, selector);
+  // Clicks where the control is with the mouse itself, whatever is there: a
+  // locator's click would wait for the control to take it.
+  const clickAt = async (page, selector) => {
+    const box = await page.locator(selector).boundingBox();
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  };
+  const PRESSED = ['#speed-up-btn', '[data-preset="nightcore"]', '.header-power .switch-slider', '#reset-btn'];
+
+  async function withHeldPopup(browser, browserName, baseUrl, check) {
+    const { context, page, errors } = await openPopup(browser, browserName, baseUrl, HELD);
+    try {
+      await expect(page.locator('#speed-input')).toHaveValue('0.80');
+      await check(page);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  }
+
+  const takesNothingWhileHeld = async (page) => {
+    for (const selector of PRESSED) {
+      await clickAt(page, selector);
+      expect(await shown(page), `after a click on ${selector}`).toEqual(AS_OPENED);
+    }
+    // The Tab key passes the held parts by.
+    await page.locator('#theme-picker-btn').focus();
+    for (let presses = 0; presses < 8; presses++) {
+      await page.keyboard.press('Tab');
+      const held = await page.evaluate(
+        (parts) => parts.some((part) => document.activeElement?.closest(part)),
+        HELD_PARTS
+      );
+      expect(held, `Tab press ${presses + 1} reached a held control`).toBe(false);
+    }
+  };
+
+  test('take no click and no key, and work once it has come', async ({ browser, browserName }) => {
+    await withHeldPopup(browser, browserName, server.baseUrl, async (page) => {
+      await takesNothingWhileHeld(page);
+
+      // The themes are not the effect's: they work meanwhile.
+      await page.locator('#theme-picker-btn').click();
+      await expect(page.locator('#theme-panel')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#theme-panel')).toBeHidden();
+
+      // By now the answer is slow, and the held parts have dimmed.
+      for (const part of HELD_PARTS) {
+        await expect.poll(() => opacity(page, part), part).toBe('0.4');
+      }
+
+      await page.evaluate(() => window.letTabAnswer());
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      expect(await page.locator('[inert]').count()).toBe(0);
+      for (const part of HELD_PARTS) {
+        await expect.poll(() => opacity(page, part), part).toBe('1');
+      }
+      // The tab's answer: the effect is on.
+      expect(await shown(page)).toEqual({ ...AS_OPENED, on: true });
+      await clickAt(page, '#speed-up-btn');
+      expect(await shown(page)).toEqual({ speed: '0.81', reverb: '40', on: true });
+    });
+  });
+
+  // The controls made reachable, as if the hold on the parts had failed.
+  const dropsAClickThatReaches = async (page) => {
+    await setInert(page, false);
+    await clickAt(page, '#speed-up-btn');
+    expect(await speedTaken(page), 'after a click on a control that could be reached').toBe('0.80x');
+    await clickAt(page, '[data-preset="nightcore"]');
+    expect(await speedTaken(page), 'after a click on a preset that could be reached').toBe('0.80x');
+  };
+
+  test('drop a click that reaches a control all the same', async ({ browser, browserName }) => {
+    await withHeldPopup(browser, browserName, server.baseUrl, async (page) => {
+      await dropsAClickThatReaches(page);
+      await page.evaluate(() => window.letTabAnswer());
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      expect(await shown(page)).toEqual({ ...AS_OPENED, on: true });
+    });
+  });
+
+  // A drag of the speed slider that is under way when the hold begins. The
+  // popup's script is kept back while the slider is pressed, so the press is
+  // older than the hold and nothing of the popup's can stop it; then the
+  // script runs, with the tab's answer held, and the mouse moves on.
+  async function withDragBeforeTheHold(browser, browserName, baseUrl, check) {
+    const context = await browser.newContext({ viewport: { width: 800, height: 1000 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.addInitScript(installPopupBrowserMock, {
+      theme: 'glow', url: YOUTUBE, firefox: browserName === 'firefox', ...HELD
+    });
+    let letScriptLoad;
+    const scriptHeld = new Promise((resolve) => {
+      letScriptLoad = resolve;
+    });
+    await page.route('**/popup.js', async (route) => {
+      await scriptHeld;
+      await route.continue();
+    });
+    try {
+      await page.goto(`${baseUrl}/popup.html`, { waitUntil: 'commit' });
+      const slider = page.locator('#speed-slider');
+      await slider.waitFor();
+      // The styles have loaded, so the slider is where it will be pressed.
+      await page.waitForFunction(() => {
+        const sheet = document.querySelector('link[rel="stylesheet"]')?.sheet;
+        return Boolean(sheet) && document.getElementById('speed-slider').getBoundingClientRect().width > 100;
+      });
+      // As the page is written, before the script: 1.00x, the thumb midway.
+      expect(Number(await slider.inputValue())).toBe(1);
+      const box = await slider.boundingBox();
+      const y = box.y + box.height / 2;
+      await page.mouse.move(box.x + box.width / 2, y);
+      await page.mouse.down();
+      // The slider follows the mouse, and popup.js has not run yet: the
+      // drag is under way before anything of the popup's can hold it.
+      await page.mouse.move(box.x + box.width * 0.6, y, { steps: 3 });
+      expect(Number(await slider.inputValue()), 'the drag did not begin').toBeGreaterThan(1.05);
+      expect(await page.evaluate(() => typeof holdControlsForTab)).toBe('undefined');
+
+      letScriptLoad();
+      // The script has run: it shows what is stored, and holds the controls.
+      await expect(page.locator('#speed-input')).toHaveAttribute('aria-valuetext', '0.80x');
+      expect(await page.locator('.controls[inert]').count()).toBe(1);
+
+      await page.mouse.move(box.x + box.width * 0.85, y, { steps: 10 });
+      await check(page);
+      await page.mouse.up();
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  }
+
+  test('drop what a slider dragged since before the hold reports', async ({ browser, browserName }) => {
+    await withDragBeforeTheHold(browser, browserName, server.baseUrl, async (page) => {
+      expect(await speedTaken(page), 'during a drag that began before the hold').toBe('0.80x');
+      await page.mouse.up();
+      expect(await speedTaken(page), 'after a drag that began before the hold').toBe('0.80x');
+
+      // The tab's answer puts the slider back where the tab has it.
+      await page.evaluate(() => window.letTabAnswer());
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      await expect(page.locator('#speed-slider')).toHaveValue('0.8');
+      expect(await shown(page)).toEqual({ ...AS_OPENED, on: true });
+    });
+  });
+
+  test('are not dimmed in an opening where the tab answers at once', async ({ browser, browserName }) => {
+    const { context, page, errors } = await openPopup(browser, browserName, server.baseUrl, { settings: SLOWED });
+    try {
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      // Longer than the popup waits before it dims the held parts.
+      await page.waitForTimeout(500);
+      expect(await page.evaluate(() => document.body.classList.contains('tab-slow'))).toBe(false);
+      expect(await page.locator('[inert]').count()).toBe(0);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
+  // Without the hold on the parts, the Tab key reaches the controls. (A
+  // click still does nothing: what the control reports is dropped.)
+  test('finds controls that the Tab key reaches before the answer', async ({ browser, browserName }) => {
+    const controlServer = await serveWith({
+      'popup.js': patched('popup.js', [
+        [/for \(const part of heldForTab\) part\.setAttribute\('inert', ''\);/, '']
+      ])
+    });
+    try {
+      await withHeldPopup(browser, browserName, controlServer.baseUrl, async (page) => {
+        await expect(takesNothingWhileHeld(page)).rejects.toThrow('reached a held control');
+      });
+    } finally {
+      await controlServer.close();
+    }
+  });
+
+  // Without the dropping, a control that can be reached changes what the
+  // popup shows and sends, as every control did before the answer.
+  test('finds a reachable control that is heard before the answer', async ({ browser, browserName }) => {
+    const controlServer = await serveWith({
+      'popup.js': patched('popup.js', [[/if \(!controlsHeld\) return;/, 'return;']])
+    });
+    try {
+      await withHeldPopup(browser, browserName, controlServer.baseUrl, async (page) => {
+        await expect(dropsAClickThatReaches(page)).rejects.toThrow('after a click on a control that could be reached');
+        expect(await speedTaken(page)).toBe('0.81x');
+      });
+    } finally {
+      await controlServer.close();
+    }
+  });
+
+  // Without the dropping, Chromium lets the drag go on and the popup takes
+  // the speeds it reports. Firefox ends such a drag itself when the part is
+  // held, so there is nothing for the control to find there.
+  test('finds a drag from before the hold that is heard', async ({ browser, browserName }) => {
+    test.skip(browserName !== 'chromium', 'Firefox ends the drag itself');
+    const controlServer = await serveWith({
+      'popup.js': patched('popup.js', [[/if \(!controlsHeld\) return;/, 'return;']])
+    });
+    try {
+      await withDragBeforeTheHold(browser, browserName, controlServer.baseUrl, async (page) => {
+        const taken = Number.parseFloat(await speedTaken(page));
+        expect(taken).toBeGreaterThan(1.2);
+      });
+    } finally {
+      await controlServer.close();
+    }
+  });
+});
+
 // The layout check has to fail where the popup did. Each control changes a
 // copy of today's popup and expects the check to find the problem. Three put
 // back what c3ab8b5 and 46512dc took out, adapted to today's files (the

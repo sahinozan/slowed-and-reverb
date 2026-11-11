@@ -15,7 +15,8 @@ async function createPopupHarness(options = {}) {
   const { window } = dom;
 
   const harness = createBrowserApi({
-    activeTab: options.activeTab ?? {
+    // `activeTab: null` is a window with no tab to ask.
+    activeTab: options.activeTab !== undefined ? options.activeTab : {
       id: 9,
       url: 'https://www.youtube.com/watch?v=example'
     },
@@ -53,6 +54,10 @@ async function createPopupHarness(options = {}) {
   window.ResizeObserver = class {
     observe() {}
   };
+
+  // For a test that needs the page changed before the popup's script runs,
+  // such as its timers.
+  options.beforeLoad?.(window);
 
   loadScript('extension/background.js', { chrome: harness.api });
   // popup.html loads settings.js before popup.js.

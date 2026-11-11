@@ -453,6 +453,23 @@ input[type="range"]:disabled {
   cursor: not-allowed;
 }
 
+/* The tab is taking long to say what it is playing with. The parts held for
+   its answer (holdControlsForTab in popup.js) dim as disabled controls do,
+   and come back when it answers. The Reset button fades by its own
+   transition, so the other three are given the same one. */
+.header-power,
+.presets-tabs-section,
+.controls {
+  transition: opacity 0.15s ease;
+}
+
+.tab-slow .header-power,
+.tab-slow .presets-tabs-section,
+.tab-slow .controls,
+.tab-slow #reset-btn {
+  opacity: 0.4;
+}
+
 .current-preset-bar {
   display: flex;
   align-items: center;

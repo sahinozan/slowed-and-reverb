@@ -86,6 +86,8 @@ function startServer(extraRoutes = new Map()) {
 //   `live`. APPLY_TO_TAB answers with the same status.
 // - `injects: false`: the scripts can't be injected into the page.
 // - `answers: false`: nothing in the page answers GET_STATE.
+// - `answers: 'held'`: the page's answer to GET_STATE waits until the test
+//   calls `window.letTabAnswer()`.
 // - `permissionRequest`: 'granted', 'denied' or 'error'.
 // - `reload: 'error'`: reloading the tab fails.
 // - `firefox: true`: the manifest has Firefox's settings, as the Firefox build's does.
@@ -105,6 +107,11 @@ function installPopupBrowserMock({
     effectsUnavailable: Boolean(tabState.effectsUnavailable)
   });
   const updateListeners = new Set();
+  const heldAnswer = answers === 'held'
+    ? new Promise((resolve) => {
+        window.letTabAnswer = resolve;
+      })
+    : null;
   const manifest = firefox ? { browser_specific_settings: { gecko: { id: 'preview@example.invalid' } } } : {};
 
   const storageGet = (defaults) => {
@@ -169,6 +176,7 @@ function installPopupBrowserMock({
       sendMessage: async (_tabId, message) => {
         if (message.type !== 'GET_STATE') return { success: true };
         if (!answers) throw new Error('Preview: nothing in the page answered');
+        await heldAnswer;
         return tabState;
       }
     }
