@@ -762,7 +762,7 @@ test.describe("the controls before the tab's first answer", () => {
       const y = box.y + box.height / 2;
       await page.mouse.move(box.x + box.width / 2, y);
       await page.mouse.down();
-      // The slider follows the mouse, with no script in the page yet: the
+      // The slider follows the mouse, and popup.js has not run yet: the
       // drag is under way before anything of the popup's can hold it.
       await page.mouse.move(box.x + box.width * 0.6, y, { steps: 3 });
       expect(Number(await slider.inputValue()), 'the drag did not begin').toBeGreaterThan(1.05);
