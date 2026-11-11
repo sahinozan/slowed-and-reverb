@@ -211,62 +211,175 @@ describe('content script audio processing', () => {
     assert.equal(processed.gain.valueAt(1.2), 1);
   });
 
-  // Firefox's player clicks when its speed goes to normal speed, away from
-  // it, or from one side of it to the other.
-  for (const [title, speed] of [['across normal speed', 1.1], ['to normal speed', 1]]) {
-    test(`stays silent while Firefox changes the speed ${title}`, async (t) => {
-      const harness = await createContentHarness({
-        userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
-      });
-      t.after(() => close(harness));
-      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
-      const processed = outputGains(harness.getContext())[1];
-
-      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed }, enabled: true });
-      assert.equal(harness.media.playbackRate, speed);
-      assert.deepEqual(ramps(processed.gain).slice(-2), [
-        { to: 0, endTime: 1.03 },
-        { to: 1, endTime: 1.105 }
-      ]);
-    });
+  // Firefox's player clicks when its speed goes to normal speed itself or
+  // away from it, and, when the pitch follows the speed, from one side of
+  // normal speed to the other. The output is silent around such a change.
+  const FIREFOX_AGENT = 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0';
+  const PITCH_FOLLOWS = { ...SETTINGS, keepPitch: false };
+  const SILENT_GAP = [
+    { to: 0, endTime: 1.03 },
+    { to: 1, endTime: 1.105 }
+  ];
+  const BELOW_NORMAL = 1 - 0.0001;
+  const ABOVE_NORMAL = 1 + 0.0001;
+  // A Firefox page with the effect on, and what tells whether a change made
+  // from here on fades the output out.
+  async function firefoxWith(t, settings) {
+    const harness = await createContentHarness({ userAgent: FIREFOX_AGENT });
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings, enabled: true });
+    const processed = outputGains(harness.getContext())[1];
+    let from = ramps(processed.gain).length;
+    return {
+      harness,
+      processed,
+      set: (speed, enabled = true) =>
+        harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...settings, speed }, enabled }),
+      // Whether the output was faded out since the last time this was asked.
+      fadedOut() {
+        const faded = ramps(processed.gain).slice(from).some((ramp) => ramp.to === 0);
+        from = ramps(processed.gain).length;
+        return faded;
+      }
+    };
   }
 
-  test('stays silent while Firefox changes the speed away from normal speed', async (t) => {
-    const harness = await createContentHarness({
-      userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
-    });
-    t.after(() => close(harness));
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 1 }, enabled: true });
-    const processed = outputGains(harness.getContext())[1];
+  test('stays silent while Firefox changes the speed across normal speed, with the pitch following', async (t) => {
+    const { harness, processed, set } = await firefoxWith(t, PITCH_FOLLOWS);
 
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 1.01 }, enabled: true });
-    assert.equal(harness.media.playbackRate, 1.01);
-    assert.deepEqual(ramps(processed.gain).slice(-2), [
-      { to: 0, endTime: 1.03 },
-      { to: 1, endTime: 1.105 }
-    ]);
+    await set(1.1);
+    assert.equal(harness.media.playbackRate, 1.1);
+    assert.deepEqual(ramps(processed.gain).slice(-2), SILENT_GAP);
   });
 
-  // Speeds within a thousandth of each other count as the same speed, as
-  // they did before, so a request that close to the player's speed never
-  // fades; one further apart that passes normal speed does, however little.
-  test('fades in Firefox by where the speeds are, not by how near normal speed they are', async (t) => {
+  test('changes the speed at once in Firefox across normal speed, with the pitch kept', async (t) => {
+    const { harness, processed, set, fadedOut } = await firefoxWith(t, SETTINGS);
+
+    await set(1.1);
+    assert.equal(harness.media.playbackRate, 1.1);
+    assert.equal(fadedOut(), false);
+    for (const time of [1.01, 1.03, 1.06, 1.1, 1.2]) assert.equal(processed.gain.valueAt(time), 1);
+  });
+
+  // Normal speed itself is what clicks, and a speed a ten-thousandth beside
+  // it does not. So a change to normal speed lands beside it, on the side
+  // the player is on, with no gap; and going back the way it came has none.
+  for (const [title, from, landed] of [
+    ['below', 0.7, BELOW_NORMAL],
+    ['above', 1.2, ABOVE_NORMAL]
+  ]) {
+    for (const [pitch, settings] of [['following', PITCH_FOLLOWS], ['kept', SETTINGS]]) {
+      test(`lands just beside normal speed in Firefox from ${title}, with the pitch ${pitch}`, async (t) => {
+        const { harness, processed, set, fadedOut } = await firefoxWith(t, { ...settings, speed: from });
+
+        await set(1);
+        assert.equal(harness.media.playbackRate, landed);
+        assert.equal(fadedOut(), false);
+        // Asked for again, it stays where it landed.
+        await set(1);
+        assert.equal(harness.media.playbackRate, landed);
+
+        await set(from);
+        assert.equal(harness.media.playbackRate, from);
+        assert.equal(fadedOut(), false);
+        for (const time of [1.01, 1.03, 1.06, 1.1, 1.2]) assert.equal(processed.gain.valueAt(time), 1);
+      });
+    }
+  }
+
+  test('stays silent in Firefox from beside normal speed to its other side, with the pitch following', async (t) => {
+    const { harness, processed, set, fadedOut } = await firefoxWith(t, PITCH_FOLLOWS);
+    await set(1);
+    assert.equal(harness.media.playbackRate, BELOW_NORMAL);
+    assert.equal(fadedOut(), false);
+
+    // The second change, so a second later on the test's clock.
+    await set(1.01);
+    assert.equal(harness.media.playbackRate, 1.01);
+    assert.deepEqual(ramps(processed.gain).slice(-2), [
+      { to: 0, endTime: 2.03 },
+      { to: 1, endTime: 2.105 }
+    ]);
+    fadedOut();
+
+    // And landing on normal speed from there is on the upper side.
+    await set(1);
+    assert.equal(harness.media.playbackRate, ABOVE_NORMAL);
+    assert.equal(fadedOut(), false);
+  });
+
+  test('changes the speed at once in Firefox from beside normal speed to its other side, with the pitch kept', async (t) => {
+    const { harness, set, fadedOut } = await firefoxWith(t, SETTINGS);
+    await set(1);
+    assert.equal(harness.media.playbackRate, BELOW_NORMAL);
+
+    await set(1.01);
+    assert.equal(harness.media.playbackRate, 1.01);
+    assert.equal(fadedOut(), false);
+  });
+
+  // The player's own normal speed is not beside it: a player that is there
+  // when the effect asks for normal speed stays there, and leaving clicks.
+  test('stays silent while Firefox changes the speed away from normal speed', async (t) => {
+    const { harness, processed, set } = await firefoxWith(t, { ...SETTINGS, speed: 1 });
+    assert.equal(harness.media.playbackRate, 1);
+
+    await set(1.01);
+    assert.equal(harness.media.playbackRate, 1.01);
+    assert.deepEqual(ramps(processed.gain).slice(-2), SILENT_GAP);
+  });
+
+  // With the effect off the player is the page's again, at normal speed
+  // itself, and getting there from beside it clicks like any other way.
+  test('goes back to normal speed itself, in silence, when the effect is turned off beside it in Firefox', async (t) => {
+    const { harness, set } = await firefoxWith(t, PITCH_FOLLOWS);
+    await set(1);
+    assert.equal(harness.media.playbackRate, BELOW_NORMAL);
+
+    // The second change, so a second later on the test's clock. The
+    // unchanged path, which takes over, is silent while the player changes.
+    await set(1, false);
+    assert.equal(harness.media.playbackRate, 1);
+    const [unchanged, processed] = outputGains(harness.getContext());
+    assert.equal(unchanged.gain.valueAt(2.07), 0);
+    assert.equal(processed.gain.valueAt(2.07), 0);
+    assert.equal(unchanged.gain.valueAt(2.3), 1);
+  });
+
+  test('gives a live stream normal speed itself in Firefox', async (t) => {
     const harness = await createContentHarness({
-      userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
+      userAgent: FIREFOX_AGENT,
+      duration: Number.POSITIVE_INFINITY
     });
     t.after(() => close(harness));
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9989 }, enabled: true });
-    const processed = outputGains(harness.getContext())[1];
-    const fadesOut = (from) => ramps(processed.gain).slice(from).some((ramp) => ramp.to === 0);
+    harness.media.playbackRate = 0.7;
 
-    let before = ramps(processed.gain).length;
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9991 }, enabled: true });
-    assert.equal(fadesOut(before), false);
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    assert.equal(harness.media.playbackRate, 1);
+  });
 
-    before = ramps(processed.gain).length;
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 1.0009 }, enabled: true });
+  test('leaves normal speed as it is in Chromium', async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: PITCH_FOLLOWS, enabled: true });
+
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...PITCH_FOLLOWS, speed: 1 }, enabled: true });
+    assert.equal(harness.media.playbackRate, 1);
+  });
+
+  // Whether a change fades goes by where the two speeds are, not by how
+  // near normal speed they are: a small step on one side doesn't, and one
+  // from just below it to just above it does.
+  test('fades in Firefox by where the speeds are, not by how near normal speed they are', async (t) => {
+    const { harness, set, fadedOut } = await firefoxWith(t, { ...PITCH_FOLLOWS, speed: 0.9989 });
+
+    await set(0.9991);
+    assert.equal(harness.media.playbackRate, 0.9991);
+    assert.equal(fadedOut(), false);
+
+    await set(1.0009);
     assert.equal(harness.media.playbackRate, 1.0009);
-    assert.equal(fadesOut(before), true);
+    assert.equal(fadedOut(), true);
   });
 
   // A change that stays below normal speed, or stays above it, makes no
@@ -355,6 +468,184 @@ describe('content script audio processing', () => {
     assert.equal(harness.media.playbackRate, 1.5);
     assert.deepEqual(harness.runtimeMessages, []);
     assert.equal(harness.context.sources.length, 1);
+  });
+
+  // Holds the engine's wait before it changes a player (40 ms, for the
+  // output to fade out) until the test ends it, so that what happens in
+  // that wait doesn't depend on real time.
+  function holdPlayerChanges(window) {
+    const setTimeout = window.setTimeout.bind(window);
+    const waiting = [];
+    window.setTimeout = (callback, delay, ...rest) =>
+      delay === 40 ? waiting.push(callback) : setTimeout(callback, delay, ...rest);
+    return {
+      get waiting() {
+        return waiting.length;
+      },
+      end() {
+        while (waiting.length) waiting.shift()();
+      }
+    };
+  }
+  const outputLevels = (harness) =>
+    harness.context.gains
+      .filter((node) => node.connections.some((connection) => connection.target === harness.context.destination))
+      .map((node) => node.gain.value);
+
+  // Turning the extension off puts the player back once the output has faded
+  // out, which is a wait. A player that starts in that wait (a new song)
+  // runs the engine again, without the extension by then, and that must not
+  // drop the putting back: the page would be left with the effect's speed.
+  for (const [title, options, settings, landed] of [
+    ['beside normal speed in Firefox', { userAgent: FIREFOX_AGENT }, { ...PITCH_FOLLOWS, speed: 1 }, BELOW_NORMAL],
+    ["at the effect's speed in Firefox", { userAgent: FIREFOX_AGENT }, { ...PITCH_FOLLOWS, speed: 0.8 }, 0.8],
+    ["at the effect's speed and pitch mode in Chromium", {}, { ...SETTINGS, speed: 0.8 }, 0.8]
+  ]) {
+    test(`puts the player back when it starts again just as the extension is turned off, ${title}`, async (t) => {
+      const harness = await createContentHarness(options);
+      t.after(() => close(harness));
+      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...settings, speed: 0.9 }, enabled: true });
+      await harness.dispatch({ type: 'UPDATE_AUDIO', settings, enabled: true });
+      assert.equal(harness.media.playbackRate, landed);
+
+      const changes = holdPlayerChanges(harness.window);
+      await harness.turnOff();
+      // Waiting for the output to fade out.
+      assert.equal(changes.waiting, 1);
+      assert.equal(harness.media.playbackRate, landed);
+      harness.media.dispatchEvent(new harness.window.Event('play'));
+      changes.end();
+
+      assert.equal(harness.media.playbackRate, 1);
+      assert.equal(harness.media.preservesPitch, false);
+      FakeAudioContext.advance(1);
+      assert.deepEqual(outputLevels(harness), [1, 0]);
+    });
+  }
+
+  // Without the extension the page sets its own speed. One it changes to
+  // while the putting back is still waiting stands; the pitch mode, which
+  // only the engine changed, still goes back.
+  test('leaves a speed the page changes to just as the extension is turned off', async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    assert.equal(harness.media.preservesPitch, true);
+
+    const changes = holdPlayerChanges(harness.window);
+    await harness.turnOff();
+    assert.equal(changes.waiting, 1);
+    harness.media.playbackRate = 1.25;
+    harness.media.dispatchEvent(new harness.window.Event('play'));
+    changes.end();
+
+    assert.equal(harness.media.playbackRate, 1.25);
+    assert.equal(harness.media.preservesPitch, false);
+  });
+
+  // The engine sees the player's speed, not who set it. A page that sets
+  // the speed the player already has can't be told from one that set
+  // nothing, so the player is put back, as when no player starts at all.
+  test("puts the player back when the page sets the speed it already had as the extension is turned off", async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+
+    const changes = holdPlayerChanges(harness.window);
+    await harness.turnOff();
+    harness.media.playbackRate = SETTINGS.speed;
+    harness.media.dispatchEvent(new harness.window.Event('play'));
+    changes.end();
+
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.media.preservesPitch, false);
+  });
+
+  // A change to the effect that is still waiting when the extension goes is
+  // replaced by the one that puts the player back, for every player in the
+  // page. One that is out of the page just then keeps its waiting change,
+  // which must come to nothing: the effect is not put on a player after the
+  // extension has gone.
+  test('drops a waiting change to the effect for a player that was out of the page when the extension was turned off', async (t) => {
+    const harness = await createContentHarness({ userAgent: FIREFOX_AGENT });
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...PITCH_FOLLOWS, speed: 0.8 }, enabled: true });
+    const source = harness.context.sources[0];
+
+    const changes = holdPlayerChanges(harness.window);
+    // Across normal speed, so the player waits for the output to fade out.
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...PITCH_FOLLOWS, speed: 1.1, keepPitch: true }, enabled: true },
+      { advance: 0 }
+    );
+    assert.equal(changes.waiting, 1);
+    assert.equal(harness.media.playbackRate, 0.8);
+
+    harness.media.remove();
+    await waitFor(() => source.connections.length === 0);
+    await harness.turnOff();
+    harness.window.document.body.appendChild(harness.media);
+    harness.window.document.dispatchEvent(new harness.window.Event('yt-navigate-finish'));
+    await waitFor(() => source.connections.length > 0);
+    changes.end();
+
+    // Neither the speed nor the pitch mode the effect asked for.
+    assert.equal(harness.media.playbackRate, 0.8);
+    assert.equal(harness.media.preservesPitch, false);
+    FakeAudioContext.advance(1);
+    assert.deepEqual(outputLevels(harness), [1, 0]);
+  });
+
+  // The engine handles 32 players at a time. One beyond that, with a change
+  // to the effect still waiting from when it was handled, is put back
+  // directly when the effect is turned off, and the waiting change must
+  // not undo that.
+  test('drops a waiting change to the effect for a player it can no longer handle when the effect is turned off', async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+    const { document } = harness.window;
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: PITCH_FOLLOWS, enabled: true });
+    const source = harness.context.sources[0];
+
+    const changes = holdPlayerChanges(harness.window);
+    // A change of pitch mode, so the player waits for the output to fade out.
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9 }, enabled: true },
+      { advance: 0 }
+    );
+    assert.equal(changes.waiting, 1);
+    changes.end();
+    assert.equal(harness.media.preservesPitch, true);
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...PITCH_FOLLOWS, speed: 0.9 }, enabled: true },
+      { advance: 0 }
+    );
+    assert.equal(changes.waiting, 1);
+
+    // Out of the page, and 32 other players take its place.
+    harness.media.remove();
+    await waitFor(() => source.connections.length === 0);
+    for (let index = 0; index < 32; index++) {
+      const other = document.createElement('audio');
+      Object.defineProperties(other, {
+        duration: { configurable: true, value: 300 },
+        mediaKeys: { configurable: true, value: null },
+        readyState: { configurable: true, value: 2 }
+      });
+      document.body.append(other);
+    }
+    await waitFor(() => harness.context.sources.length === 33);
+    document.body.appendChild(harness.media);
+    document.dispatchEvent(new harness.window.Event('yt-navigate-finish'));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(source.connections.length, 0);
+
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: PITCH_FOLLOWS, enabled: false }, { advance: 0 });
+    assert.equal(harness.media.playbackRate, 1);
+    changes.end();
+
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.media.preservesPitch, false);
   });
 
   test('reconnects captured media unchanged after the extension is turned off', async (t) => {

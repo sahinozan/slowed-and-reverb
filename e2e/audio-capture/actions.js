@@ -30,13 +30,24 @@ function withDeadline(promise, ms, message) {
 
 // A step of the page's own, run in the page: the browser driver serializes
 // it, so it has to stay self-contained. It gives up after `timeoutMs`,
-// removing the listeners and timers it added either way.
+// removing the listeners and timers it added either way (all but
+// startAsExtensionGoes, whose are removed by the step that follows it).
 //   play: plays the player.
 //   nextSong: plays `src` on the same player, then asks for normal speed
 //     once it is playing, as Spotify does.
 //   putBack: takes the player out of the page for `waitMs`, then puts it
 //     back at speed `rate` and plays it, as YouTube does.
-function pageStep({ step, timeoutMs, src, rate, waitMs }) {
+//   startAsExtensionGoes: gets ready to tell the page that the player has
+//     started (a `play` event), as it does when a song begins, at the
+//     moment the engine finds the extension gone. The engine asks with the
+//     event `checkEvent`, which the extension cancels while it is there;
+//     the first one left uncancelled is that moment, and the start is sent
+//     right after the engine has dealt with it, inside any wait it began.
+//     This step only sets that up, so that it is in place before the
+//     extension is turned off, and what it set up outlives the step.
+//   startedAsExtensionGoes: waits for that start to have been sent, and
+//     takes down what the step before set up.
+function pageStep({ step, timeoutMs, src, rate, waitMs, checkEvent }) {
   const player = document.getElementById('player');
   const cleanups = [];
   let timer;
@@ -74,6 +85,41 @@ function pageStep({ step, timeoutMs, src, rate, waitMs }) {
       parent.append(player);
       await player.play();
       return 'playing';
+    },
+    async startAsExtensionGoes() {
+      const timers = new Set();
+      let takeDown;
+      const sent = new Promise((resolve) => {
+        const onCheck = (event) => {
+          // Whether it was cancelled is known once every listener has run,
+          // and the engine acts in the same turn it asked in.
+          const id = setTimeout(() => {
+            timers.delete(id);
+            if (event.defaultPrevented) return;
+            takeDown();
+            player.dispatchEvent(new Event('play'));
+            resolve('started');
+          }, 0);
+          timers.add(id);
+        };
+        takeDown = () => {
+          document.removeEventListener(checkEvent, onCheck);
+          for (const id of timers) clearTimeout(id);
+          timers.clear();
+        };
+        document.addEventListener(checkEvent, onCheck);
+      });
+      window.startAsExtensionGoes = { sent, takeDown };
+      return 'ready';
+    },
+    async startedAsExtensionGoes() {
+      const waiting = window.startAsExtensionGoes;
+      if (!waiting) throw new Error('startAsExtensionGoes was not run first');
+      cleanups.push(() => {
+        waiting.takeDown();
+        delete window.startAsExtensionGoes;
+      });
+      return waiting.sent;
     }
   };
   const run = steps[step];

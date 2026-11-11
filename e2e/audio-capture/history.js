@@ -95,8 +95,10 @@ const HISTORY = [
   {
     // Not a defect from the past: the control for the rule that Firefox's
     // player may change speed at once only while it stays on one side of
-    // normal speed. With the rule widened to every change of speed, the
-    // changes across normal speed are made while they can be heard.
+    // normal speed, or, with the pitch kept, goes from one side to the
+    // other. With the rule widened to every change of speed, the changes
+    // across normal speed with the pitch following are made while they can
+    // be heard.
     id: 'speed-across-normal',
     commit: null,
     defect: "A click in Firefox when the speed changes from one side of normal speed to the other: the player changed while it could be heard",
@@ -108,13 +110,13 @@ const HISTORY = [
     mutations: [
       {
         file: 'youtube-main.js',
-        find: 'return FIREFOX && speedSide(media.playbackRate) !== speedSide(speed);',
+        find: 'if (!FIREFOX) return false;',
         replace: 'return false;',
         label: 'every change of speed is made at once'
       },
       {
         file: 'spotify-main.js',
-        find: 'return FIREFOX && speedSide(media.playbackRate) !== speedSide(speed);',
+        find: 'if (!FIREFOX) return false;',
         replace: 'return false;',
         label: 'every change of speed is made at once'
       }
@@ -124,6 +126,61 @@ const HISTORY = [
     // 0.8 to normal speed, was at 0.036. Every change from one side to the
     // other was at 0.53 or more, so the control asks for those.
     expect: [{ code: 'click', during: ['during speed 1.1, across normal speed', 'during speed 0.9, back across normal speed'] }]
+  },
+  {
+    // The silent gap Firefox had whenever the speed landed on normal speed,
+    // until the engines began to land just beside it (issue #173). Put back
+    // by giving the player normal speed itself: the engines then go silent
+    // for the change, as they must for a change to normal speed, where the
+    // check allows no silence.
+    id: 'speed-onto-normal',
+    commit: null,
+    defect: 'A silent gap in Firefox when the speed lands on normal speed: the player was given normal speed itself, which it clicks at, so the engines went silent around the change',
+    kind: 'narrow',
+    note: 'In every version before the engines landed beside normal speed. No commit is named because this control came with the fix.',
+    browsers: ['firefox'],
+    check: 'transitions',
+    sites: ['youtube', 'spotify'],
+    mutations: [
+      {
+        file: 'youtube-main.js',
+        find: 'if (!FIREFOX || speedSide(speed) !== 0) return speed;',
+        replace: 'return speed;',
+        label: 'normal speed is given to the player as it is'
+      },
+      {
+        file: 'spotify-main.js',
+        find: 'if (!FIREFOX || speedSide(speed) !== 0) return speed;',
+        replace: 'return speed;',
+        label: 'normal speed is given to the player as it is'
+      }
+    ],
+    expect: [{ code: 'gap', during: 'during speed 1, landing beside normal speed' }]
+  },
+  {
+    // Turning the extension off puts the player back after a short wait,
+    // once the output has faded out. A player that started in that wait
+    // ran the engine again, which dropped the waiting change, and the page
+    // was left with the effect's speed. Chromium isn't here: with the pitch
+    // mode unchanged its player doesn't click at a change of speed, so the
+    // engine puts it back at once and nothing waits.
+    id: 'off-while-starting',
+    commit: null,
+    defect: "After the extension was turned off, YouTube kept the effect's speed when a player started in the moment before the engine put it back",
+    kind: 'exact',
+    note: 'In every version from 02ef174, which made the player change wait for the output to fade out, until the change that added this control, which names no commit for that reason. The line that dropped the waiting change is put back.',
+    browsers: ['firefox'],
+    check: 'turning the extension off as a player starts',
+    sites: ['youtube'],
+    mutations: [
+      {
+        file: 'youtube-main.js',
+        find: '        // (changePlayback).\n        setPipelineEnabled(pipeline, false);',
+        replace: '        cancelPendingPlayback(pipeline);\n        setPipelineEnabled(pipeline, false);',
+        label: 'a player that starts drops the change that puts the player back'
+      }
+    ],
+    expect: [{ code: 'not-restored', during: 'turn the extension off' }]
   },
   {
     id: '3fbb1c3',

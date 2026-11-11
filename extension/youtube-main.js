@@ -70,20 +70,40 @@
   const SCHEDULE_AHEAD_SECONDS = 0.02;
 
   // The player itself clicks when it changes how it plays: Firefox for a
-  // change of pitch mode and for a change of speed to normal speed, away
-  // from it, or from one side of it to the other, 5 to 20 ms after it;
-  // Chromium only for a change of pitch mode, about 50 ms after it (measured
-  // on both). So the output fades out first, the player changes once it is
-  // silent, and the output stays silent until the click has passed.
+  // change of pitch mode and for a change of speed to normal speed itself,
+  // away from it, or, with the pitch following the speed, from one side of
+  // it to the other; Chromium only for a change of pitch mode, about 50 ms
+  // after it (measured on both). So the output fades out first, the player
+  // changes once it is silent, and the output stays silent until the click
+  // has passed.
+  //
+  // How long that is in Firefox depends on the machine. On a Mac every
+  // click had ended within 40 ms of the change, and a silence of 50 ms hid
+  // it; on a Linux runner one came 52 ms after the change and got through
+  // that silence (Firefox 159 and 160, issue #173). So the silence stays at
+  // 80 ms there too.
   //
   // A change of speed that stays below normal speed, or stays above it,
   // makes no click in Firefox, whatever its size (measured in Firefox 159
   // and 160, for changes from 0.01 to 0.4), so it is made at once: a silent
   // gap for each step would turn stepping through speeds into a stutter.
+  //
+  // It is normal speed itself that Firefox's player clicks at. A speed a
+  // ten-thousandth beside it behaves like any other: going to it and from it
+  // on one side makes no click, and with the pitch kept neither does going
+  // from one side to the other (measured in Firefox 160, issue #173). So
+  // while the effect is on, a change to normal speed lands that far to the
+  // side the player is on (playerSpeed), 0.17 of a cent off in pitch, and
+  // needs no gap. A player that is at normal speed already stays on it.
   const FIREFOX = window.navigator.userAgent.includes('Firefox');
+  const BESIDE_NORMAL_SPEED = 0.0001;
+  // Speeds nearer each other than this are the same speed. Well under
+  // BESIDE_NORMAL_SPEED, which has to count as a change from normal speed.
+  const SAME_SPEED = 0.00001;
   const DIP_FADE_SECONDS = 0.01;
   // After the fade-out has finished, with a margin for page timers.
   const PLAYER_CHANGE_DELAY_MS = 40;
+  // How long the output stays silent after the player changes.
   const PLAYER_CLICK_SECONDS = 0.08;
   // Firefox also goes silent for about 165 ms, then clicks, when a player is
   // first routed into the graph.
@@ -418,18 +438,35 @@
     return Math.sign(speed - 1);
   }
 
+  // The speed to give the player for the effect's speed: the speed itself,
+  // or for normal speed in Firefox, a speed just beside it on the side the
+  // player is on.
+  function playerSpeed(media, speed) {
+    if (!FIREFOX || speedSide(speed) !== 0) return speed;
+    return 1 + speedSide(media.playbackRate) * BESIDE_NORMAL_SPEED;
+  }
+
   function playbackClicks(media, speed, keepPitch) {
     if (media.preservesPitch !== keepPitch) return true;
-    // A speed this close to the player's own is no change of speed.
-    if (Math.abs(media.playbackRate - speed) <= 0.001) return false;
-    return FIREFOX && speedSide(media.playbackRate) !== speedSide(speed);
+    if (Math.abs(media.playbackRate - speed) <= SAME_SPEED) return false;
+    if (!FIREFOX) return false;
+    const from = speedSide(media.playbackRate);
+    const to = speedSide(speed);
+    if (from === to) return false;
+    // To normal speed or from it always clicks. From one side of it to the
+    // other clicks when the pitch follows the speed, and not when it is kept.
+    return from === 0 || to === 0 || !keepPitch;
+  }
+
+  function setPitchMode(media, keepPitch) {
+    media.preservesPitch = keepPitch;
+    media.mozPreservesPitch = keepPitch;
+    media.webkitPreservesPitch = keepPitch;
   }
 
   function setPlayback(media, speed, keepPitch) {
     media.playbackRate = speed;
-    media.preservesPitch = keepPitch;
-    media.mozPreservesPitch = keepPitch;
-    media.webkitPreservesPitch = keepPitch;
+    setPitchMode(media, keepPitch);
   }
 
   // Drops a player change still waiting for the output to fade out. Any
@@ -449,9 +486,19 @@
       return;
     }
 
+    const speedBefore = media.playbackRate;
     const change = () => {
       if (pipeline.pendingPlayback !== change) return;
       pipeline.pendingPlayback = null;
+      // A change to the effect is made only while the effect is on and the
+      // extension is there. Turning either off replaces a waiting change
+      // with the one that puts the player back, except for a player it
+      // can't reach just then (out of the page, or one too many), whose
+      // waiting change ends here.
+      if (enabled && !(bridgeConnected && effectEnabled)) {
+        setPipelineEnabled(pipeline, false);
+        return;
+      }
       // Timed from the change itself, in case this ran late, and scheduled
       // first, since changing the player can run this file's code again.
       pipeline.quietUntil = Math.max(
@@ -459,6 +506,15 @@
         audioContext.currentTime + PLAYER_CLICK_SECONDS
       );
       setPipelineEnabled(pipeline, enabled);
+      // Without the extension the page sets its own speed. If the speed is
+      // not what it was when this change was planned, the page has chosen
+      // one meanwhile, and it stands: only the pitch mode, which the page
+      // doesn't set, goes back. (A page that sets the speed the player
+      // already had can't be told from one that set nothing.)
+      if (!bridgeConnected && Math.abs(media.playbackRate - speedBefore) > SAME_SPEED) {
+        setPitchMode(media, keepPitch);
+        return;
+      }
       setPlayback(media, speed, keepPitch);
     };
     // While a change is waiting, the output stays silent.
@@ -623,7 +679,11 @@
 
     if (!bridgeConnected) {
       if (pipeline && connectPipeline(media, pipeline)) {
-        cancelPendingPlayback(pipeline);
+        // A change still waiting here is kept. Dropping it, as this once
+        // did, lost the change that puts the player back when a player
+        // started in its wait, and the page was left with the effect's
+        // speed. A waiting change to the effect ends by itself
+        // (changePlayback).
         setPipelineEnabled(pipeline, false);
       }
       return;
@@ -634,6 +694,7 @@
       if (pipeline && connectPipeline(media, pipeline)) {
         changePlayback(media, pipeline, false, speed, keepPitch);
       } else {
+        if (pipeline) cancelPendingPlayback(pipeline);
         setPlayback(media, speed, keepPitch);
       }
       return;
@@ -647,8 +708,10 @@
     const live = isLiveMedia(media);
     liveStreamDetected = liveStreamDetected || live;
 
+    // A live stream plays at normal speed itself.
     const playback = live ? NEUTRAL_SETTINGS : settings;
-    changePlayback(media, pipeline, true, playback.speed, playback.keepPitch);
+    const speed = live ? playback.speed : playerSpeed(media, playback.speed);
+    changePlayback(media, pipeline, true, speed, playback.keepPitch);
 
     smoothTo(pipeline.eqLow.gain, settings.eqLow);
     smoothTo(pipeline.eqMid.gain, settings.eqMid);
