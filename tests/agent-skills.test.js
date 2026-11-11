@@ -55,10 +55,11 @@ const FOLDERS = new Set(tracked.filter((file) => file.includes('/')).map((file) 
 // doesn't have, a file that isn't in the repository, a heading its file
 // doesn't have. The description is plain text, so its commands and files
 // are found as words. The text after it gives them in code: a piece of
-// code that is one path is a file, spelled as it is, and in a longer one,
-// such as a command with a comment after it, a word is a file when it
-// starts with one of the repository's folders or is a name with a file's
-// ending.
+// code that is one path is a file, spelled as it is. So is a word of any
+// piece of code, such as a command with a comment after it, when it is
+// below one of the repository's folders or has a file's ending, without
+// the quotes, brackets and punctuation around it or a ./ before it. A path
+// from the root of the disk, such as /dev/null, isn't the repository's.
 function problems({ fields, body }, has = (file) => fs.existsSync(path.join(root, file))) {
   const found = [];
   const texts = [fields.description, ...coded(body)];
@@ -67,9 +68,9 @@ function problems({ fields, body }, has = (file) => fs.existsSync(path.join(root
   }
   const words = fields.description.match(/[\w.@-]+(?:\/[\w.*-]+)*/g).map((word) => word.replace(/\.$/, ''));
   const whole = [...words, ...coded(body)].filter((text) => PATH.test(text) && (text.includes('/') || FILE.test(text)));
-  const inside = coded(body).filter((text) => /\s/.test(text))
-    .flatMap((text) => text.split(/\s+/).map((word) => word.replace(/^[("']+|[)"',;:.]+$/g, '')))
-    .filter((word) => PATH.test(word) && (word.includes('/') ? FOLDERS.has(word.split('/')[0]) : FILE.test(word)));
+  const inside = coded(body)
+    .flatMap((text) => text.split(/\s+/).map((word) => word.replace(/^[("']+|[)"',;:.]+$/g, '').replace(/^\.\//, '')))
+    .filter((word) => PATH.test(word) && !word.startsWith('/') && ((word.includes('/') && FOLDERS.has(word.split('/')[0])) || FILE.test(word)));
   for (const given of new Set([...whole, ...inside].filter((file) => !MADE.test(file)))) {
     const pattern = given.endsWith('/') ? `${given}**` : given;
     const there = tracked.filter((file) => matches(pattern, file));
@@ -159,6 +160,11 @@ describe('the skills for coding agents', () => {
       [changed('release', 'it runs `npm run check`', 'it runs `npm run constructor`'), "npm run constructor is not one of package.json's scripts"],
       // A file's name is taken as it is spelled, a period after it included.
       [changed('release', '`scripts/version-set.js`', '`scripts/version-set.js.`'), "scripts/version-set.js. isn't in the repository"],
+      // A file after ./, in quotes, and below a folder the repository
+      // doesn't have.
+      [changed('release', '`scripts/version-set.js`', '`node ./scripts/version-sets.js`'), "scripts/version-sets.js isn't in the repository"],
+      [changed('release', '`scripts/version-set.js`', '`"scripts/version-sets.js"`'), "scripts/version-sets.js isn't in the repository"],
+      [changed('release', '`scripts/version-set.js`', '`node script/version-set.js`'), "script/version-set.js isn't in the repository"],
       // In the description, where they are plain words.
       [changed('land-dependabot', 'package.json and package-lock.json', 'package.json and package-locks.json'), "package-locks.json isn't in the repository"],
       [changed('popup-change', '(extension/settings.js).', '(extension/setting.js).'), "extension/setting.js isn't in the repository"],
