@@ -462,7 +462,7 @@ describe('Spotify main-world audio engine', () => {
     assert.equal(harness.media.playbackRate, 0.95);
     await settle();
     assert.equal(harness.media.playbackRate, 1.05);
-    assert.equal(processed.gain.valueAt(3.04), 0);
+    assert.equal(processed.gain.valueAt(3.07), 0);
     assert.equal(processed.gain.valueAt(3.2), 1);
 
     // Above it, at once again.
@@ -519,9 +519,8 @@ describe('Spotify main-world audio engine', () => {
     assert.equal(harness.media.playbackRate, 1 - 0.0001);
     await settle();
     assert.equal(harness.media.playbackRate, 1.01);
-    // Silent for 50 ms after the player changes, and back soon after.
-    assert.equal(processed.gain.valueAt(4.04), 0);
-    assert.equal(processed.gain.valueAt(4.08), 1);
+    assert.equal(processed.gain.valueAt(4.07), 0);
+    assert.equal(processed.gain.valueAt(4.2), 1);
 
     // To normal speed from above: at once, and just above it.
     context.currentTime = 5;
@@ -537,7 +536,7 @@ describe('Spotify main-world audio engine', () => {
     assert.equal(harness.media.playbackRate, 1 + 0.0001);
     await settle();
     assert.equal(harness.media.playbackRate, 1);
-    assert.equal(unchanged.gain.valueAt(6.04), 0);
+    assert.equal(unchanged.gain.valueAt(6.07), 0);
     assert.equal(unchanged.gain.valueAt(6.3), 1);
 
     harness.dom.window.close();
@@ -582,7 +581,7 @@ describe('Spotify main-world audio engine', () => {
     assert.equal(harness.media.playbackRate, 1);
     await settle();
     assert.equal(harness.media.playbackRate, 1.01);
-    assert.equal(processed.gain.valueAt(4.04), 0);
+    assert.equal(processed.gain.valueAt(4.07), 0);
     assert.equal(processed.gain.valueAt(4.2), 1);
 
     harness.dom.window.close();

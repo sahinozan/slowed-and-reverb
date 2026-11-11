@@ -71,11 +71,18 @@
   const SCHEDULE_AHEAD_SECONDS = 0.02;
 
   // The player itself clicks when it changes how it plays: Firefox for a
-  // change of pitch mode and for a change of speed to normal speed, away
-  // from it, or from one side of it to the other, within 40 ms of it;
-  // Chromium only for a change of pitch mode, about 50 ms after it (measured
-  // on both). So the output fades out first, the player changes once it is
-  // silent, and the output stays silent until the click has passed.
+  // change of pitch mode and for a change of speed to normal speed itself,
+  // away from it, or, with the pitch following the speed, from one side of
+  // it to the other; Chromium only for a change of pitch mode, about 50 ms
+  // after it (measured on both). So the output fades out first, the player
+  // changes once it is silent, and the output stays silent until the click
+  // has passed.
+  //
+  // How long that is in Firefox depends on the machine. On a Mac every
+  // click had ended within 40 ms of the change, and a silence of 50 ms hid
+  // it; on a Linux runner one came 52 ms after the change and got through
+  // that silence (Firefox 159 and 160, issue #173). So the silence stays at
+  // 80 ms there too.
   //
   // A change of speed that stays below normal speed, or stays above it,
   // makes no click in Firefox, whatever its size (measured in Firefox 159
@@ -97,10 +104,8 @@
   const DIP_FADE_SECONDS = 0.01;
   // After the fade-out has finished, with a margin for page timers.
   const PLAYER_CHANGE_DELAY_MS = 40;
-  // How long the output stays silent after the player changes. In Firefox
-  // the click got through a silence of 30 ms and never through 40, 50 or
-  // 60 (Firefox 160, issue #173), so 50 there.
-  const PLAYER_CLICK_SECONDS = FIREFOX ? 0.05 : 0.08;
+  // How long the output stays silent after the player changes.
+  const PLAYER_CLICK_SECONDS = 0.08;
   // Firefox also goes silent for about 165 ms, then clicks, when a player is
   // first routed into the graph.
   const CAPTURE_SILENCE_SECONDS = FIREFOX ? 0.25 : 0;

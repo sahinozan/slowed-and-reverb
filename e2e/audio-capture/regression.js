@@ -94,8 +94,8 @@ const EXCERPT_AFTER_MS = 400;
 // itself or away from it, and, with the pitch following the speed, from one
 // side of it to the other) fades the output out over 10 ms from 20 ms
 // ahead, changes the player 40 ms after the request and keeps the output
-// silent until 80 ms after that in Chromium, 50 ms in Firefox: about 90 ms
-// of silence at most. 60 ms more allows for a page timer running late.
+// silent until 80 ms after that: about 90 ms of silence. 60 ms more allows
+// for a page timer running late.
 const DIP_MS = 150;
 // A player routed into the graph for the first time, counted from the
 // context's first frame, which the recording keeps: Firefox's engines keep
