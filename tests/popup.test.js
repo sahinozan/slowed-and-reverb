@@ -1563,8 +1563,9 @@ describe('popup behavior', () => {
   // any tab, and a change made then would be shown wrongly once the older
   // answer came (issue #175). So the parts that set the effect are held.
   // jsdom doesn't act on `inert`, so these tests check that the parts are
-  // marked; that a marked part takes no click or key is checked in the
-  // browsers (e2e/ui/popup-layout.spec.js).
+  // marked, and that what a held control reports all the same is dropped;
+  // that a marked part takes no click or key is checked in the browsers
+  // (e2e/ui/popup-layout.spec.js).
   describe("holding the controls until the tab's first answer", () => {
     const settle = async () => {
       for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
@@ -1612,6 +1613,144 @@ describe('popup behavior', () => {
       assert.equal(held(harness), false);
       assert.equal(marked(harness), 0);
       assert.equal(document.getElementById('speed-input').value, '0.80');
+    });
+
+    // `inert` stops a new click or key, but not what was under way when the
+    // hold began, such as a slider being dragged in Chromium. jsdom stops
+    // nothing, so here every control reports as one under way would.
+    test('drops what a held control reports, and hears it again after the answer', async (t) => {
+      const tabState = deferredTabState();
+      const harness = await createPopupHarness({ onTabMessage: tabState.onTabMessage });
+      t.after(() => close(harness));
+      const { window } = harness;
+      const document = window.document;
+      const id = (name) => document.getElementById(name);
+      const fire = (element, type, init) => element.dispatchEvent(new window.Event(type, { bubbles: true, ...init }));
+      // What the popup itself has written, not what a control was given.
+      const reports = () => ({
+        speed: id('speed-input').getAttribute('aria-valuetext'),
+        reverbLabel: id('reverb-value').textContent,
+        status: id('power-status').textContent,
+        preset: presetBar(harness),
+        pitchWarning: id('pitch-warning-banner').hidden
+      });
+      const before = reports();
+      assert.equal(before.speed, '1.00x');
+
+      const actions = {
+        'the + button': () => id('speed-up-btn').click(),
+        // Held for longer than the button waits before it repeats.
+        'the + button held down': async () => {
+          id('speed-up-btn').dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+          await new Promise((resolve) => setTimeout(resolve, 480));
+          id('speed-up-btn').dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true, button: 0 }));
+        },
+        'the speed slider': () => {
+          id('speed-slider').value = '1.3';
+          fire(id('speed-slider'), 'input');
+          fire(id('speed-slider'), 'change');
+        },
+        'the speed field': () => {
+          id('speed-input').value = '1.2';
+          id('speed-input').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          fire(id('speed-input'), 'blur', { bubbles: false });
+        },
+        'the reverb slider': () => {
+          id('reverb-slider').value = '70';
+          fire(id('reverb-slider'), 'input');
+        },
+        'a preset': () => document.querySelector('[data-preset="nightcore"]').click(),
+        'the switch': () => {
+          id('power-toggle').checked = !id('power-toggle').checked;
+          fire(id('power-toggle'), 'change');
+        },
+        'Keep Original Pitch': () => {
+          id('keep-pitch-toggle').checked = true;
+          fire(id('keep-pitch-toggle'), 'change');
+        },
+        'an EQ handle': () =>
+          id('eq-handle-low').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })),
+        'Reset Defaults': () => id('reset-btn').click(),
+        'Save Current': () => {
+          id('preset-name-input').value = 'Mine';
+          id('save-preset-btn').click();
+        }
+      };
+      for (const [name, act] of Object.entries(actions)) {
+        await act();
+        await settle();
+        assert.equal(audioUpdates(harness).length, 0, `${name} sent a change to the tab`);
+        assert.deepEqual(reports(), before, `${name} changed what the popup shows`);
+        assert.equal(harness.local.data.customPresets, undefined, `${name} saved a preset`);
+        // As the tab's answer will: put back what the control itself shows.
+        id('speed-slider').value = '1';
+        id('speed-input').value = '1.00';
+        id('reverb-slider').value = '0';
+        id('keep-pitch-toggle').checked = false;
+        id('power-toggle').checked = false;
+        id('preset-name-input').value = '';
+      }
+
+      tabState.release(answer({ enabled: true }));
+      await settle();
+      id('speed-up-btn').click();
+      await settle();
+      assert.equal(id('speed-input').value, '1.01');
+      assert.equal(audioUpdates(harness).at(-1).message.settings.speed, 1.01);
+    });
+
+    // After a reload or a permission the popup asks the tab again. The
+    // controls are disabled then, and are enabled only once the popup has
+    // this tab's settings to show, so there is no moment to change them in.
+    test('keeps the controls disabled after a reload until it has what the tab was set to', async (t) => {
+      let reachable = false;
+      let holding = false;
+      let asked = false;
+      let letRecall;
+      const recalled = new Promise((resolve) => {
+        letRecall = resolve;
+      });
+      const harness = await createPopupHarness({
+        session: {
+          'tabState:9': { origin: 'https://www.youtube.com', enabled: false, settings: SLOWED }
+        },
+        onTabMessage(_tabId, message) {
+          if (message.type !== 'GET_STATE') return { success: true };
+          return reachable
+            ? answer({ enabled: false })
+            : { enabled: false, blocked: true, blockReason: 'unsupported' };
+        },
+        beforeLoad(window) {
+          const { runtime } = window.chrome;
+          const send = runtime.sendMessage.bind(runtime);
+          runtime.sendMessage = async (message, ...rest) => {
+            if (holding && message?.type === 'GET_TAB_STATE') {
+              asked = true;
+              await recalled;
+            }
+            return send(message, ...rest);
+          };
+        }
+      });
+      t.after(() => close(harness));
+      const document = harness.window.document;
+      assert.equal(document.getElementById('reload-panel').hidden, false);
+
+      reachable = true;
+      holding = true;
+      document.getElementById('reload-btn').click();
+      await settle();
+
+      // The tab has answered, and the popup is waiting for what is remembered.
+      assert.equal(asked, true);
+      assert.equal(document.getElementById('power-toggle').disabled, true);
+      assert.equal(document.getElementById('speed-up-btn').disabled, true);
+
+      letRecall();
+      await settle();
+      assert.equal(document.getElementById('speed-up-btn').disabled, false);
+      assert.equal(document.getElementById('speed-input').value, '0.80');
+      assert.equal(document.getElementById('power-toggle').checked, false);
     });
 
     test('holds them from the start, while what is stored is still being read', async (t) => {

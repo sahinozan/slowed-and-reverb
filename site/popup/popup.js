@@ -315,6 +315,23 @@ const heldForTab = [
 ];
 // How long the tab may take to answer before the held parts dim.
 const TAB_SLOW_MS = 300;
+// What a held part's controls report is dropped before their own listeners
+// hear it. `inert` already keeps new clicks and keys away from them, but not
+// what was under way when the hold began: Chromium lets a slider that is
+// being dragged go on moving.
+const HELD_EVENTS = ['pointerdown', 'click', 'keydown', 'input', 'change', 'blur'];
+let controlsHeld = false;
+for (const part of heldForTab) {
+  for (const type of HELD_EVENTS) {
+    // Added before any other listener, and for the way down, so it comes
+    // first on the part itself too.
+    part.addEventListener(type, (event) => {
+      if (!controlsHeld) return;
+      event.stopImmediatePropagation();
+      if (event.cancelable) event.preventDefault();
+    }, true);
+  }
+}
 
 const eqState = { low: 0, mid: 0, high: 0 };
 
@@ -1358,14 +1375,16 @@ function bindControls() {
 // used last in any tab, not this tab's. A change made then would be made on
 // top of the wrong settings, and the tab's answer, which is older than the
 // change, would then be shown over it. So the parts that set the effect are
-// held meanwhile (init): they take no clicks or keys (`inert`) and look as
-// they always do, since the answer usually comes at once. Only when it takes
-// longer than TAB_SLOW_MS do they dim, to show that the popup is waiting.
+// held meanwhile (init): they take no clicks or keys (`inert`, and
+// HELD_EVENTS for what was already under way) and look as they always do,
+// since the answer usually comes at once. Only when it takes longer than
+// TAB_SLOW_MS do they dim, to show that the popup is waiting.
 //
 // Asking the tab again later, after a reload or a permission, needs no hold:
-// the controls are disabled until its answer, and what the popup shows then
-// is this tab's.
+// the controls are disabled by then, and syncWithActiveTab enables them only
+// once it has this tab's settings to show.
 function holdControlsForTab() {
+  controlsHeld = true;
   for (const part of heldForTab) part.setAttribute('inert', '');
   tabSlowTimer = window.setTimeout(() => document.body.classList.add('tab-slow'), TAB_SLOW_MS);
 }
@@ -1375,6 +1394,7 @@ function releaseControlsForTab() {
   tabSlowTimer = null;
   document.body.classList.remove('tab-slow');
   for (const part of heldForTab) part.removeAttribute('inert');
+  controlsHeld = false;
 }
 
 async function syncWithActiveTab() {
@@ -1448,6 +1468,10 @@ async function syncWithActiveTab() {
     return;
   }
 
+  // Asked before the controls are enabled below, so that nothing can be
+  // changed between their being enabled and this tab's settings being shown.
+  const remembered = state?.enabled ? null : await recallTabState(tab.id, tab.url);
+
   setBlocked(false);
   hideSpotifyPermissionPanel();
   hideYouTubePermissionPanel();
@@ -1460,8 +1484,6 @@ async function syncWithActiveTab() {
     setTabIcon(tab.id, true);
     return;
   }
-
-  const remembered = await recallTabState(tab.id, tab.url);
 
   if (remembered) {
     applySettingsToUI(remembered.settings);
