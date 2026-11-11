@@ -36,7 +36,10 @@ function withDeadline(promise, ms, message) {
 //     once it is playing, as Spotify does.
 //   putBack: takes the player out of the page for `waitMs`, then puts it
 //     back at speed `rate` and plays it, as YouTube does.
-function pageStep({ step, timeoutMs, src, rate, waitMs }) {
+//   keepStarting: for `forMs`, tells the page every `waitMs` that the
+//     player has started (a `play` event), as it does when a song begins,
+//     so that one falls in any short wait of the engine's.
+function pageStep({ step, timeoutMs, src, rate, waitMs, forMs }) {
   const player = document.getElementById('player');
   const cleanups = [];
   let timer;
@@ -74,6 +77,16 @@ function pageStep({ step, timeoutMs, src, rate, waitMs }) {
       parent.append(player);
       await player.play();
       return 'playing';
+    },
+    async keepStarting() {
+      const until = performance.now() + forMs;
+      let starts = 0;
+      while (performance.now() < until) {
+        player.dispatchEvent(new Event('play'));
+        starts++;
+        await wait(waitMs);
+      }
+      return starts;
     }
   };
   const run = steps[step];

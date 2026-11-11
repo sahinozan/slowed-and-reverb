@@ -95,8 +95,10 @@ const HISTORY = [
   {
     // Not a defect from the past: the control for the rule that Firefox's
     // player may change speed at once only while it stays on one side of
-    // normal speed. With the rule widened to every change of speed, the
-    // changes across normal speed are made while they can be heard.
+    // normal speed, or, with the pitch kept, goes from one side to the
+    // other. With the rule widened to every change of speed, the changes
+    // across normal speed with the pitch following are made while they can
+    // be heard.
     id: 'speed-across-normal',
     commit: null,
     defect: "A click in Firefox when the speed changes from one side of normal speed to the other: the player changed while it could be heard",
@@ -154,6 +156,31 @@ const HISTORY = [
       }
     ],
     expect: [{ code: 'gap', during: 'during speed 1, landing beside normal speed' }]
+  },
+  {
+    // Turning the extension off puts the player back after a short wait,
+    // once the output has faded out. A player that started in that wait
+    // ran the engine again, which dropped the waiting change, and the page
+    // was left with the effect's speed. Chromium isn't here: with the pitch
+    // mode unchanged its player doesn't click at a change of speed, so the
+    // engine puts it back at once and nothing waits.
+    id: 'off-while-starting',
+    commit: null,
+    defect: "After the extension was turned off, YouTube kept the effect's speed when a player started in the moment before the engine put it back",
+    kind: 'exact',
+    note: 'In every version until the change that added this control, which names no commit for that reason. The line that dropped the waiting change is put back.',
+    browsers: ['firefox'],
+    check: 'turning the extension off as a player starts',
+    sites: ['youtube'],
+    mutations: [
+      {
+        file: 'youtube-main.js',
+        find: "        // page was left with the effect's speed.\n        setPipelineEnabled(pipeline, false);",
+        replace: "        cancelPendingPlayback(pipeline);\n        setPipelineEnabled(pipeline, false);",
+        label: 'a player that starts drops the change that puts the player back'
+      }
+    ],
+    expect: [{ code: 'not-restored', during: 'turn the extension off' }]
   },
   {
     id: '3fbb1c3',

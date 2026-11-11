@@ -90,11 +90,12 @@ const EXCERPT_AFTER_MS = 400;
 
 // The silence the engines make on purpose (youtube-main.js and
 // spotify-main.js). A change that makes the player click (a change of pitch
-// mode in both browsers; in Firefox also a change of speed to normal speed,
-// away from it, or from one side of it to the other) fades
-// the output out over 10 ms from 20 ms ahead, changes the player 40 ms
-// after the request and keeps the output silent until 80 ms after that:
-// about 90 ms of silence. 60 ms more allows for a page timer running late.
+// mode in both browsers; in Firefox also a change of speed to normal speed
+// itself or away from it, and, with the pitch following the speed, from one
+// side of it to the other) fades the output out over 10 ms from 20 ms
+// ahead, changes the player 40 ms after the request and keeps the output
+// silent until 80 ms after that in Chromium, 50 ms in Firefox: about 90 ms
+// of silence at most. 60 ms more allows for a page timer running late.
 const DIP_MS = 150;
 // A player routed into the graph for the first time, counted from the
 // context's first frame, which the recording keeps: Firefox's engines keep
@@ -954,14 +955,35 @@ function defineRegression(browser) {
     // Turning the extension off in the browser, as from its extensions page,
     // and on again. On YouTube, with the extension off, the page then takes
     // its player out and puts it back, at a speed of its own.
-    async function lifecycleCheck(site, name, { remove = false } = {}) {
+    // `starting`: the player keeps starting while the extension goes, as it
+    // does when a new song begins just then. The engine puts the player back
+    // after a short wait, once the output has faded out, and a player that
+    // started in that wait once made it drop the putting back.
+    async function lifecycleCheck(site, name, { remove = false, starting = false } = {}) {
       const page = await openSite(site);
       const span = await beginSpan(page, name);
       await hold(span, 'on', effectExpect(EFFECT), { settleMs: 0 });
       const off = { restores: true, silenceMs: settingsChange(target, EFFECT, { ...EFFECT, speed: 1 }).silenceMs ?? 0, windowMs: LIFECYCLE_WINDOW_MS };
-      if (remove) await act(span, 'remove the extension', off, () => browser.remove());
-      else await act(span, 'turn the extension off', off, () => browser.disable());
+      let starts = null;
+      const whileStarting = (turnOff) => () => {
+        if (starting) {
+          const forMs = LIFECYCLE_WINDOW_MS + 1000;
+          starts = runPageStep(page, 'keepStarting', { waitMs: 10, forMs }, { timeoutMs: forMs + 2000 }).catch((error) => error);
+        }
+        return turnOff();
+      };
+      if (remove) await act(span, 'remove the extension', off, whileStarting(() => browser.remove()));
+      else await act(span, 'turn the extension off', off, whileStarting(() => browser.disable()));
+      if (starting) {
+        const started = await starts;
+        if (!(started > 50)) span.checks.push({ code: 'setup', message: `the player's starts were not sent: ${started?.message ?? started}` });
+      }
       await hold(span, 'off', dryExpect(), { settleMs: 1000 });
+      if (starting) {
+        const problems = await finishSpan(span);
+        await closePage(page);
+        return problems;
+      }
 
       if (site === 'youtube') {
         // Out for longer than the engine waits before it looks at the page
@@ -1124,6 +1146,16 @@ function defineRegression(browser) {
         assertClean(name, await guarded(name, () => lifecycleCheck(site, name)));
       });
     }
+    if (sites.includes('youtube')) {
+      test('turning the extension off as a player starts: youtube', async () => {
+        const name = 'starting-youtube';
+        try {
+          assertClean(name, await guarded(name, () => lifecycleCheck('youtube', name, { starting: true })));
+        } finally {
+          await browser.enable();
+        }
+      });
+    }
     if (browser.canRemove) {
       for (const site of sites) {
         test(`removing the extension: ${site}`, async () => {
@@ -1152,6 +1184,7 @@ function defineRegression(browser) {
       "Spotify's speed resets": (id) => spotifyResetsCheck(`${id}-spotify`),
       'a speed request during a waiting change': (id) => spotifyResetsCheck(`${id}-spotify`),
       'turning the extension off': (id, site) => lifecycleCheck(site, `${id}-${site}`),
+      'turning the extension off as a player starts': (id, site) => lifecycleCheck(site, `${id}-${site}`, { starting: true }),
       'an update': (id, site, copy) => updateCheck(site, `${id}-update`, copy)
     };
 

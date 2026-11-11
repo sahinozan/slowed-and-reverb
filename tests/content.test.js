@@ -472,6 +472,56 @@ describe('content script audio processing', () => {
     assert.equal(harness.context.sources.length, 1);
   });
 
+  // Turning the extension off puts the player back once the output has faded
+  // out, which is a wait. A player that starts in that wait (a new song)
+  // runs the engine again, without the extension by then, and that must not
+  // drop the putting back: the page would be left with the effect's speed.
+  for (const [title, options, settings, landed] of [
+    ['beside normal speed in Firefox', { userAgent: FIREFOX_AGENT }, { ...PITCH_FOLLOWS, speed: 1 }, BELOW_NORMAL],
+    ["at the effect's speed in Firefox", { userAgent: FIREFOX_AGENT }, { ...PITCH_FOLLOWS, speed: 0.8 }, 0.8],
+    ["at the effect's speed and pitch mode in Chromium", {}, { ...SETTINGS, speed: 0.8 }, 0.8]
+  ]) {
+    test(`puts the player back when it starts again just as the extension is turned off, ${title}`, async (t) => {
+      const harness = await createContentHarness(options);
+      t.after(() => close(harness));
+      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...settings, speed: 0.9 }, enabled: true });
+      await harness.dispatch({ type: 'UPDATE_AUDIO', settings, enabled: true });
+      assert.equal(harness.media.playbackRate, landed);
+
+      await harness.turnOff();
+      // Still waiting for the output to fade out.
+      assert.equal(harness.media.playbackRate, landed);
+      harness.media.dispatchEvent(new harness.window.Event('play'));
+
+      await waitFor(() => harness.media.playbackRate === 1 && harness.media.preservesPitch === false);
+      FakeAudioContext.advance(1);
+      const outputGains = harness.context.gains.filter((node) =>
+        node.connections.some((connection) => connection.target === harness.context.destination)
+      );
+      assert.deepEqual(outputGains.map((node) => node.gain.value), [1, 0]);
+    });
+  }
+
+  // Without the extension the page sets its own speed. One it chooses while
+  // the putting back is still waiting stands; the pitch mode, which only the
+  // engine changed, still goes back.
+  test('leaves a speed the page chooses just as the extension is turned off', async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    assert.equal(harness.media.preservesPitch, true);
+
+    await harness.turnOff();
+    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+    harness.media.playbackRate = 1.25;
+    harness.media.dispatchEvent(new harness.window.Event('play'));
+
+    await waitFor(() => harness.media.preservesPitch === false);
+    // Nothing more should happen, so this waits a fixed time.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(harness.media.playbackRate, 1.25);
+  });
+
   test('reconnects captured media unchanged after the extension is turned off', async (t) => {
     const harness = await createContentHarness();
     t.after(() => close(harness));

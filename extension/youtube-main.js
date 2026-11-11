@@ -453,11 +453,15 @@
     return from === 0 || to === 0 || !keepPitch;
   }
 
-  function setPlayback(media, speed, keepPitch) {
-    media.playbackRate = speed;
+  function setPitchMode(media, keepPitch) {
     media.preservesPitch = keepPitch;
     media.mozPreservesPitch = keepPitch;
     media.webkitPreservesPitch = keepPitch;
+  }
+
+  function setPlayback(media, speed, keepPitch) {
+    media.playbackRate = speed;
+    setPitchMode(media, keepPitch);
   }
 
   // Drops a player change still waiting for the output to fade out. Any
@@ -477,6 +481,7 @@
       return;
     }
 
+    const speedBefore = media.playbackRate;
     const change = () => {
       if (pipeline.pendingPlayback !== change) return;
       pipeline.pendingPlayback = null;
@@ -487,6 +492,13 @@
         audioContext.currentTime + PLAYER_CLICK_SECONDS
       );
       setPipelineEnabled(pipeline, enabled);
+      // Without the extension the page sets its own speed. One it chose
+      // while this change waited stands, and only the pitch mode, which the
+      // page doesn't set, goes back.
+      if (!bridgeConnected && Math.abs(media.playbackRate - speedBefore) > SAME_SPEED) {
+        setPitchMode(media, keepPitch);
+        return;
+      }
       setPlayback(media, speed, keepPitch);
     };
     // While a change is waiting, the output stays silent.
@@ -651,7 +663,10 @@
 
     if (!bridgeConnected) {
       if (pipeline && connectPipeline(media, pipeline)) {
-        cancelPendingPlayback(pipeline);
+        // A change still waiting here is the one that puts the player back
+        // (the last thing done before the extension went), so it is kept:
+        // it was dropped once, when a player started in that wait, and the
+        // page was left with the effect's speed.
         setPipelineEnabled(pipeline, false);
       }
       return;
