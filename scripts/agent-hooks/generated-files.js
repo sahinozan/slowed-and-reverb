@@ -206,14 +206,16 @@ function real(file, itself = false, links = { left: 40 }) {
 // Where a link leads, taken name by name as the file system does: a ..
 // goes up from where the names before it led, through any link among
 // them. `links` counts the links followed, so that ones that lead back to
-// themselves come to an end.
+// themselves come to an end: once it runs out, the names left are only
+// put after one another.
 function led(link, links) {
   links.left -= 1;
   const text = fs.readlinkSync(link);
   let at = path.isAbsolute(text) ? path.parse(text).root : real(path.dirname(link));
   for (const name of text.slice(path.parse(text).root.length).split(path.sep === '/' ? '/' : /[\\/]/)) {
     if (name === '' || name === '.') continue;
-    at = name === '..' ? path.dirname(at) : real(path.join(at, name), false, links);
+    if (name === '..') at = path.dirname(at);
+    else at = links.left > 0 ? real(path.join(at, name), false, links) : path.join(at, name);
   }
   return at;
 }

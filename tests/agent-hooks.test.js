@@ -534,6 +534,22 @@ describe('a generated file reached by another name', () => {
     fs.symlinkSync('here.js', path.join(links, 'there.js'));
     assert.equal(refusal(patch(['Add File: here.js'], links)), null);
     assert.equal(refusal(writeWhole('here.js/below.js', 'new', links)), null);
+    // One that names itself many times over is given up as soon: the
+    // file system is asked a few thousand times at most, not once for
+    // every way through.
+    fs.symlinkSync(Array(32).fill('round.js').join('/'), path.join(links, 'round.js'));
+    const native = fs.realpathSync.native;
+    let asked = 0;
+    fs.realpathSync.native = (...given) => {
+      asked += 1;
+      return native(...given);
+    };
+    try {
+      assert.equal(refusal(patch(['Add File: round.js'], links)), null);
+    } finally {
+      fs.realpathSync.native = native;
+    }
+    assert.ok(asked > 40 && asked < 5000, `${asked} times`);
   });
 
   test('is refused in other letter case, where the file system takes the two for one file', () => {
