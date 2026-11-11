@@ -33,7 +33,7 @@ function refusal(input, home = HOME) {
     const at = place(edited, home);
     if (!at) continue;
     for (const entry of GENERATED) {
-      if (matchesAny(entry.whole, at.file) && !matchesAny(entry.except, at.file)) {
+      if (matchesAny(entry.whole, at.file, at.anyCase) && !matchesAny(entry.except, at.file, at.anyCase)) {
         return reason(`${at.file} is`, entry);
       }
       for (const part of entry.between ?? []) {

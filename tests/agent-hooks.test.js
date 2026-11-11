@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { after, describe, test } = require('node:test');
-const { GENERATED, matches, matchesAny } = require('../scripts/agent-hooks/generated-files');
+const { GENERATED, matches, matchesAny, patchFiles, readEdit } = require('../scripts/agent-hooks/generated-files');
 const { refusal } = require('../scripts/agent-hooks/refuse-generated-edit');
 const { regenerate } = require('../scripts/agent-hooks/regenerate');
 const { stampFor } = require('../scripts/stamp-site-assets');
@@ -190,6 +190,126 @@ describe('an edit to a generated file', () => {
       { ...patch(['Update File: popup/popup.css']), cwd: path.join(root, 'site') }
     ];
     for (const input of refused) assert.ok(refusal(input)?.includes(' is generated'), JSON.stringify(input.tool_input));
+  });
+
+  test('reads a patch\'s file names as Codex\'s applier does', () => {
+    // Each of these was tried with the applier itself
+    // (codex --codex-run-as-apply-patch) in a temporary folder.
+    const lines = (...all) => ({ tool_name: 'apply_patch', cwd: root, tool_input: { command: ['*** Begin Patch', ...all, '*** End Patch'].join('\n') } });
+    const names = (input) => readEdit(input).files.map((file) => path.relative(root, file));
+    const nextLine = String.fromCharCode(0x85);
+    // Space before one of these lines and after its path doesn't count,
+    // where a file's own lines aren't expected.
+    const refused = [
+      lines('  *** Delete File: docs/checks.md'),
+      lines('\t*** Update File: docs/checks.md  ', '@@', '-a', '+b'),
+      lines(`${nextLine}*** Delete File: docs/checks.md${nextLine}`),
+      lines('*** Add File: ordinary.txt', '+text', '  *** Delete File: docs/checks.md'),
+      lines('*** Delete File: ordinary.txt', '  *** Add File: dist/new.js', '+text'),
+      lines('*** Update File: ordinary.txt', '@@', '-a', '+b', '*** End of File', '*** Delete File: docs/checks.md\t'),
+      lines('*** Update File: ordinary.txt', '*** Move to: docs/checks.md ', '@@', '-a', '+b'),
+      { tool_name: 'apply_patch', cwd: root, tool_input: { command: '*** Begin Patch\r\n*** Delete File: docs/checks.md\r\n*** End Patch\r\n' } }
+    ];
+    for (const input of refused) assert.ok(refusal(input)?.startsWith('docs/checks.md is generated') || refusal(input)?.startsWith('dist/new.js is generated'), JSON.stringify(input.tool_input));
+    // A line ends at a line feed only, so these are one line of the new
+    // file's text each, whatever JavaScript makes of what is inside them.
+    for (const inside of ['\r', '\v', '\f', nextLine, String.fromCharCode(0x2028), String.fromCharCode(0x2029)]) {
+      const input = lines('*** Add File: ordinary.txt', `+text${inside}*** Update File: docs/checks.md`);
+      assert.deepEqual(names(input), ['ordinary.txt'], JSON.stringify(inside));
+      assert.equal(refusal(input), null, JSON.stringify(inside));
+    }
+    // While a file is updated, a line that starts with a space is a line
+    // of the file, kept as it is.
+    const kept = lines('*** Update File: ordinary.txt', '@@', ' *** Delete File: docs/checks.md', '  *** Update File: docs/checks.md', '+*** Add File: docs/checks.md', '-*** Move to: docs/checks.md', '', '  *** Move to: docs/checks.md');
+    assert.deepEqual(names(kept), ['ordinary.txt']);
+    assert.equal(refusal(kept), null);
+    // Space before a path is part of its name, so this is another file.
+    assert.deepEqual(names(lines('*** Delete File:   docs/checks.md')), ['  docs/checks.md']);
+    assert.equal(refusal(lines('*** Delete File:   docs/checks.md')), null);
+    // A tab or a carriage return in a path is taken out wherever it is,
+    // after the applier has seen whether the path starts at the root.
+    for (const file of ['\tdocs/checks.md', 'docs/\tchecks.md', 'docs/che\rcks.md', 'docs/.\t/checks.md', 'site/.\t./docs/checks.md', '\t/docs/checks.md', `${root}/\tdocs/checks.md`]) {
+      for (const input of [lines(`*** Add File: ${file}`, '+text'), lines(`*** Delete File: ${file}`), lines(`*** Update File: ${file}`, '@@', '-a', '+b'), lines('*** Update File: ordinary.txt', `*** Move to: ${file}`, '@@', '-a', '+b')]) {
+        assert.ok(refusal(input)?.startsWith('docs/checks.md is generated'), JSON.stringify(input.tool_input));
+      }
+    }
+    // A name written .. takes back the name before it, an empty one too: one
+    // that was only a tab, and the one left where a name became .. once its
+    // tab was out. Nothing after the file's name but empty names is the file.
+    for (const file of ['docs/\t/../checks.md', 'docs/\r/../checks.md', 'docs/checks.md/\t', 'site/.\t./../docs/checks.md', 'site/.\t./.\t./docs/checks.md', `${root}/site/.\t./.\t./docs/checks.md`]) {
+      for (const input of [lines(`*** Add File: ${file}`, '+text'), lines(`*** Delete File: ${file}`)]) {
+        assert.ok(refusal(input)?.startsWith('docs/checks.md is generated'), JSON.stringify(input.tool_input));
+      }
+    }
+    // These lead to docs/checks.md below another folder. In a path from the
+    // root, a written .. is taken back before any tab is out.
+    for (const [file, led] of [['extension/\t/../docs/checks.md', 'extension/docs/checks.md'], ['site/\t/.\t./docs/checks.md', 'site/docs/checks.md'], [`${root}/site/.\t./../docs/checks.md`, 'site/docs/checks.md']]) {
+      assert.deepEqual(names(lines(`*** Delete File: ${file}`)), [path.normalize(led)], JSON.stringify(file));
+      assert.equal(refusal(lines(`*** Delete File: ${file}`)), null, JSON.stringify(file));
+    }
+    // Other marks stay in the name, so these are other files.
+    for (const file of ['docs/\vchecks.md', 'docs/checks.md?', 'docs/checks%2emd', 'docs\\checks.md']) assert.equal(refusal(lines(`*** Delete File: ${file}`)), null, JSON.stringify(file));
+    // The patch ends at its End Patch line. The applier takes a patch
+    // inside <<EOF and a last line ending in EOF, which it doesn't read,
+    // so what that line names isn't touched.
+    const wrapped = (first, last) => ({ tool_name: 'apply_patch', cwd: root, tool_input: { command: [first, '*** Begin Patch', '*** Add File: ordinary.txt', '+text', '*** End Patch', last].join('\n') } });
+    for (const first of ['<<EOF', "<<'EOF'", '<<"EOF"']) {
+      assert.deepEqual(names(wrapped(first, '*** Delete File: dist/new.jsEOF')), ['ordinary.txt']);
+      assert.equal(refusal(wrapped(first, '*** Delete File: dist/new.jsEOF')), null);
+      assert.ok(refusal({ tool_name: 'apply_patch', cwd: root, tool_input: { command: `${first}\n*** Begin Patch\n*** Delete File: docs/checks.md\n*** End Patch\nEOF\n` } })?.startsWith('docs/checks.md is generated'));
+    }
+    // Nor is anything read before its Begin Patch line. The applier takes
+    // no patch that has something there.
+    assert.deepEqual(patchFiles('*** Delete File: docs/checks.md\n*** Begin Patch\n*** Environment ID: one\n*** Delete File: a\n*** End Patch'), [{ does: 'Delete File', file: 'a' }]);
+    // While a file is updated, an End Patch line after a space is a line
+    // of the file too.
+    assert.deepEqual(names(lines('*** Update File: ordinary.txt', '@@', '-a', '  *** End Patch', '*** Delete File: docs/checks.md')), ['ordinary.txt', 'docs/checks.md']);
+    // U+FEFF isn't space to the applier, which then finds no such file.
+    assert.equal(refusal(lines(`*** Delete File: docs/checks.md${String.fromCharCode(0xfeff)}`)), null);
+    assert.deepEqual(patchFiles('*** Begin Patch\n*** Update File: a\n*** Move to: b\n@@\n-a\n+b\n*** Add File: c\n+text\n*** End Patch'), [
+      { does: 'Update File', file: 'a' },
+      { does: 'Move to', file: 'b' },
+      { does: 'Add File', file: 'c' }
+    ]);
+  });
+
+  test('a path in a patch leads where Codex\'s applier takes it', () => {
+    // From a folder that is no checkout, so that the paths are only worked
+    // out. Each was tried with the applier itself, from the session's
+    // folder and from the root.
+    const from = folder();
+    const leads = (file) => path.relative(from, readEdit({ tool_name: 'apply_patch', cwd: from, tool_input: { command: `*** Begin Patch\n*** Add File: ${file}\n+text\n*** End Patch` } }).files[0]).split(path.sep).join('/');
+    const both = [
+      ['one/n.txt', 'one/n.txt'],
+      ['./one//./n.txt', 'one/n.txt'],
+      ['one/two/../n.txt', 'one/n.txt'],
+      ['one/\t/n.txt', 'one/n.txt'],
+      ['one/\t/../n.txt', 'one/n.txt'],
+      ['one/\t/\t/../n.txt', 'one/n.txt'],
+      ['one/.\t/../n.txt', 'one/n.txt'],
+      ['one/x\t/../n.txt', 'one/n.txt'],
+      ['one/two/.\t./n.txt', 'one/n.txt'],
+      ['one/two/..\t/n.txt', 'one/n.txt'],
+      ['one/two/.\r./n.txt', 'one/n.txt'],
+      ['one/\t.\t./n.txt', 'n.txt'],
+      ['one/two/\t/.\t./n.txt', 'one/two/n.txt'],
+      ['one/two/.\t/.\t./n.txt', 'one/two/n.txt'],
+      ['one/two/.\t./x/../n.txt', 'one/n.txt'],
+      ['one/two/n.txt/\t', 'one/two/n.txt'],
+      ['one/two/n.txt/.\t', 'one/two/n.txt'],
+      ['.\t./n.txt', '../n.txt'],
+      ['.\t./.\t./n.txt', '../n.txt']
+    ];
+    for (const [file, led] of both) {
+      assert.equal(leads(file), led, JSON.stringify(file));
+      assert.equal(leads(`${from}/${file}`), led, JSON.stringify(file));
+    }
+    // Where the two differ: a written .. after a name that becomes .. once
+    // its tab is out.
+    assert.equal(leads('one/two/.\t./../n.txt'), 'one/n.txt');
+    assert.equal(leads(`${from}/one/two/.\t./../n.txt`), 'one/two/n.txt');
+    assert.equal(leads('one/two/.\t./../../n.txt'), 'n.txt');
+    assert.equal(leads(`${from}/one/two/.\t./../../n.txt`), 'one/n.txt');
   });
 
   test('is not refused for any other file', () => {
@@ -373,8 +493,63 @@ describe('a generated file reached by another name', () => {
     assert.equal(refusal(patch(['Delete File: checkout'], links)), null);
     assert.ok(refusal(patch(['Update File: page.md'], links))?.startsWith('docs/checks.md is generated'));
     assert.ok(refusal(patch(['Delete File: pages/checks.md'], links))?.startsWith('docs/checks.md is generated'));
+    // So does moving one to another name. Moving a file onto a link writes
+    // the file it leads to, and moving the file itself takes it away.
+    assert.equal(refusal(patch(['Update File: page.md\n*** Move to: ordinary.md'], links)), null);
+    assert.ok(refusal(patch(['Update File: ordinary.md\n*** Move to: page.md'], links))?.startsWith('docs/checks.md is generated'));
+    assert.ok(refusal(patch(['Update File: pages/checks.md\n*** Move to: ordinary.md'], links))?.startsWith('docs/checks.md is generated'));
     assert.equal(refusal(edit(path.join(links, 'checkout', 'extension', 'popup.js'), 'a', 'b', '')), null);
     assert.equal(refusal(edit(path.join(links, 'pages', 'notes.md'), 'a', 'b', '')), null);
+  });
+
+  test('is refused through a link to where it will be, before it is there', () => {
+    // Writing to such a link makes the file it leads to, when the folder
+    // for it is there. Tried with the applier: an added file and a moved
+    // one both land there, through one link or several.
+    const links = folder();
+    assert.ok(!fs.existsSync(path.join(root, 'site', 'popup', 'popup.new')));
+    fs.symlinkSync(path.join(root, 'site', 'popup', 'popup.new'), path.join(links, 'made.js'));
+    fs.symlinkSync('made.js', path.join(links, 'again.js'));
+    fs.symlinkSync(path.join('..', path.basename(links), 'again.js'), path.join(links, 'beside.js'));
+    for (const name of ['made.js', 'again.js', 'beside.js']) {
+      for (const input of [writeWhole(name, 'new', links), patch([`Add File: ${name}`], links), patch([`Update File: ordinary.md\n*** Move to: ${name}`], links)]) {
+        assert.ok(refusal(input)?.startsWith('site/popup/popup.new is generated'), `${input.tool_name} of ${name}`);
+      }
+      assert.equal(refusal(patch([`Delete File: ${name}`], links)), null, name);
+    }
+    // A link's .. goes up from where the names before it lead, so through
+    // a link to a folder it is that folder's parent. Tried with the applier
+    // and with Node: the first makes site/popup/popup.new and the second a
+    // file in the website's assets. By their spelling alone they would
+    // lead out of this folder and to assets/popup.new in it.
+    fs.symlinkSync(path.join(root, 'site', 'popup'), path.join(links, 'popup'));
+    fs.symlinkSync(path.join(root, 'site', 'assets', 'fonts'), path.join(links, 'fonts'));
+    fs.symlinkSync('fonts/../../popup/popup.new', path.join(links, 'up.js'));
+    fs.symlinkSync('popup/../assets/popup.new', path.join(links, 'other.js'));
+    assert.ok(refusal(patch(['Add File: up.js'], links))?.startsWith('site/popup/popup.new is generated'));
+    assert.deepEqual(readEdit(patch(['Add File: other.js'], links)).files, [path.join(root, 'site', 'assets', 'popup.new')]);
+    assert.equal(refusal(patch(['Add File: other.js'], links)), null);
+    // Links that lead to each other lead nowhere, and to no end.
+    fs.symlinkSync('there.js', path.join(links, 'here.js'));
+    fs.symlinkSync('here.js', path.join(links, 'there.js'));
+    assert.equal(refusal(patch(['Add File: here.js'], links)), null);
+    assert.equal(refusal(writeWhole('here.js/below.js', 'new', links)), null);
+    // One that names itself many times over is given up as soon: the
+    // file system is asked a few thousand times at most, not once for
+    // every way through.
+    fs.symlinkSync(Array(32).fill('round.js').join('/'), path.join(links, 'round.js'));
+    const native = fs.realpathSync.native;
+    let asked = 0;
+    fs.realpathSync.native = (...given) => {
+      asked += 1;
+      return native(...given);
+    };
+    try {
+      assert.equal(refusal(patch(['Add File: round.js'], links)), null);
+    } finally {
+      fs.realpathSync.native = native;
+    }
+    assert.ok(asked > 40 && asked < 5000, `${asked} times`);
   });
 
   test('is refused in other letter case, where the file system takes the two for one file', () => {
@@ -383,6 +558,24 @@ describe('a generated file reached by another name', () => {
       const input = file.startsWith('release') ? writeWhole(file, '# Release checklist\n') : edit(file);
       assert.equal(refusal(input) !== null, one, file);
     }
+    // A file that isn't there yet has no spelling of its own to go by.
+    for (const file of ['site/popup/POPUP.new', 'extension/assets/ICON-new.png', 'Dist/Chromium/New.js']) {
+      assert.ok(!fs.existsSync(path.join(root, file)), file);
+      for (const input of [writeWhole(file, 'new'), patch([`Add File: ${file}`])]) assert.equal(refusal(input) !== null, one, `${input.tool_name} of ${file}`);
+    }
+    assert.equal(refusal(writeWhole('site/popup/POPUP-host.new', 'new')), null);
+    assert.ok(matches('dist/**', 'DIST/New.js', true) && !matches('dist/**', 'DIST/New.js') && !matches('site/*.js', 'SITE/a/b.js', true));
+    // Nor has a link that is deleted or moved away, which goes by the
+    // name given. Here the generated file is itself a link.
+    const { main } = repository();
+    write(path.join(main, 'ordinary.txt'), 'a\n');
+    fs.mkdirSync(path.join(main, 'docs'));
+    fs.symlinkSync(path.join('..', 'ordinary.txt'), path.join(main, 'docs', 'checks.md'));
+    const same = fs.existsSync(path.join(main, 'docs', 'CHECKS.md'));
+    for (const input of [patch(['Delete File: docs/CHECKS.md'], main), patch(['Update File: docs/CHECKS.md\n*** Move to: ordinary.md'], main)]) {
+      assert.equal(refusal(input, main) !== null, same, input.tool_input.command);
+    }
+    assert.ok(refusal(patch(['Delete File: docs/checks.md'], main), main)?.startsWith('docs/checks.md is generated'));
   });
 });
 

@@ -26,7 +26,8 @@ const path = require('node:path');
 // - whole: files made whole, so any edit to them is refused. `except` takes
 //   files out again.
 // - between: a part of a file edited by hand elsewhere, between two marker
-//   lines. An edit is refused when it changes what is between them.
+//   lines. An edit by Claude Code is refused when it changes what is
+//   between them. A Codex patch to such a file isn't judged (see readEdit).
 // - regenerate: the generator's script, the sources it runs after an edit
 //   to, and the files it may write.
 //
@@ -113,7 +114,9 @@ const GENERATED = [
   }
 ];
 
-function matches(pattern, file) {
+// With `anyCase`, letters match in either case, as file names do where the
+// file system takes the two for one.
+function matches(pattern, file, anyCase = false) {
   const source = pattern
     .split(/(\/\*\*$|\*)/)
     .map((piece) => {
@@ -122,10 +125,10 @@ function matches(pattern, file) {
       return piece.replace(/[.\\+?^${}()|[\]]/g, '\\$&');
     })
     .join('');
-  return new RegExp(`^${source}$`, 's').test(file);
+  return new RegExp(`^${source}$`, anyCase ? 'isu' : 's').test(file);
 }
 
-const matchesAny = (patterns = [], file) => patterns.some((pattern) => matches(pattern, file));
+const matchesAny = (patterns = [], file, anyCase = false) => patterns.some((pattern) => matches(pattern, file, anyCase));
 
 // The checkout a file is in: the nearest folder above it that has a .git.
 // The file itself needn't be there yet.
@@ -158,32 +161,63 @@ const HOME = path.join(__dirname, '..', '..');
 // Where a file is, when it is in a checkout of this repository: the main
 // one or any of its worktrees, wherever the session started. Its path is
 // given from that checkout's root, with forward slashes. Null for any other
-// file.
+// file. `anyCase` says that names there ignore letter case. A file that
+// isn't there yet, or a link meant itself, keeps the spelling given (see
+// real), which is then one of several for the same name.
 function place(file, home = HOME) {
   const checkout = checkoutOf(file);
   const repository = repositoryOf(home);
   if (!checkout || !repository || repositoryOf(checkout) !== repository) return null;
-  return { checkout, file: path.relative(checkout, file).split(path.sep).join('/') };
+  return {
+    checkout,
+    file: path.relative(checkout, file).split(path.sep).join('/'),
+    anyCase: fs.existsSync(path.join(checkout, '.GIT'))
+  };
 }
+
+const isLink = (file) => {
+  try {
+    return fs.lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
 
 // A path as the file system has it: links followed and, where names
 // ignore case, spelled as the file is. What isn't there yet keeps the
-// spelling given, under the nearest folder that is. With `itself`, a link
-// by that name is meant and not the file it leads to, as when it is
-// deleted.
-function real(file, itself = false) {
-  if (itself && fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
-    return path.join(real(path.dirname(file)), path.basename(file));
-  }
+// spelling given, under the nearest folder that is, and a link to what
+// isn't there yet leads to where that would be. With `itself`, a link by
+// that name is meant and not the file it leads to, as when it is deleted
+// or moved away.
+function real(file, itself = false, links = { left: 40 }) {
+  if (itself && isLink(file)) return path.join(real(path.dirname(file)), path.basename(file));
   const missing = [];
   for (let at = file; ; at = path.dirname(at)) {
     try {
       return path.join(fs.realpathSync.native(at), ...missing);
     } catch {
+      if (isLink(at) && links.left > 0) return path.join(led(at, links), ...missing);
       if (at === path.dirname(at)) return file;
       missing.unshift(path.basename(at));
     }
   }
+}
+
+// Where a link leads, taken name by name as the file system does: a ..
+// goes up from where the names before it led, through any link among
+// them. `links` counts the links followed, so that ones that lead back to
+// themselves come to an end: once it runs out, the names left are only
+// put after one another.
+function led(link, links) {
+  links.left -= 1;
+  const text = fs.readlinkSync(link);
+  let at = path.isAbsolute(text) ? path.parse(text).root : real(path.dirname(link));
+  for (const name of text.slice(path.parse(text).root.length).split(path.sep === '/' ? '/' : /[\\/]/)) {
+    if (name === '' || name === '.') continue;
+    if (name === '..') at = path.dirname(at);
+    else at = links.left > 0 ? real(path.join(at, name), false, links) : path.join(at, name);
+  }
+  return at;
 }
 
 // What a hook is given on standard input.
@@ -191,15 +225,87 @@ function readInput() {
   return JSON.parse(fs.readFileSync(0, 'utf8'));
 }
 
+// The files a Codex patch names, each with what is done to it:
+//
+//   *** Begin Patch
+//   *** Update File: a/path          (or Add File, or Delete File)
+//   *** Move to: another/path        (optional, after Update File)
+//   *** End Patch
+//
+// It is read the way Codex's applier reads it (its streaming_parser.rs, as
+// of Codex 0.167.0), so that the two agree on which lines are these and
+// which are a file's text:
+//
+// - Lines end at a line feed only, and the patch is what is from the Begin
+//   Patch line to the End Patch line. Nothing is read before or after: the
+//   applier takes nothing there but the first and last lines of a patch
+//   given inside <<EOF and EOF, and no patch that has anything else.
+// - Space around one of these lines doesn't count, by Rust's meaning of
+//   space (JavaScript's trim also takes U+FEFF and leaves U+0085). So a
+//   path keeps the space before it and loses the space after.
+// - While a file is updated, only the space after a line doesn't count:
+//   a line that starts with a space is a line of the file, whatever
+//   follows the space.
+const AROUND = /^\p{White_Space}+|\p{White_Space}+$/gu;
+const AFTER = /\p{White_Space}+$/u;
+
+function patchFiles(patch) {
+  const named = [];
+  let started = false;
+  let updating = false;
+  for (const line of patch.split('\n')) {
+    const text = line.replace(updating ? AFTER : AROUND, '');
+    if (!started) {
+      started = text === '*** Begin Patch';
+      continue;
+    }
+    if (text === '*** End Patch') break;
+    const [, does, file] = (updating ? /^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/s : /^\*\*\* (Add File|Update File|Delete File): (.+)$/s).exec(text) ?? [];
+    if (!does) continue;
+    updating = does === 'Update File' || does === 'Move to';
+    named.push({ does, file });
+  }
+  return named;
+}
+
+// Where a path in a patch leads, from the session's folder. Codex's applier
+// works that out itself, name by name, as a URL (its path-uri crate, as of
+// Codex 0.167.0), and not as the file system would:
+//
+// - A name written `..` takes back the name before it, whatever that is.
+//   In a path from the root, these are all taken back first; in a path from
+//   the session's folder, each as it comes.
+// - Tabs and carriage returns are then taken out of a name. One left empty
+//   or as `.` stays in the path as an empty name, which leads nowhere but
+//   is there to take back. One left as `..` takes back the name before it
+//   and stays as an empty name itself.
+function patchPath(from, file) {
+  const start = path.isAbsolute(file) ? file : path.resolve(from);
+  const { root } = path.parse(start);
+  const names = (text) => text.split(path.sep === '/' ? '/' : /[\\/]/).filter((name) => name !== '' && name !== '.');
+  const led = [];
+  const add = (name) => {
+    const left = name.replace(/[\t\r]/g, '');
+    if (left === '..') led.pop();
+    led.push(left === '.' || left === '..' ? '' : left);
+  };
+  if (start === file) {
+    const kept = [];
+    for (const name of names(file.slice(root.length))) name === '..' ? kept.pop() : kept.push(name);
+    kept.forEach(add);
+  } else {
+    led.push(...names(start.slice(root.length)));
+    for (const name of names(file)) name === '..' ? led.pop() : add(name);
+  }
+  return path.join(root, ...led);
+}
+
 // The edit a hook is given: the files it names and, for one of them, the
 // text it will hold afterward, or null when the edit doesn't say.
 //
 // Claude Code's Edit and Write name one file; Write gives its text whole,
 // and Edit a text to find and the text to put there. Codex's apply_patch
-// names each file on a line of its patch, from the session's folder:
-//
-//   *** Update File: a/path          (or Add File, or Delete File)
-//   *** Move to: another/path        (optional, after Update File)
+// names its files in the patch, from the session's folder.
 //
 // A patch doesn't say what a file will hold. Working that out takes a copy
 // of how Codex finds each hunk's place, and a copy that differs refuses
@@ -207,7 +313,6 @@ function readInput() {
 function readEdit(input) {
   const given = input?.tool_input ?? {};
   const from = typeof input?.cwd === 'string' ? input.cwd : process.cwd();
-  const whole = (file, itself) => real(path.resolve(from, file), itself);
   if (typeof given.file_path === 'string') {
     const textAfter = (before) => {
       if (typeof given.content === 'string') return given.content;
@@ -215,11 +320,13 @@ function readEdit(input) {
       if (given.replace_all) return before.split(given.old_string).join(given.new_string);
       return before.replace(given.old_string, () => given.new_string);
     };
-    return { files: [whole(given.file_path)], textAfter };
+    return { files: [real(path.resolve(from, given.file_path))], textAfter };
   }
-  const patch = [given.command ?? []].flat().join('\n');
-  const named = patch.matchAll(/^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/gm);
-  return { files: [...new Set([...named].map(([, does, file]) => whole(file.trim(), does === 'Delete File')))], textAfter: () => null };
+  const named = patchFiles([given.command ?? []].flat().join('\n'));
+  // A file deleted, or moved to the name on the next line, goes by the
+  // name given: of a link, the link goes and the file it leads to stays.
+  const gone = ({ does }, index) => does === 'Delete File' || named[index + 1]?.does === 'Move to';
+  return { files: [...new Set(named.map((entry, index) => real(patchPath(from, entry.file), gone(entry, index))))], textAfter: () => null };
 }
 
-module.exports = { GENERATED, HOME, matches, matchesAny, place, readEdit, readInput };
+module.exports = { GENERATED, HOME, matches, matchesAny, patchFiles, place, readEdit, readInput };
