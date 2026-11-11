@@ -97,8 +97,8 @@ function fakeTab(start = {}) {
 
 // Holds the answers to the changes the popup sends (APPLY_TO_TAB) on their
 // way back to it, until the test lets them go. The tab has each change at
-// once. An answer held in the tab itself would meet the half second the
-// fake runtime gives a listener to answer in; this one doesn't.
+// once, and so has the background script: the tab's queue goes on, which
+// an answer held in the tab itself would stop.
 function heldApplies(window) {
   const { runtime } = window.chrome;
   const send = runtime.sendMessage.bind(runtime);
@@ -2047,7 +2047,9 @@ describe('popup behavior', () => {
   // the controls are held until the answer, they stayed held and dimmed with
   // nothing to say why (issue #180). The popup now stops waiting after five
   // seconds and offers to reload the page.
-  describe("a tab that doesn't answer", () => {
+  // These tests hold answers back with no limit of real time, so each has a
+  // deadline: one that waits for an answer that never comes fails then.
+  describe("a tab that doesn't answer", { timeout: 20_000 }, () => {
     const NOT_RESPONDING = "This page isn't responding. Reloading it usually fixes this.";
     const settle = async () => {
       for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
@@ -2427,6 +2429,118 @@ describe('popup behavior', () => {
       assert.equal(shown(harness).inert, 0);
     });
 
+    // While the popup waits for the tab to reload, nothing else looks at
+    // the tab: the page is going or coming, and the look after the reload
+    // shows it. Here a shortcut's change was still on its way to the old
+    // page, and fails as that page goes; the background script's word of the
+    // shortcut then reaches the popup in the middle of the reload.
+    test("doesn't look at the tab for a shortcut's report that comes during a reload", async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      const { harness, timers } = await open(t, tab, {
+        beforeLoad(window) {
+          // A reload that takes its time: the test says when it is done.
+          window.chrome.tabs.reload = async () => {};
+        }
+      });
+      const document = harness.window.document;
+      const asks = () =>
+        harness.calls.tabMessages.filter(({ message }) => message.type === 'GET_STATE').length;
+
+      // The shortcut's change reaches the page and is not answered. A change
+      // in the popup is left out for it, and the look that follows waits
+      // behind the shortcut until its time is up.
+      tab.hold('UPDATE_AUDIO');
+      const handled = harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.equal(tab.held.length, 1);
+      document.getElementById('speed-up-btn').click();
+      await settle();
+      timers.advance(5000);
+      await settle();
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+      const asksBefore = asks();
+
+      document.getElementById('reload-btn').click();
+      await settle();
+      assert.equal(shown(harness).status, 'Reloading the page…');
+
+      tab.drop();
+      await handled;
+      await settle();
+      assert.equal(asks(), asksBefore);
+      assert.equal(shown(harness).status, 'Reloading the page…');
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+      assert.equal(shown(harness).usable, false);
+
+      await harness.events.tabUpdated.emit(
+        9, { status: 'complete' }, { id: 9, url: 'https://www.youtube.com/watch?v=example' }
+      );
+      await settle();
+      assert.equal(shown(harness).panel, null);
+      assert.equal(shown(harness).usable, true);
+    });
+
+    // The background script's answer that a change was left out comes late,
+    // after the popup has given up on the tab and begun to reload it.
+    test("doesn't look at the tab for a late answer that a change was left out, during a reload", async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      const reports = [];
+      let applies;
+      const { harness, timers } = await open(t, tab, {
+        beforeLoad(window) {
+          window.chrome.tabs.reload = async () => {};
+          applies = heldApplies(window);
+          // The word of the shortcut is kept back too, until the test
+          // lets it go.
+          const { runtime } = window.chrome;
+          const send = runtime.sendMessage.bind(runtime);
+          runtime.sendMessage = async (message, ...rest) => {
+            if (message?.type === 'SHORTCUT_APPLIED') await new Promise((resolve) => reports.push(resolve));
+            return send(message, ...rest);
+          };
+        }
+      });
+      const document = harness.window.document;
+      const asks = () =>
+        harness.calls.tabMessages.filter(({ message }) => message.type === 'GET_STATE').length;
+
+      // A shortcut, and a change in the popup before it has heard of it.
+      // The change is left out; the answer saying so is held.
+      await harness.events.command.emit('toggle-nightcore');
+      await settle();
+      applies.hold();
+      document.getElementById('speed-up-btn').click();
+      await settle();
+      assert.equal(applies.held.length, 1);
+      assert.equal(tab.state.settings.speed, 1.2);
+
+      // The word of the shortcut starts a look, which waits for that
+      // answer until its time is up.
+      reports.shift()();
+      await settle();
+      timers.advance(5000);
+      await settle();
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+      const asksBefore = asks();
+
+      document.getElementById('reload-btn').click();
+      await settle();
+      assert.equal(shown(harness).status, 'Reloading the page…');
+
+      applies.letGo();
+      await settle();
+      assert.equal(asks(), asksBefore);
+      assert.equal(shown(harness).status, 'Reloading the page…');
+      assert.equal(shown(harness).panel, NOT_RESPONDING);
+
+      await harness.events.tabUpdated.emit(
+        9, { status: 'complete' }, { id: 9, url: 'https://www.youtube.com/watch?v=example' }
+      );
+      await settle();
+      assert.equal(shown(harness).panel, null);
+      assert.equal(shown(harness).speed, '1.20');
+    });
+
     // Any look can meet a page that doesn't answer, not only the first.
     // Without this the reload button would stay disabled for good.
     test('stops waiting for a look made after a reload too', async (t) => {
@@ -2458,7 +2572,7 @@ describe('popup behavior', () => {
   // while the popup is open. The popup went on showing the tab as it was
   // before the shortcut (issue #181), so the background script now tells it,
   // and it looks at the tab again.
-  describe('a shortcut pressed while the popup is open', () => {
+  describe('a shortcut pressed while the popup is open', { timeout: 20_000 }, () => {
     const settle = async () => {
       for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
     };
@@ -2522,6 +2636,27 @@ describe('popup behavior', () => {
       assert.equal(tab.state.settings.speed, 1.21);
       assert.equal(tab.state.settings.reverb, 0);
       assert.equal(shown(harness).bar, 'Current Preset: Custom');
+    });
+
+    // Reports are left alone while the popup waits for a reload, and only
+    // then.
+    test('shows what a shortcut did after a reload is over', async (t) => {
+      const tab = fakeTab({ enabled: false, blocked: true, blockReason: 'unsupported' });
+      const { harness } = await open(t, tab);
+      assert.equal(notice(harness), true);
+
+      Object.assign(tab.state, { enabled: true, settings: SLOWED, blocked: false });
+      harness.window.document.getElementById('reload-btn').click();
+      await settle();
+      assert.deepEqual(harness.calls.reloadedTabs, [9]);
+      assert.equal(notice(harness), false);
+      assert.equal(shown(harness).speed, '0.80');
+
+      await harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.deepEqual(shown(harness), {
+        on: true, status: 'On', speed: '1.20', reverb: '0', bar: 'Current Preset: Nightcore'
+      });
     });
 
     // The first answer was asked for before the shortcut's change, so it is

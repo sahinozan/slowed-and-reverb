@@ -389,6 +389,10 @@ let tabLook = 0;
 let tabLookOver = Promise.resolve();
 // Ends the wait for the newest look, when a newer one takes over from it.
 let endTabLook = null;
+// How many reloads of the tab the popup is waiting for (watchForTabReload).
+// The page is going or coming meanwhile, and the look that follows the
+// reload shows the tab; nothing else starts one before that.
+let tabReloads = 0;
 let processingPending = false;
 let tabReports = 0;
 let reloadReason = 'unsupported';
@@ -539,6 +543,7 @@ function watchForTabReload(tabId) {
   const finish = () => {
     if (settled) return;
     settled = true;
+    tabReloads--;
     window.clearTimeout(timeoutId);
     api.tabs.onUpdated.removeListener(onUpdated);
     resolveReload();
@@ -547,6 +552,7 @@ function watchForTabReload(tabId) {
     if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
   };
 
+  tabReloads++;
   api.tabs.onUpdated.addListener(onUpdated);
   timeoutId = window.setTimeout(finish, 15_000);
   return { cancel: finish, promise };
@@ -812,6 +818,11 @@ async function sendApply(tab, request) {
     .sendMessage(applyMessage(tab, request))
     .catch(() => ({ success: false, blocked: true, blockReason: 'unsupported' }));
 
+  // The answer to a change is about the tab as the popup saw it then. Once
+  // the popup has looked at the tab again, or has given up on that look,
+  // what it shows and does comes from there.
+  if (request.look !== tabLook) return result;
+
   // A shortcut has changed the tab since the popup read the settings this
   // change was made on top of, so the background script left the change
   // out. The popup looks at the tab again, which waits for the shortcut's
@@ -822,10 +833,7 @@ async function sendApply(tab, request) {
     return result;
   }
 
-  // The answer to a change is about the tab as it was then. Once a newer
-  // change has been made, or the popup has looked at the tab again or given
-  // up on that look, what it shows comes from there.
-  if (request.revision !== applyRevision || request.look !== tabLook) return result;
+  if (request.revision !== applyRevision) return result;
 
   if (!result?.success) {
     setBlocked(true, result?.blockReason ?? 'unsupported');
@@ -1729,9 +1737,9 @@ function handleShortcutReport(message, sender) {
   // From the extension's own background script, not from a page's script.
   if (sender.id !== api.runtime.id || sender.tab) return;
   if (lastActiveTab && message.tabId !== lastActiveTab.id) return;
-  // The popup is still reading what is stored. Its first look comes after
-  // that, and so after the shortcut's change.
-  if (tabLook === 0) return;
+  // The popup is still reading what is stored, or is waiting for the tab
+  // to reload. The look that follows comes after the shortcut's change.
+  if (tabLook === 0 || tabReloads > 0) return;
 
   // A saved preset being edited is compared with the settings shown, which
   // are about to be the shortcut's, so the edit ends, as it does when

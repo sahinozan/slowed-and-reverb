@@ -26,11 +26,12 @@ const tabApplyQueues = new Map();
 // (APPLY_TO_TAB).
 //
 // Nothing of this is stored. The browser stops this script when it has had
-// nothing to do for a while and starts it again, and then no shortcut is
-// remembered and every change is taken. A change is only on its way for a
-// moment, so one from before a shortcut doesn't outlast the script. The
-// marks carry a name for this run of the script, so that a shortcut after
-// a restart isn't taken for one a popup saw before it.
+// nothing to do for a while, or has been kept busy for minutes, and starts
+// it again; then no shortcut is remembered and every change is taken. A
+// change is on its way for a moment, so one from before a shortcut is not
+// expected to outlast the script. The marks carry a name for this run of
+// the script, so that a shortcut after a restart isn't taken for one a
+// popup saw before it.
 const RUN = Math.random().toString(36).slice(2);
 const shortcutCounts = new Map();
 const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';

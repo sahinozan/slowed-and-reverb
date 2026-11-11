@@ -443,7 +443,9 @@ describe('background service worker', () => {
   // one with each change. A change made on top of settings from before the
   // tab's last shortcut would undo the shortcut, so it is left out, and the
   // popup is told.
-  describe('a change the popup made on top of settings from before a shortcut', () => {
+  // The tests here that hold an answer back wait for it with no limit of
+  // real time, so each has a deadline.
+  describe('a change the popup made on top of settings from before a shortcut', { timeout: 20_000 }, () => {
     const NIGHTCORE = { ...DEFAULT_SETTINGS, speed: 1.2 };
     const popup = { id: 'example', url: 'chrome-extension://example/popup.html' };
     // A tab that keeps what it is set to. The script's own objects aren't
@@ -472,9 +474,11 @@ describe('background service worker', () => {
     const settle = async () => {
       for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
     };
-    // The answer, if it comes without anything else having to happen first.
-    // A test that waited for an answer that is held back would never end.
-    const atOnce = (answer) => Promise.race([answer, settle().then(() => 'no answer yet')]);
+    // The answer, if it comes without anything else having to happen first,
+    // and otherwise PENDING. A test that waited for an answer that is held
+    // back would never end.
+    const PENDING = Symbol('no answer yet');
+    const atOnce = (answer) => Promise.race([answer, settle().then(() => PENDING)]);
     const withShortcut = async () => {
       const { tab, onTabMessage } = livingTab();
       const harness = setup({ onTabMessage, onRuntimeMessage() {} });
@@ -572,10 +576,11 @@ describe('background service worker', () => {
       assert.equal(updates(harness.calls).length, 1);
 
       const answer = await atOnce(change(harness, { shortcut: before }));
+      assert.notEqual(answer, PENDING);
       assert.equal(answer.superseded, true);
 
       const waited = shortcutOf(harness);
-      assert.equal(await atOnce(waited), 'no answer yet');
+      assert.equal(await atOnce(waited), PENDING);
 
       answerShortcut();
       await handled;
@@ -604,13 +609,14 @@ describe('background service worker', () => {
       const waited = shortcutOf(harness);
       await settle();
       const second = harness.events.command.emit('toggle-slowed-reverb');
-      assert.equal(await atOnce(waited), 'no answer yet');
+      assert.equal(await atOnce(waited), PENDING);
 
       answers.shift()();
       await first;
       const given = await atOnce(waited);
       assert.equal(typeof given, 'string');
       const answer = await atOnce(change(harness, { shortcut: given }));
+      assert.notEqual(answer, PENDING);
       assert.equal(answer.superseded, true);
 
       // The second shortcut's change has reached the tab by now.
