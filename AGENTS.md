@@ -136,7 +136,11 @@ that part. A Codex patch to those two files isn't judged: the checklist's
 items are made again after it, and a test checks the mark.
 The hooks see only an agent's edit tools, so a command that writes these
 files isn't stopped, and Claude Code loads them only in a session started
-at a checkout's root. A new row here needs an entry in
+at a checkout's root. Codex runs them once the owner has trusted the
+project and approved them with `/hooks`, and a hook changed in
+`.codex/hooks.json` has to be approved again. In a worktree, Codex (0.167)
+reads that file from the main checkout, not the worktree's own, so keep the
+main checkout up to date with `main`. A new row here needs an entry in
 `scripts/agent-hooks/generated-files.js`; a test keeps the two equal.
 
 ## Rules
