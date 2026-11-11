@@ -170,6 +170,89 @@ test('opens with the switch on when the effect was on, before the tab answers', 
   await expect(popup.getByText('On', { exact: true })).toBeVisible();
 });
 
+// Opens the popup on a page of its own, with its speed set to 0.80x, makes
+// two speed steps and closes the popup with the second still unsent.
+//
+// The popup sends one change at a time and keeps the next until the answer
+// to the one before has come. So the first step (0.81) is sent on to the tab
+// as usual, but its answer is kept from the popup for good, which leaves the
+// second (0.82) waiting in it with no way out but the popup's closing. Every
+// change the popup hands to the browser is counted, to check that 0.82 was
+// not among them when the popup closed. `beforeClose` runs in the popup
+// first.
+async function stepTwiceAndClosePopup(extension, name, beforeClose = () => {}) {
+  for (const open of extension.context.pages()) {
+    if (open.url().startsWith(`chrome-extension://${extension.extensionId}/`)) await open.close();
+  }
+  const url = `${extension.fixtureUrl}?${name}`;
+  const page = await extension.context.newPage();
+  await page.goto(url);
+  await expect(page.locator('#player')).toHaveJSProperty('readyState', 4);
+  await page.bringToFront();
+  const tab = await fixtureTab(extension.serviceWorker, url);
+
+  const popup = await openPopupPage(extension, tab.id);
+  // The player gets 0.80x from the change the popup sends when it opens on
+  // a new tab, so that one has left the popup before the count begins.
+  await expect(popup.getByRole('spinbutton', { name: 'Exact speed' })).toHaveValue('0.80');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+  await popup.evaluate(() => {
+    // The same object popup.js calls.
+    const { runtime } = typeof browser !== 'undefined' ? browser : chrome;
+    const send = runtime.sendMessage.bind(runtime);
+    window.speedsSent = [];
+    runtime.sendMessage = (message, ...rest) => {
+      const answer = send(message, ...rest);
+      if (message?.type !== 'APPLY_TO_TAB') return answer;
+      window.speedsSent.push(message.settings.speed);
+      // The first one's answer never comes.
+      return window.speedsSent.length === 1 ? new Promise(() => {}) : answer;
+    };
+  });
+  const speedsSent = () => popup.evaluate(() => window.speedsSent);
+
+  const faster = popup.getByRole('button', { name: 'Faster by 0.01x' });
+  await faster.click();
+  await expect.poll(speedsSent).toEqual([0.81]);
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.81);
+
+  await faster.click();
+  await expect(popup.locator('#speed-slider')).toHaveValue('0.82');
+  await popup.evaluate(beforeClose);
+  // Asked last, after a round trip to the popup in which a change that could
+  // leave would have left.
+  expect(await speedsSent()).toEqual([0.81]);
+  await popup.close();
+
+  return { page, tab };
+}
+
+test('sends a speed step made just before the popup closes', async ({ extension }) => {
+  const { page } = await stepTwiceAndClosePopup(extension, 'close');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.82);
+});
+
+test('control: without the send on closing, that step never reaches the tab', async ({
+  extension
+}) => {
+  // Shows that it is the popup's handler for closing that delivers the step
+  // in the test above: with the handler taken away the step was never handed
+  // to the browser, by the count, so the tab stays on the step before it.
+  const { page, tab } = await stepTwiceAndClosePopup(extension, 'close-control', () => {
+    if (typeof window.sendOnClose !== 'function') throw new Error('popup.js has no sendOnClose');
+    window.removeEventListener('pagehide', window.sendOnClose);
+  });
+
+  // What the extension's script in the tab holds, asked after the popup has
+  // closed, and what the player has.
+  const state = await extension.serviceWorker.evaluate(
+    (tabId) => chrome.tabs.sendMessage(tabId, { type: 'GET_STATE' }),
+    tab.id
+  );
+  expect(state.settings.speed).toBe(0.81);
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.81);
+});
+
 test("answers Spotify's turn-on with the effect running on a playing song", async ({
   extension
 }) => {

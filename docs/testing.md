@@ -22,7 +22,10 @@ extension into a real browser, renders its popup at production size, applies
 settings to a local audio fixture, checks that the popup's content fits
 without scrolling with every control on screen, and saves a screenshot in the
 test report. It also updates an earlier version with a YouTube page open and
-checks that the popup asks for a reload and the effect starts after it.
+checks that the popup asks for a reload and the effect starts after it, and
+closes the popup with a speed step not yet sent and checks that the step
+still reaches the tab. The popup there is a page in a tab, not the browser's
+popup window, so closing the real one is still checked by hand.
 
 ## The extension in Firefox
 
