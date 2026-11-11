@@ -962,24 +962,21 @@ function defineRegression(browser) {
     // a new song begins just then. The engine puts the player back after a
     // short wait, once the output has faded out, and a player that started
     // in that wait once made it drop the putting back. The page sends the
-    // start at the moment the engine finds the extension gone, so it falls
-    // in that wait on every run.
+    // start at the moment the engine finds the extension gone, so in Firefox
+    // it falls in that wait on every run. (In Chromium, with the suite's
+    // settings, the player doesn't click and is put back at once.)
     async function lifecycleCheck(site, name, { remove = false, starting = false } = {}) {
       const page = await openSite(site);
       const span = await beginSpan(page, name);
       await hold(span, 'on', effectExpect(EFFECT), { settleMs: 0 });
       const off = { restores: true, silenceMs: settingsChange(target, EFFECT, { ...EFFECT, speed: 1 }).silenceMs ?? 0, windowMs: LIFECYCLE_WINDOW_MS };
-      let starts = null;
-      const whileStarting = (turnOff) => () => {
-        if (starting) {
-          starts = runPageStep(page, 'startAsExtensionGoes', { checkEvent: `${ENGINE_CHANNELS[0]}_CHECK` }, { timeoutMs: STARTING_MS }).catch((error) => error);
-        }
-        return turnOff();
-      };
-      if (remove) await act(span, 'remove the extension', off, whileStarting(() => browser.remove()));
-      else await act(span, 'turn the extension off', off, whileStarting(() => browser.disable()));
+      // In place in the page before the extension is turned off: the engine
+      // asks only once more after it has gone.
+      if (starting) await runPageStep(page, 'startAsExtensionGoes', { checkEvent: `${ENGINE_CHANNELS[0]}_CHECK` });
+      if (remove) await act(span, 'remove the extension', off, () => browser.remove());
+      else await act(span, 'turn the extension off', off, () => browser.disable());
       if (starting) {
-        const started = await starts;
+        const started = await runPageStep(page, 'startedAsExtensionGoes', {}, { timeoutMs: STARTING_MS }).catch((error) => error);
         if (started !== 'started') span.checks.push({ code: 'setup', message: `the player's start was not sent as the extension went: ${started?.message ?? started}` });
       }
       await hold(span, 'off', dryExpect(), { settleMs: 1000 });
