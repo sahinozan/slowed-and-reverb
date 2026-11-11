@@ -517,6 +517,18 @@ describe('a generated file reached by another name', () => {
       }
       assert.equal(refusal(patch([`Delete File: ${name}`], links)), null, name);
     }
+    // A link's .. goes up from where the names before it lead, so through
+    // a link to a folder it is that folder's parent. Tried with the applier
+    // and with Node: the first makes site/popup/popup.new and the second a
+    // file in the website's assets. By their spelling alone they would
+    // lead out of this folder and to assets/popup.new in it.
+    fs.symlinkSync(path.join(root, 'site', 'popup'), path.join(links, 'popup'));
+    fs.symlinkSync(path.join(root, 'site', 'assets', 'fonts'), path.join(links, 'fonts'));
+    fs.symlinkSync('fonts/../../popup/popup.new', path.join(links, 'up.js'));
+    fs.symlinkSync('popup/../assets/popup.new', path.join(links, 'other.js'));
+    assert.ok(refusal(patch(['Add File: up.js'], links))?.startsWith('site/popup/popup.new is generated'));
+    assert.deepEqual(readEdit(patch(['Add File: other.js'], links)).files, [path.join(root, 'site', 'assets', 'popup.new')]);
+    assert.equal(refusal(patch(['Add File: other.js'], links)), null);
     // Links that lead to each other lead nowhere, and to no end.
     fs.symlinkSync('there.js', path.join(links, 'here.js'));
     fs.symlinkSync('here.js', path.join(links, 'there.js'));

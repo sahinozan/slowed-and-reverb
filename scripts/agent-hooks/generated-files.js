@@ -189,21 +189,33 @@ const isLink = (file) => {
 // isn't there yet leads to where that would be. With `itself`, a link by
 // that name is meant and not the file it leads to, as when it is deleted
 // or moved away.
-function real(file, itself = false, links = 0) {
+function real(file, itself = false, links = { left: 40 }) {
   if (itself && isLink(file)) return path.join(real(path.dirname(file)), path.basename(file));
   const missing = [];
   for (let at = file; ; at = path.dirname(at)) {
     try {
       return path.join(fs.realpathSync.native(at), ...missing);
     } catch {
-      // Links that lead back to themselves are followed no further.
-      if (links < 40 && isLink(at)) {
-        return real(path.join(path.resolve(real(path.dirname(at)), fs.readlinkSync(at)), ...missing), false, links + 1);
-      }
+      if (isLink(at) && links.left > 0) return path.join(led(at, links), ...missing);
       if (at === path.dirname(at)) return file;
       missing.unshift(path.basename(at));
     }
   }
+}
+
+// Where a link leads, taken name by name as the file system does: a ..
+// goes up from where the names before it led, through any link among
+// them. `links` counts the links followed, so that ones that lead back to
+// themselves come to an end.
+function led(link, links) {
+  links.left -= 1;
+  const text = fs.readlinkSync(link);
+  let at = path.isAbsolute(text) ? path.parse(text).root : real(path.dirname(link));
+  for (const name of text.slice(path.parse(text).root.length).split(path.sep === '/' ? '/' : /[\\/]/)) {
+    if (name === '' || name === '.') continue;
+    at = name === '..' ? path.dirname(at) : real(path.join(at, name), false, links);
+  }
+  return at;
 }
 
 // What a hook is given on standard input.
