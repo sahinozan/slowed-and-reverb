@@ -44,6 +44,34 @@ function deferredTabState() {
   };
 }
 
+// Puts the popup's timers in the test's hands, so a hold or a wait takes
+// no real time and ends exactly when the test says.
+function fakeTimers(window) {
+  let now = 0;
+  let lastId = 0;
+  const timers = new Map();
+  window.setTimeout = (callback, delay = 0) => {
+    timers.set(++lastId, { at: now + delay, callback });
+    return lastId;
+  };
+  window.clearTimeout = (id) => {
+    timers.delete(id);
+  };
+  return {
+    advance(ms) {
+      const end = now + ms;
+      for (;;) {
+        const [id, timer] = [...timers].filter(([, { at }]) => at <= end).sort((a, b) => a[1].at - b[1].at)[0] ?? [];
+        if (!timer) break;
+        timers.delete(id);
+        now = timer.at;
+        timer.callback();
+      }
+      now = end;
+    }
+  };
+}
+
 function presetBar(harness) {
   const document = harness.window.document;
   return {
@@ -1019,34 +1047,6 @@ describe('popup behavior', () => {
     const pointer = (harness, element, name, init = {}) =>
       element.dispatchEvent(new harness.window.MouseEvent(name, { bubbles: true, button: 0, ...init }));
 
-    // Puts the popup's timers in the test's hands, so a hold or a wait takes
-    // no real time and ends exactly when the test says.
-    function fakeTimers(window) {
-      let now = 0;
-      let lastId = 0;
-      const timers = new Map();
-      window.setTimeout = (callback, delay = 0) => {
-        timers.set(++lastId, { at: now + delay, callback });
-        return lastId;
-      };
-      window.clearTimeout = (id) => {
-        timers.delete(id);
-      };
-      return {
-        advance(ms) {
-          const end = now + ms;
-          for (;;) {
-            const [id, timer] = [...timers].filter(([, { at }]) => at <= end).sort((a, b) => a[1].at - b[1].at)[0] ?? [];
-            if (!timer) break;
-            timers.delete(id);
-            now = timer.at;
-            timer.callback();
-          }
-          now = end;
-        }
-      };
-    }
-
     // Holds each of the tab's answers to a change until the test lets it go,
     // with `{ success: true }` unless the test gives another answer.
     function slowTab(speed) {
@@ -1556,6 +1556,194 @@ describe('popup behavior', () => {
 
       harness.window.dispatchEvent(new harness.window.Event('pagehide'));
       assert.deepEqual(appliesSent(harness), [[1.01, true], [1.01, false]]);
+    });
+  });
+
+  // Until the tab has answered, the popup shows the settings used last in
+  // any tab, and a change made then would be shown wrongly once the older
+  // answer came (issue #175). So the parts that set the effect are held.
+  // jsdom doesn't act on `inert`, so these tests check that the parts are
+  // marked; that a marked part takes no click or key is checked in the
+  // browsers (e2e/ui/popup-layout.spec.js).
+  describe("holding the controls until the tab's first answer", () => {
+    const settle = async () => {
+      for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
+    };
+    const answer = (state) => ({ settings: DEFAULT_SETTINGS, blocked: false, live: false, ...state });
+    // Everything that changes the effect or saves what the popup shows.
+    const EFFECT_CONTROLS = [
+      '#power-toggle', '.preset-btn', '#tab-presets', '#tab-custom', '#preset-name-input',
+      '#save-preset-btn', '#speed-slider', '#speed-input', '#speed-down-btn', '#speed-up-btn',
+      '#reverb-slider', '.eq-handle', '#echo-slider', '#keep-pitch-toggle', '#pan-slider',
+      '#width-slider', '#saturation-slider', '#effect-tab-basic', '#effect-tab-advanced',
+      '#reset-btn'
+    ];
+    const held = (harness) => {
+      const document = harness.window.document;
+      const all = EFFECT_CONTROLS.flatMap((selector) => [...document.querySelectorAll(selector)]);
+      assert.ok(all.length >= EFFECT_CONTROLS.length, 'a selector matched nothing');
+      const count = all.filter((control) => control.closest('[inert]')).length;
+      if (count !== 0 && count !== all.length) {
+        const free = all.filter((control) => !control.closest('[inert]')).map((control) => control.id);
+        assert.fail(`only some controls are held; free: ${free.join(', ')}`);
+      }
+      return count > 0;
+    };
+    const dimmed = (harness) => harness.window.document.body.classList.contains('tab-slow');
+    const marked = (harness) => harness.window.document.querySelectorAll('[inert]').length;
+
+    test('holds every effect control until a tab with the effect on has answered', async (t) => {
+      const tabState = deferredTabState();
+      const harness = await createPopupHarness({ onTabMessage: tabState.onTabMessage });
+      t.after(() => close(harness));
+      const document = harness.window.document;
+
+      assert.equal(held(harness), true);
+      assert.equal(dimmed(harness), false);
+      // The themes and the links are not the effect's, and stay usable.
+      assert.equal(document.getElementById('theme-picker-btn').closest('[inert]'), null);
+      assert.equal(document.querySelector('#app-footer a').closest('[inert]'), null);
+      // Held controls are not disabled, so they look as they always do.
+      assert.equal(document.getElementById('speed-up-btn').disabled, false);
+
+      tabState.release(answer({ enabled: true, settings: SLOWED }));
+      await settle();
+
+      assert.equal(held(harness), false);
+      assert.equal(marked(harness), 0);
+      assert.equal(document.getElementById('speed-input').value, '0.80');
+    });
+
+    test('holds them from the start, while what is stored is still being read', async (t) => {
+      let letStorageAnswer;
+      const stored = new Promise((resolve) => {
+        letStorageAnswer = resolve;
+      });
+      const harness = await createPopupHarness({
+        contentState: answer({ enabled: true, settings: SLOWED }),
+        beforeLoad(window) {
+          const { local } = window.chrome.storage;
+          const get = local.get.bind(local);
+          local.get = async (...keys) => {
+            await stored;
+            return get(...keys);
+          };
+        }
+      });
+      t.after(() => close(harness));
+
+      // The tab hasn't been asked anything yet.
+      assert.equal(harness.calls.tabMessages.length, 0);
+      assert.equal(held(harness), true);
+
+      letStorageAnswer();
+      await settle();
+      assert.equal(held(harness), false);
+      assert.equal(harness.window.document.getElementById('speed-input').value, '0.80');
+    });
+
+    test('holds them on a new tab until the preset it starts with has reached the tab', async (t) => {
+      const first = deferredTabState();
+      const changes = [];
+      const harness = await createPopupHarness({
+        onTabMessage(tabId, message) {
+          if (message.type !== 'UPDATE_AUDIO') return first.onTabMessage(tabId, message);
+          return new Promise((resolve) => changes.push(() => resolve({ success: true })));
+        }
+      });
+      t.after(() => close(harness));
+
+      first.release(answer({ enabled: false }));
+      await settle();
+      // The answer has come, and the popup's own first change is on its way.
+      assert.equal(changes.length, 1);
+      assert.equal(held(harness), true);
+
+      changes.shift()();
+      await settle();
+      assert.equal(held(harness), false);
+      assert.equal(harness.window.document.getElementById('speed-input').value, '0.80');
+    });
+
+    for (const [name, options, check] of [
+      [
+        'a page that answers that it is blocked',
+        { contentState: { enabled: false, blocked: true, blockReason: 'unsupportedSite' } },
+        (document) => assert.equal(document.getElementById('blocked-banner').hidden, false)
+      ],
+      [
+        'a page where nothing answers',
+        {
+          onTabMessage(_tabId, message) {
+            if (message.type === 'GET_STATE') throw new Error('nothing answered');
+            return { success: true };
+          }
+        },
+        (document) => assert.equal(document.getElementById('power-toggle').disabled, true)
+      ],
+      [
+        'a site the extension does not work on',
+        { activeTab: { id: 9, url: 'https://example.com/' } },
+        (document) => assert.equal(document.getElementById('blocked-banner').hidden, false)
+      ],
+      [
+        'Spotify before it is allowed',
+        { activeTab: { id: 9, url: 'https://open.spotify.com/' } },
+        (document) => assert.equal(document.getElementById('spotify-permission-panel').hidden, false)
+      ],
+      [
+        'a window with no tab to ask',
+        { activeTab: null },
+        (document) => assert.equal(document.getElementById('power-toggle').disabled, false)
+      ]
+    ]) {
+      test(`lets go of them for ${name}`, async (t) => {
+        const harness = await createPopupHarness(options);
+        t.after(() => close(harness));
+        await settle();
+
+        assert.equal(marked(harness), 0);
+        assert.equal(dimmed(harness), false);
+        check(harness.window.document);
+      });
+    }
+
+    test('dims them only when the answer takes long, and not after it has come', async (t) => {
+      const tabState = deferredTabState();
+      let timers;
+      const harness = await createPopupHarness({
+        onTabMessage: tabState.onTabMessage,
+        beforeLoad(window) {
+          timers = fakeTimers(window);
+        }
+      });
+      t.after(() => close(harness));
+
+      timers.advance(299);
+      assert.equal(dimmed(harness), false);
+      timers.advance(1);
+      assert.equal(dimmed(harness), true);
+      assert.equal(held(harness), true);
+
+      tabState.release(answer({ enabled: true }));
+      await settle();
+      assert.equal(dimmed(harness), false);
+      assert.equal(held(harness), false);
+    });
+
+    test('never dims them when the answer comes soon', async (t) => {
+      let timers;
+      const harness = await createPopupHarness({
+        contentState: answer({ enabled: true }),
+        beforeLoad(window) {
+          timers = fakeTimers(window);
+        }
+      });
+      t.after(() => close(harness));
+
+      timers.advance(5000);
+      assert.equal(dimmed(harness), false);
+      assert.equal(marked(harness), 0);
     });
   });
 });

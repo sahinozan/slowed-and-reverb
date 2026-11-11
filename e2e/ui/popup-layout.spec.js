@@ -619,6 +619,117 @@ test.describe('speed controls', () => {
   });
 });
 
+// Until the tab has said what it is playing with, the popup shows the
+// settings used last in any tab, and the parts that set the effect are held:
+// they take no click and no key, and dim only when the answer is slow in
+// coming (holdControlsForTab in popup.js). The stub holds the tab's answer
+// until the test lets it go.
+test.describe("the controls before the tab's first answer", () => {
+  const HELD = { settings: SLOWED, answers: 'held' };
+  const shown = (page) => page.evaluate(() => ({
+    speed: document.getElementById('speed-input').value,
+    reverb: document.getElementById('reverb-slider').value,
+    on: document.getElementById('power-toggle').checked
+  }));
+  // The settings stored last, and the switch off: nothing was shown as on
+  // when the popup was last closed.
+  const AS_OPENED = { speed: '0.80', reverb: '40', on: false };
+  const opacity = (page, selector) =>
+    page.evaluate((query) => getComputedStyle(document.querySelector(query)).opacity, selector);
+  // Clicks where the control is with the mouse itself, whatever is there: a
+  // locator's click would wait for the control to take it.
+  const clickAt = async (page, selector) => {
+    const box = await page.locator(selector).boundingBox();
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  };
+  const PRESSED = ['#speed-up-btn', '[data-preset="nightcore"]', '.header-power .switch-slider', '#reset-btn'];
+
+  async function withHeldPopup(browser, browserName, baseUrl, check) {
+    const { context, page, errors } = await openPopup(browser, browserName, baseUrl, HELD);
+    try {
+      await expect(page.locator('#speed-input')).toHaveValue('0.80');
+      await check(page);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  }
+
+  const takesNothingWhileHeld = async (page) => {
+    for (const selector of PRESSED) {
+      await clickAt(page, selector);
+      expect(await shown(page), `after a click on ${selector}`).toEqual(AS_OPENED);
+    }
+    // The Tab key passes the held parts by.
+    await page.locator('#theme-picker-btn').focus();
+    for (let presses = 0; presses < 8; presses++) {
+      await page.keyboard.press('Tab');
+      const held = await page.evaluate(() => Boolean(document.activeElement?.closest('[inert]')));
+      expect(held, `Tab press ${presses + 1} reached a held control`).toBe(false);
+    }
+  };
+
+  test('take no click and no key, and work once it has come', async ({ browser, browserName }) => {
+    await withHeldPopup(browser, browserName, server.baseUrl, async (page) => {
+      await takesNothingWhileHeld(page);
+
+      // The themes are not the effect's: they work meanwhile.
+      await page.locator('#theme-picker-btn').click();
+      await expect(page.locator('#theme-panel')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#theme-panel')).toBeHidden();
+
+      // By now the answer is slow, and the held parts have dimmed.
+      for (const part of ['.header-power', '.presets-tabs-section', '.controls', '#reset-btn']) {
+        await expect.poll(() => opacity(page, part), part).toBe('0.4');
+      }
+
+      await page.evaluate(() => window.letTabAnswer());
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      expect(await page.locator('[inert]').count()).toBe(0);
+      for (const part of ['.header-power', '.presets-tabs-section', '.controls', '#reset-btn']) {
+        await expect.poll(() => opacity(page, part), part).toBe('1');
+      }
+      // The tab's answer: the effect is on.
+      expect(await shown(page)).toEqual({ ...AS_OPENED, on: true });
+      await clickAt(page, '#speed-up-btn');
+      expect(await shown(page)).toEqual({ speed: '0.81', reverb: '40', on: true });
+    });
+  });
+
+  test('are not dimmed in an opening where the tab answers at once', async ({ browser, browserName }) => {
+    const { context, page, errors } = await openPopup(browser, browserName, server.baseUrl, { settings: SLOWED });
+    try {
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      // Longer than the popup waits before it dims the held parts.
+      await page.waitForTimeout(500);
+      expect(await page.evaluate(() => document.body.classList.contains('tab-slow'))).toBe(false);
+      expect(await page.locator('[inert]').count()).toBe(0);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
+  // The popup as it was: the controls can be used before the answer, so a
+  // click made then changes what the popup shows and sends.
+  test('finds controls that can be used before the answer', async ({ browser, browserName }) => {
+    const controlServer = await serveWith({
+      'popup.js': patched('popup.js', [
+        [/for \(const part of heldForTab\) part\.setAttribute\('inert', ''\);/, '']
+      ])
+    });
+    try {
+      await withHeldPopup(browser, browserName, controlServer.baseUrl, async (page) => {
+        await expect(takesNothingWhileHeld(page)).rejects.toThrow('after a click on #speed-up-btn');
+        expect((await shown(page)).speed).toBe('0.81');
+      });
+    } finally {
+      await controlServer.close();
+    }
+  });
+});
+
 // The layout check has to fail where the popup did. Each control changes a
 // copy of today's popup and expects the check to find the problem. Three put
 // back what c3ab8b5 and 46512dc took out, adapted to today's files (the
