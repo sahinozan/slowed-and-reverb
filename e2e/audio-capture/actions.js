@@ -36,10 +36,13 @@ function withDeadline(promise, ms, message) {
 //     once it is playing, as Spotify does.
 //   putBack: takes the player out of the page for `waitMs`, then puts it
 //     back at speed `rate` and plays it, as YouTube does.
-//   keepStarting: for `forMs`, tells the page every `waitMs` that the
-//     player has started (a `play` event), as it does when a song begins,
-//     so that one falls in any short wait of the engine's.
-function pageStep({ step, timeoutMs, src, rate, waitMs, forMs }) {
+//   startAsExtensionGoes: tells the page that the player has started (a
+//     `play` event), as it does when a song begins, at the moment the
+//     engine finds the extension gone. The engine asks with the event
+//     `checkEvent`, which the extension cancels while it is there; the
+//     first one left uncancelled is that moment, and the start is sent
+//     right after the engine has dealt with it, inside any wait it began.
+function pageStep({ step, timeoutMs, src, rate, waitMs, checkEvent }) {
   const player = document.getElementById('player');
   const cleanups = [];
   let timer;
@@ -78,15 +81,21 @@ function pageStep({ step, timeoutMs, src, rate, waitMs, forMs }) {
       await player.play();
       return 'playing';
     },
-    async keepStarting() {
-      const until = performance.now() + forMs;
-      let starts = 0;
-      while (performance.now() < until) {
-        player.dispatchEvent(new Event('play'));
-        starts++;
-        await wait(waitMs);
-      }
-      return starts;
+    startAsExtensionGoes() {
+      return new Promise((resolve) => {
+        const onCheck = (event) => {
+          // Whether it was cancelled is known once every listener has run,
+          // and the engine acts in the same turn it asked in.
+          setTimeout(() => {
+            if (event.defaultPrevented) return;
+            document.removeEventListener(checkEvent, onCheck);
+            player.dispatchEvent(new Event('play'));
+            resolve('started');
+          }, 0);
+        };
+        document.addEventListener(checkEvent, onCheck);
+        cleanups.push(() => document.removeEventListener(checkEvent, onCheck));
+      });
     }
   };
   const run = steps[step];

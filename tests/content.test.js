@@ -472,6 +472,28 @@ describe('content script audio processing', () => {
     assert.equal(harness.context.sources.length, 1);
   });
 
+  // Holds the engine's wait before it changes a player (40 ms, for the
+  // output to fade out) until the test ends it, so that what happens in
+  // that wait doesn't depend on real time.
+  function holdPlayerChanges(window) {
+    const setTimeout = window.setTimeout.bind(window);
+    const waiting = [];
+    window.setTimeout = (callback, delay, ...rest) =>
+      delay === 40 ? waiting.push(callback) : setTimeout(callback, delay, ...rest);
+    return {
+      get waiting() {
+        return waiting.length;
+      },
+      end() {
+        while (waiting.length) waiting.shift()();
+      }
+    };
+  }
+  const outputLevels = (harness) =>
+    harness.context.gains
+      .filter((node) => node.connections.some((connection) => connection.target === harness.context.destination))
+      .map((node) => node.gain.value);
+
   // Turning the extension off puts the player back once the output has faded
   // out, which is a wait. A player that starts in that wait (a new song)
   // runs the engine again, without the extension by then, and that must not
@@ -488,38 +510,144 @@ describe('content script audio processing', () => {
       await harness.dispatch({ type: 'UPDATE_AUDIO', settings, enabled: true });
       assert.equal(harness.media.playbackRate, landed);
 
+      const changes = holdPlayerChanges(harness.window);
       await harness.turnOff();
-      // Still waiting for the output to fade out.
+      // Waiting for the output to fade out.
+      assert.equal(changes.waiting, 1);
       assert.equal(harness.media.playbackRate, landed);
       harness.media.dispatchEvent(new harness.window.Event('play'));
+      changes.end();
 
-      await waitFor(() => harness.media.playbackRate === 1 && harness.media.preservesPitch === false);
+      assert.equal(harness.media.playbackRate, 1);
+      assert.equal(harness.media.preservesPitch, false);
       FakeAudioContext.advance(1);
-      const outputGains = harness.context.gains.filter((node) =>
-        node.connections.some((connection) => connection.target === harness.context.destination)
-      );
-      assert.deepEqual(outputGains.map((node) => node.gain.value), [1, 0]);
+      assert.deepEqual(outputLevels(harness), [1, 0]);
     });
   }
 
-  // Without the extension the page sets its own speed. One it chooses while
-  // the putting back is still waiting stands; the pitch mode, which only the
-  // engine changed, still goes back.
-  test('leaves a speed the page chooses just as the extension is turned off', async (t) => {
+  // Without the extension the page sets its own speed. One it changes to
+  // while the putting back is still waiting stands; the pitch mode, which
+  // only the engine changed, still goes back.
+  test('leaves a speed the page changes to just as the extension is turned off', async (t) => {
     const harness = await createContentHarness();
     t.after(() => close(harness));
     await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
     assert.equal(harness.media.preservesPitch, true);
 
+    const changes = holdPlayerChanges(harness.window);
     await harness.turnOff();
-    assert.equal(harness.media.playbackRate, SETTINGS.speed);
+    assert.equal(changes.waiting, 1);
     harness.media.playbackRate = 1.25;
     harness.media.dispatchEvent(new harness.window.Event('play'));
+    changes.end();
 
-    await waitFor(() => harness.media.preservesPitch === false);
-    // Nothing more should happen, so this waits a fixed time.
-    await new Promise((resolve) => setTimeout(resolve, 150));
     assert.equal(harness.media.playbackRate, 1.25);
+    assert.equal(harness.media.preservesPitch, false);
+  });
+
+  // The engine sees the player's speed, not who set it. A page that sets
+  // the speed the player already has can't be told from one that set
+  // nothing, so the player is put back, as when no player starts at all.
+  test("puts the player back when the page sets the speed it already had as the extension is turned off", async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+
+    const changes = holdPlayerChanges(harness.window);
+    await harness.turnOff();
+    harness.media.playbackRate = SETTINGS.speed;
+    harness.media.dispatchEvent(new harness.window.Event('play'));
+    changes.end();
+
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.media.preservesPitch, false);
+  });
+
+  // A change to the effect that is still waiting when the extension goes is
+  // replaced by the one that puts the player back, for every player in the
+  // page. One that is out of the page just then keeps its waiting change,
+  // which must come to nothing: the effect is not put on a player after the
+  // extension has gone.
+  test('drops a waiting change to the effect for a player that was out of the page when the extension was turned off', async (t) => {
+    const harness = await createContentHarness({ userAgent: FIREFOX_AGENT });
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...PITCH_FOLLOWS, speed: 0.8 }, enabled: true });
+    const source = harness.context.sources[0];
+
+    const changes = holdPlayerChanges(harness.window);
+    // Across normal speed, so the player waits for the output to fade out.
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...PITCH_FOLLOWS, speed: 1.1, keepPitch: true }, enabled: true },
+      { advance: 0 }
+    );
+    assert.equal(changes.waiting, 1);
+    assert.equal(harness.media.playbackRate, 0.8);
+
+    harness.media.remove();
+    await waitFor(() => source.connections.length === 0);
+    await harness.turnOff();
+    harness.window.document.body.appendChild(harness.media);
+    harness.window.document.dispatchEvent(new harness.window.Event('yt-navigate-finish'));
+    await waitFor(() => source.connections.length > 0);
+    changes.end();
+
+    // Neither the speed nor the pitch mode the effect asked for.
+    assert.equal(harness.media.playbackRate, 0.8);
+    assert.equal(harness.media.preservesPitch, false);
+    FakeAudioContext.advance(1);
+    assert.deepEqual(outputLevels(harness), [1, 0]);
+  });
+
+  // The engine handles 32 players at a time. One beyond that, with a change
+  // to the effect still waiting from when it was handled, is put back
+  // directly when the effect is turned off, and the waiting change must
+  // not undo that.
+  test('drops a waiting change to the effect for a player it can no longer handle when the effect is turned off', async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+    const { document } = harness.window;
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: PITCH_FOLLOWS, enabled: true });
+    const source = harness.context.sources[0];
+
+    const changes = holdPlayerChanges(harness.window);
+    // A change of pitch mode, so the player waits for the output to fade out.
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9 }, enabled: true },
+      { advance: 0 }
+    );
+    assert.equal(changes.waiting, 1);
+    changes.end();
+    assert.equal(harness.media.preservesPitch, true);
+    await harness.dispatch(
+      { type: 'UPDATE_AUDIO', settings: { ...PITCH_FOLLOWS, speed: 0.9 }, enabled: true },
+      { advance: 0 }
+    );
+    assert.equal(changes.waiting, 1);
+
+    // Out of the page, and 32 other players take its place.
+    harness.media.remove();
+    await waitFor(() => source.connections.length === 0);
+    for (let index = 0; index < 32; index++) {
+      const other = document.createElement('audio');
+      Object.defineProperties(other, {
+        duration: { configurable: true, value: 300 },
+        mediaKeys: { configurable: true, value: null },
+        readyState: { configurable: true, value: 2 }
+      });
+      document.body.append(other);
+    }
+    await waitFor(() => harness.context.sources.length === 33);
+    document.body.appendChild(harness.media);
+    document.dispatchEvent(new harness.window.Event('yt-navigate-finish'));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(source.connections.length, 0);
+
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: PITCH_FOLLOWS, enabled: false }, { advance: 0 });
+    assert.equal(harness.media.playbackRate, 1);
+    changes.end();
+
+    assert.equal(harness.media.playbackRate, 1);
+    assert.equal(harness.media.preservesPitch, false);
   });
 
   test('reconnects captured media unchanged after the extension is turned off', async (t) => {

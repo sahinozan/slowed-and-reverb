@@ -114,6 +114,9 @@ const ACTION_WINDOW_MS = 300;
 // within their 250 ms check and fade back to the unchanged sound. The window
 // also allows for the browser shutting the extension down first.
 const LIFECYCLE_WINDOW_MS = 1500;
+// How long the page waits for the engine to find the extension gone, in the
+// check that starts the player at that moment.
+const STARTING_MS = 10_000;
 // The unchanged sound has to be back this soon after such an action: both
 // channels' own tones at their exact level and nothing else (dryRestoration
 // in metrics.js).
@@ -955,10 +958,12 @@ function defineRegression(browser) {
     // Turning the extension off in the browser, as from its extensions page,
     // and on again. On YouTube, with the extension off, the page then takes
     // its player out and puts it back, at a speed of its own.
-    // `starting`: the player keeps starting while the extension goes, as it
-    // does when a new song begins just then. The engine puts the player back
-    // after a short wait, once the output has faded out, and a player that
-    // started in that wait once made it drop the putting back.
+    // `starting`: the player starts as the extension goes, as it does when
+    // a new song begins just then. The engine puts the player back after a
+    // short wait, once the output has faded out, and a player that started
+    // in that wait once made it drop the putting back. The page sends the
+    // start at the moment the engine finds the extension gone, so it falls
+    // in that wait on every run.
     async function lifecycleCheck(site, name, { remove = false, starting = false } = {}) {
       const page = await openSite(site);
       const span = await beginSpan(page, name);
@@ -967,8 +972,7 @@ function defineRegression(browser) {
       let starts = null;
       const whileStarting = (turnOff) => () => {
         if (starting) {
-          const forMs = LIFECYCLE_WINDOW_MS + 1000;
-          starts = runPageStep(page, 'keepStarting', { waitMs: 10, forMs }, { timeoutMs: forMs + 2000 }).catch((error) => error);
+          starts = runPageStep(page, 'startAsExtensionGoes', { checkEvent: `${ENGINE_CHANNELS[0]}_CHECK` }, { timeoutMs: STARTING_MS }).catch((error) => error);
         }
         return turnOff();
       };
@@ -976,7 +980,7 @@ function defineRegression(browser) {
       else await act(span, 'turn the extension off', off, whileStarting(() => browser.disable()));
       if (starting) {
         const started = await starts;
-        if (!(started > 50)) span.checks.push({ code: 'setup', message: `the player's starts were not sent: ${started?.message ?? started}` });
+        if (started !== 'started') span.checks.push({ code: 'setup', message: `the player's start was not sent as the extension went: ${started?.message ?? started}` });
       }
       await hold(span, 'off', dryExpect(), { settleMs: 1000 });
       if (starting) {

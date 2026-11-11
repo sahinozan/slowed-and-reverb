@@ -168,15 +168,15 @@ const HISTORY = [
     commit: null,
     defect: "After the extension was turned off, YouTube kept the effect's speed when a player started in the moment before the engine put it back",
     kind: 'exact',
-    note: 'In every version until the change that added this control, which names no commit for that reason. The line that dropped the waiting change is put back.',
+    note: 'In every version from 02ef174, which made the player change wait for the output to fade out, until the change that added this control, which names no commit for that reason. The line that dropped the waiting change is put back.',
     browsers: ['firefox'],
     check: 'turning the extension off as a player starts',
     sites: ['youtube'],
     mutations: [
       {
         file: 'youtube-main.js',
-        find: "        // page was left with the effect's speed.\n        setPipelineEnabled(pipeline, false);",
-        replace: "        cancelPendingPlayback(pipeline);\n        setPipelineEnabled(pipeline, false);",
+        find: '        // (changePlayback).\n        setPipelineEnabled(pipeline, false);',
+        replace: '        cancelPendingPlayback(pipeline);\n        setPipelineEnabled(pipeline, false);',
         label: 'a player that starts drops the change that puts the player back'
       }
     ],

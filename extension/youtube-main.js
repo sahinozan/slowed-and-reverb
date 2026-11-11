@@ -485,6 +485,15 @@
     const change = () => {
       if (pipeline.pendingPlayback !== change) return;
       pipeline.pendingPlayback = null;
+      // A change to the effect is made only while the effect is on and the
+      // extension is there. Turning either off replaces a waiting change
+      // with the one that puts the player back, except for a player it
+      // can't reach just then (out of the page, or one too many), whose
+      // waiting change ends here.
+      if (enabled && !(bridgeConnected && effectEnabled)) {
+        setPipelineEnabled(pipeline, false);
+        return;
+      }
       // Timed from the change itself, in case this ran late, and scheduled
       // first, since changing the player can run this file's code again.
       pipeline.quietUntil = Math.max(
@@ -492,9 +501,11 @@
         audioContext.currentTime + PLAYER_CLICK_SECONDS
       );
       setPipelineEnabled(pipeline, enabled);
-      // Without the extension the page sets its own speed. One it chose
-      // while this change waited stands, and only the pitch mode, which the
-      // page doesn't set, goes back.
+      // Without the extension the page sets its own speed. If the speed is
+      // not what it was when this change was planned, the page has chosen
+      // one meanwhile, and it stands: only the pitch mode, which the page
+      // doesn't set, goes back. (A page that sets the speed the player
+      // already had can't be told from one that set nothing.)
       if (!bridgeConnected && Math.abs(media.playbackRate - speedBefore) > SAME_SPEED) {
         setPitchMode(media, keepPitch);
         return;
@@ -663,10 +674,11 @@
 
     if (!bridgeConnected) {
       if (pipeline && connectPipeline(media, pipeline)) {
-        // A change still waiting here is the one that puts the player back
-        // (the last thing done before the extension went), so it is kept:
-        // it was dropped once, when a player started in that wait, and the
-        // page was left with the effect's speed.
+        // A change still waiting here is kept. Dropping it, as this once
+        // did, lost the change that puts the player back when a player
+        // started in its wait, and the page was left with the effect's
+        // speed. A waiting change to the effect ends by itself
+        // (changePlayback).
         setPipelineEnabled(pipeline, false);
       }
       return;
@@ -677,6 +689,7 @@
       if (pipeline && connectPipeline(media, pipeline)) {
         changePlayback(media, pipeline, false, speed, keepPitch);
       } else {
+        if (pipeline) cancelPendingPlayback(pipeline);
         setPlayback(media, speed, keepPitch);
       }
       return;
