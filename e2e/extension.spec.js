@@ -170,6 +170,74 @@ test('opens with the switch on when the effect was on, before the tab answers', 
   await expect(popup.getByText('On', { exact: true })).toBeVisible();
 });
 
+// Opens the popup on a page of its own, playing at 0.80x, makes two speed
+// steps and closes the popup while the second hasn't left it. The popup sends
+// one change at a time and keeps the next until the answer has come, so the
+// page is kept too busy to answer the first step (0.81) until after the popup
+// has closed, with the second (0.82) still waiting in it. `beforeSteps` runs
+// in the popup first.
+async function stepTwiceAndClosePopup(extension, name, beforeSteps = () => {}) {
+  for (const open of extension.context.pages()) {
+    if (open.url().startsWith(`chrome-extension://${extension.extensionId}/`)) await open.close();
+  }
+  const url = `${extension.fixtureUrl}?${name}`;
+  const page = await extension.context.newPage();
+  await page.goto(url);
+  await expect(page.locator('#player')).toHaveJSProperty('readyState', 4);
+  await page.bringToFront();
+  const tab = await fixtureTab(extension.serviceWorker, url);
+
+  const popup = await openPopupPage(extension, tab.id);
+  await expect(popup.getByRole('spinbutton', { name: 'Exact speed' })).toHaveValue('0.80');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+  await popup.evaluate(beforeSteps);
+
+  // Not awaited: it answers only when the page is free again. The wait
+  // starts in the call itself: started from a timer, it left the page free
+  // to answer the first step at once.
+  const pageBusy = page.evaluate(() => {
+    const until = performance.now() + 1500;
+    while (performance.now() < until);
+  });
+  const faster = popup.getByRole('button', { name: 'Faster by 0.01x' });
+  await faster.click();
+  // The popup looks up its tab before it sends a change. A lookup made after
+  // the click is answered after the popup's own, so by now 0.81 is on its way
+  // and the next step has to wait for its answer.
+  await popup.evaluate(() => chrome.tabs.query({ active: true, currentWindow: true }));
+  await faster.click();
+  await expect(popup.locator('#speed-slider')).toHaveValue('0.82');
+  await popup.close();
+  await pageBusy;
+
+  return { page, tab };
+}
+
+test('sends a speed step made just before the popup closes', async ({ extension }) => {
+  const { page } = await stepTwiceAndClosePopup(extension, 'close');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.82);
+});
+
+test('control: without the send on closing, that step never reaches the tab', async ({
+  extension
+}) => {
+  // Shows that the test above closes the popup with the step unsent: with
+  // the popup's handler for closing taken away, the tab stays on the step
+  // before it.
+  const { page, tab } = await stepTwiceAndClosePopup(extension, 'close-control', () => {
+    if (typeof window.sendOnClose !== 'function') throw new Error('popup.js has no sendOnClose');
+    window.removeEventListener('pagehide', window.sendOnClose);
+  });
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.81);
+
+  // Opening the popup again asks the tab several things, after anything
+  // sent to it earlier, and shows the speed the tab has.
+  const popup = await openPopupPage(extension, tab.id);
+  await expect(popup.locator('#current-preset-label')).toBeVisible();
+  await expect(popup.getByRole('spinbutton', { name: 'Exact speed' })).toHaveValue('0.81');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.81);
+});
+
 test("answers Spotify's turn-on with the effect running on a playing song", async ({
   extension
 }) => {
