@@ -56,7 +56,9 @@ const ARTIFACT_ROOT = path.join(root, 'test-results', 'audio-regression');
 // "compact" keeps the JSON but writes sound excerpts only around problems,
 // for repeated runs.
 const COMPACT = process.env.AUDIO_REGRESSION_EVIDENCE === 'compact';
-const RETAIN_SECONDS = 20;
+// Longer than the longest check: the changes while the song plays, about
+// 24 seconds since the steps onto normal speed and across it were added.
+const RETAIN_SECONDS = 32;
 // The recorder hears each context through a delay this long
 // (capture-observer.js), so a recorder that loads within it records the
 // context from its first frame: turning the effect on while a song plays
@@ -210,14 +212,28 @@ const NOTHING = Object.freeze({});
 // Which side of normal speed a speed is on, as the engines' speedSide.
 const speedSide = (speed) => Math.sign(speed - 1);
 
+// The speed the engines give the player for a speed of the effect's, as
+// their playerSpeed: in Firefox normal speed lands a ten-thousandth beside
+// it, on the side the player is on, and a player on normal speed stays.
+function playerSpeed(target, playing, speed) {
+  if (target !== 'firefox' || speedSide(speed) !== 0) return speed;
+  return 1 + speedSide(playing) * 0.0001;
+}
+
 // What a change of settings may do: the engines' silent dip when it makes
-// the player click, nothing otherwise. In Firefox a change of speed that
-// stays below normal speed, or stays above it, is in that "nothing": the
-// engines change the player at once, and it must not click or go silent.
+// the player click, nothing otherwise. `from` and `to` hold the player's own
+// speeds (playerSpeed). In Firefox a change of speed that stays below normal
+// speed, or stays above it, is in that "nothing": the engines change the
+// player at once, and it must not click or go silent. So is one from one
+// side to the other with the pitch kept. To normal speed itself or from it,
+// and from one side to the other with the pitch following, the player
+// clicks, and the engines go silent.
 function settingsChange(target, from, to) {
   const pitchChanges = from.keepPitch !== to.keepPitch;
-  const speedChanges = Math.abs(from.speed - to.speed) > 0.001;
-  const speedClicks = target === 'firefox' && speedChanges && speedSide(from.speed) !== speedSide(to.speed);
+  const speedChanges = Math.abs(from.speed - to.speed) > 0.00001;
+  const sides = [speedSide(from.speed), speedSide(to.speed)];
+  const speedClicks = target === 'firefox' && speedChanges && sides[0] !== sides[1] &&
+    (sides.includes(0) || !to.keepPitch);
   return pitchChanges || speedClicks ? { silenceMs: DIP_MS } : NOTHING;
 }
 
@@ -785,9 +801,18 @@ function defineRegression(browser) {
         }
         heard = expect;
       };
+      // What the player itself has: the settings, with the speed the engines
+      // give it for them.
+      let player = { speed: current.speed, keepPitch: current.keepPitch };
+      const onPlayer = (settings) => ({
+        speed: playerSpeed(target, player.speed, settings.speed),
+        keepPitch: settings.keepPitch
+      });
       const change = async (label, next) => {
-        await act(span, label, settingsChange(target, current, next), () => applyThroughExtension(page, next, true));
+        const playing = onPlayer(next);
+        await act(span, label, settingsChange(target, player, playing), () => applyThroughExtension(page, next, true));
         current = next;
+        player = playing;
         await settle(label, effectExpect(next), next);
       };
       await hold(span, 'on', effectExpect(EFFECT), { settleMs: 0 });
@@ -797,9 +822,17 @@ function defineRegression(browser) {
       // at once, with no silence, for a small step and for a larger one.
       await change('speed 0.81', { ...current, speed: 0.81 });
       await change('speed 0.9', { ...current, speed: 0.9 });
-      // From one side of normal speed to the other and back: Firefox's
-      // player clicks, so there the engines go silent around the change.
+      // To normal speed and back the way it came. Firefox's player clicks
+      // at normal speed itself, so there the engines land just beside it,
+      // and neither change may click or go silent.
+      await change('speed 1, landing beside normal speed', { ...current, speed: 1 });
+      await change('speed 0.9, back from beside normal speed', { ...current, speed: 0.9 });
+      // From one side of normal speed to the other and back, the pitch
+      // following: Firefox's player clicks, so there the engines go silent
+      // around the change. Landing on normal speed from above is silent in
+      // neither browser.
       await change('speed 1.1, across normal speed', { ...current, speed: 1.1 });
+      await change('speed 1, landing beside normal speed from above', { ...current, speed: 1 });
       await change('speed 0.9, back across normal speed', { ...current, speed: 0.9 });
 
       // A dragged slider: requests paced to reach the engine SWEEP_STEP_MS
@@ -835,10 +868,15 @@ function defineRegression(browser) {
       await settle('after overlapping changes', effectExpect(current), current);
 
       await change('keep the pitch', { ...current, keepPitch: true });
+      // With the pitch kept, Firefox's player doesn't click from one side
+      // of normal speed to the other, so the engines change it at once.
+      await change('speed 1.1, across normal speed with the pitch kept', { ...current, speed: 1.1 });
+      await change('speed 0.9, back across with the pitch kept', { ...current, speed: 0.9 });
       await change('pitch following again', { ...current, keepPitch: false });
-      await act(span, 'turn off', settingsChange(target, current, { ...current, speed: 1 }), () => applyThroughExtension(page, current, false));
+      // Off, the player is the page's, at normal speed itself.
+      await act(span, 'turn off', settingsChange(target, player, { ...player, speed: 1 }), () => applyThroughExtension(page, current, false));
       await settle('off', dryExpect(), { ...current, reverb: 0 });
-      await act(span, 'turn on', settingsChange(target, { ...current, speed: 1 }, current), () => applyThroughExtension(page, current, true));
+      await act(span, 'turn on', settingsChange(target, { ...player, speed: 1 }, player), () => applyThroughExtension(page, current, true));
       await settle('on again', effectExpect(current), current);
       const problems = await finishSpan(span);
       await closePage(page);

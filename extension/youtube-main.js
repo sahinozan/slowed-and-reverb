@@ -80,7 +80,19 @@
   // makes no click in Firefox, whatever its size (measured in Firefox 159
   // and 160, for changes from 0.01 to 0.4), so it is made at once: a silent
   // gap for each step would turn stepping through speeds into a stutter.
+  //
+  // It is normal speed itself that Firefox's player clicks at. A speed a
+  // ten-thousandth beside it behaves like any other: going to it and from it
+  // on one side makes no click, and with the pitch kept neither does going
+  // from one side to the other (measured in Firefox 160, issue #173). So
+  // while the effect is on, a change to normal speed lands that far to the
+  // side the player is on (playerSpeed), 0.17 of a cent off in pitch, and
+  // needs no gap. A player that is at normal speed already stays on it.
   const FIREFOX = window.navigator.userAgent.includes('Firefox');
+  const BESIDE_NORMAL_SPEED = 0.0001;
+  // Speeds nearer each other than this are the same speed. Well under
+  // BESIDE_NORMAL_SPEED, which has to count as a change from normal speed.
+  const SAME_SPEED = 0.00001;
   const DIP_FADE_SECONDS = 0.01;
   // After the fade-out has finished, with a margin for page timers.
   const PLAYER_CHANGE_DELAY_MS = 40;
@@ -418,11 +430,24 @@
     return Math.sign(speed - 1);
   }
 
+  // The speed to give the player for the effect's speed: the speed itself,
+  // or for normal speed in Firefox, a speed just beside it on the side the
+  // player is on.
+  function playerSpeed(media, speed) {
+    if (!FIREFOX || speedSide(speed) !== 0) return speed;
+    return 1 + speedSide(media.playbackRate) * BESIDE_NORMAL_SPEED;
+  }
+
   function playbackClicks(media, speed, keepPitch) {
     if (media.preservesPitch !== keepPitch) return true;
-    // A speed this close to the player's own is no change of speed.
-    if (Math.abs(media.playbackRate - speed) <= 0.001) return false;
-    return FIREFOX && speedSide(media.playbackRate) !== speedSide(speed);
+    if (Math.abs(media.playbackRate - speed) <= SAME_SPEED) return false;
+    if (!FIREFOX) return false;
+    const from = speedSide(media.playbackRate);
+    const to = speedSide(speed);
+    if (from === to) return false;
+    // To normal speed or from it always clicks. From one side of it to the
+    // other clicks when the pitch follows the speed, and not when it is kept.
+    return from === 0 || to === 0 || !keepPitch;
   }
 
   function setPlayback(media, speed, keepPitch) {
@@ -647,8 +672,10 @@
     const live = isLiveMedia(media);
     liveStreamDetected = liveStreamDetected || live;
 
+    // A live stream plays at normal speed itself.
     const playback = live ? NEUTRAL_SETTINGS : settings;
-    changePlayback(media, pipeline, true, playback.speed, playback.keepPitch);
+    const speed = live ? playback.speed : playerSpeed(media, playback.speed);
+    changePlayback(media, pipeline, true, speed, playback.keepPitch);
 
     smoothTo(pipeline.eqLow.gain, settings.eqLow);
     smoothTo(pipeline.eqMid.gain, settings.eqMid);

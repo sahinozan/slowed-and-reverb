@@ -211,62 +211,175 @@ describe('content script audio processing', () => {
     assert.equal(processed.gain.valueAt(1.2), 1);
   });
 
-  // Firefox's player clicks when its speed goes to normal speed, away from
-  // it, or from one side of it to the other.
-  for (const [title, speed] of [['across normal speed', 1.1], ['to normal speed', 1]]) {
-    test(`stays silent while Firefox changes the speed ${title}`, async (t) => {
-      const harness = await createContentHarness({
-        userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
-      });
-      t.after(() => close(harness));
-      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
-      const processed = outputGains(harness.getContext())[1];
-
-      await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed }, enabled: true });
-      assert.equal(harness.media.playbackRate, speed);
-      assert.deepEqual(ramps(processed.gain).slice(-2), [
-        { to: 0, endTime: 1.03 },
-        { to: 1, endTime: 1.105 }
-      ]);
-    });
+  // Firefox's player clicks when its speed goes to normal speed itself or
+  // away from it, and, when the pitch follows the speed, from one side of
+  // normal speed to the other. The output is silent around such a change.
+  const FIREFOX_AGENT = 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0';
+  const PITCH_FOLLOWS = { ...SETTINGS, keepPitch: false };
+  const SILENT_GAP = [
+    { to: 0, endTime: 1.03 },
+    { to: 1, endTime: 1.105 }
+  ];
+  const BELOW_NORMAL = 1 - 0.0001;
+  const ABOVE_NORMAL = 1 + 0.0001;
+  // A Firefox page with the effect on, and what tells whether a change made
+  // from here on fades the output out.
+  async function firefoxWith(t, settings) {
+    const harness = await createContentHarness({ userAgent: FIREFOX_AGENT });
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings, enabled: true });
+    const processed = outputGains(harness.getContext())[1];
+    let from = ramps(processed.gain).length;
+    return {
+      harness,
+      processed,
+      set: (speed, enabled = true) =>
+        harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...settings, speed }, enabled }),
+      // Whether the output was faded out since the last time this was asked.
+      fadedOut() {
+        const faded = ramps(processed.gain).slice(from).some((ramp) => ramp.to === 0);
+        from = ramps(processed.gain).length;
+        return faded;
+      }
+    };
   }
 
-  test('stays silent while Firefox changes the speed away from normal speed', async (t) => {
-    const harness = await createContentHarness({
-      userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
-    });
-    t.after(() => close(harness));
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 1 }, enabled: true });
-    const processed = outputGains(harness.getContext())[1];
+  test('stays silent while Firefox changes the speed across normal speed, with the pitch following', async (t) => {
+    const { harness, processed, set } = await firefoxWith(t, PITCH_FOLLOWS);
 
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 1.01 }, enabled: true });
-    assert.equal(harness.media.playbackRate, 1.01);
-    assert.deepEqual(ramps(processed.gain).slice(-2), [
-      { to: 0, endTime: 1.03 },
-      { to: 1, endTime: 1.105 }
-    ]);
+    await set(1.1);
+    assert.equal(harness.media.playbackRate, 1.1);
+    assert.deepEqual(ramps(processed.gain).slice(-2), SILENT_GAP);
   });
 
-  // Speeds within a thousandth of each other count as the same speed, as
-  // they did before, so a request that close to the player's speed never
-  // fades; one further apart that passes normal speed does, however little.
-  test('fades in Firefox by where the speeds are, not by how near normal speed they are', async (t) => {
+  test('changes the speed at once in Firefox across normal speed, with the pitch kept', async (t) => {
+    const { harness, processed, set, fadedOut } = await firefoxWith(t, SETTINGS);
+
+    await set(1.1);
+    assert.equal(harness.media.playbackRate, 1.1);
+    assert.equal(fadedOut(), false);
+    for (const time of [1.01, 1.03, 1.06, 1.1, 1.2]) assert.equal(processed.gain.valueAt(time), 1);
+  });
+
+  // Normal speed itself is what clicks, and a speed a ten-thousandth beside
+  // it does not. So a change to normal speed lands beside it, on the side
+  // the player is on, with no gap; and going back the way it came has none.
+  for (const [title, from, landed] of [
+    ['below', 0.7, BELOW_NORMAL],
+    ['above', 1.2, ABOVE_NORMAL]
+  ]) {
+    for (const [pitch, settings] of [['following', PITCH_FOLLOWS], ['kept', SETTINGS]]) {
+      test(`lands just beside normal speed in Firefox from ${title}, with the pitch ${pitch}`, async (t) => {
+        const { harness, processed, set, fadedOut } = await firefoxWith(t, { ...settings, speed: from });
+
+        await set(1);
+        assert.equal(harness.media.playbackRate, landed);
+        assert.equal(fadedOut(), false);
+        // Asked for again, it stays where it landed.
+        await set(1);
+        assert.equal(harness.media.playbackRate, landed);
+
+        await set(from);
+        assert.equal(harness.media.playbackRate, from);
+        assert.equal(fadedOut(), false);
+        for (const time of [1.01, 1.03, 1.06, 1.1, 1.2]) assert.equal(processed.gain.valueAt(time), 1);
+      });
+    }
+  }
+
+  test('stays silent in Firefox from beside normal speed to its other side, with the pitch following', async (t) => {
+    const { harness, processed, set, fadedOut } = await firefoxWith(t, PITCH_FOLLOWS);
+    await set(1);
+    assert.equal(harness.media.playbackRate, BELOW_NORMAL);
+    assert.equal(fadedOut(), false);
+
+    // The second change, so a second later on the test's clock.
+    await set(1.01);
+    assert.equal(harness.media.playbackRate, 1.01);
+    assert.deepEqual(ramps(processed.gain).slice(-2), [
+      { to: 0, endTime: 2.03 },
+      { to: 1, endTime: 2.105 }
+    ]);
+    fadedOut();
+
+    // And landing on normal speed from there is on the upper side.
+    await set(1);
+    assert.equal(harness.media.playbackRate, ABOVE_NORMAL);
+    assert.equal(fadedOut(), false);
+  });
+
+  test('changes the speed at once in Firefox from beside normal speed to its other side, with the pitch kept', async (t) => {
+    const { harness, set, fadedOut } = await firefoxWith(t, SETTINGS);
+    await set(1);
+    assert.equal(harness.media.playbackRate, BELOW_NORMAL);
+
+    await set(1.01);
+    assert.equal(harness.media.playbackRate, 1.01);
+    assert.equal(fadedOut(), false);
+  });
+
+  // The player's own normal speed is not beside it: a player that is there
+  // when the effect asks for normal speed stays there, and leaving clicks.
+  test('stays silent while Firefox changes the speed away from normal speed', async (t) => {
+    const { harness, processed, set } = await firefoxWith(t, { ...SETTINGS, speed: 1 });
+    assert.equal(harness.media.playbackRate, 1);
+
+    await set(1.01);
+    assert.equal(harness.media.playbackRate, 1.01);
+    assert.deepEqual(ramps(processed.gain).slice(-2), SILENT_GAP);
+  });
+
+  // With the effect off the player is the page's again, at normal speed
+  // itself, and getting there from beside it clicks like any other way.
+  test('goes back to normal speed itself, in silence, when the effect is turned off beside it in Firefox', async (t) => {
+    const { harness, set } = await firefoxWith(t, PITCH_FOLLOWS);
+    await set(1);
+    assert.equal(harness.media.playbackRate, BELOW_NORMAL);
+
+    // The second change, so a second later on the test's clock. The
+    // unchanged path, which takes over, is silent while the player changes.
+    await set(1, false);
+    assert.equal(harness.media.playbackRate, 1);
+    const [unchanged, processed] = outputGains(harness.getContext());
+    assert.equal(unchanged.gain.valueAt(2.07), 0);
+    assert.equal(processed.gain.valueAt(2.07), 0);
+    assert.equal(unchanged.gain.valueAt(2.3), 1);
+  });
+
+  test('gives a live stream normal speed itself in Firefox', async (t) => {
     const harness = await createContentHarness({
-      userAgent: 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0'
+      userAgent: FIREFOX_AGENT,
+      duration: Number.POSITIVE_INFINITY
     });
     t.after(() => close(harness));
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9989 }, enabled: true });
-    const processed = outputGains(harness.getContext())[1];
-    const fadesOut = (from) => ramps(processed.gain).slice(from).some((ramp) => ramp.to === 0);
+    harness.media.playbackRate = 0.7;
 
-    let before = ramps(processed.gain).length;
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 0.9991 }, enabled: true });
-    assert.equal(fadesOut(before), false);
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: SETTINGS, enabled: true });
+    assert.equal(harness.media.playbackRate, 1);
+  });
 
-    before = ramps(processed.gain).length;
-    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...SETTINGS, speed: 1.0009 }, enabled: true });
+  test('leaves normal speed as it is in Chromium', async (t) => {
+    const harness = await createContentHarness();
+    t.after(() => close(harness));
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: PITCH_FOLLOWS, enabled: true });
+
+    await harness.dispatch({ type: 'UPDATE_AUDIO', settings: { ...PITCH_FOLLOWS, speed: 1 }, enabled: true });
+    assert.equal(harness.media.playbackRate, 1);
+  });
+
+  // Whether a change fades goes by where the two speeds are, not by how
+  // near normal speed they are: a small step on one side doesn't, and one
+  // from just below it to just above it does.
+  test('fades in Firefox by where the speeds are, not by how near normal speed they are', async (t) => {
+    const { harness, set, fadedOut } = await firefoxWith(t, { ...PITCH_FOLLOWS, speed: 0.9989 });
+
+    await set(0.9991);
+    assert.equal(harness.media.playbackRate, 0.9991);
+    assert.equal(fadedOut(), false);
+
+    await set(1.0009);
     assert.equal(harness.media.playbackRate, 1.0009);
-    assert.equal(fadesOut(before), true);
+    assert.equal(fadedOut(), true);
   });
 
   // A change that stays below normal speed, or stays above it, makes no
