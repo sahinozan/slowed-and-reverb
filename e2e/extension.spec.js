@@ -253,6 +253,50 @@ test('control: without the send on closing, that step never reaches the tab', as
   await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.81);
 });
 
+// A keyboard shortcut works while the popup is open, and the popup went on
+// showing the tab as it was before it (issue #181). No key pressed in a test
+// reaches the browser's shortcuts, so the browser's report of one is made
+// here, in the background script, with the method Chromium's own bindings
+// use. From there on everything is the extension's: its handler changes the
+// tab and tells the popup, which asks the tab again.
+test('shows in the open popup what a shortcut did', async ({ extension }) => {
+  const url = `${extension.fixtureUrl}?shortcut`;
+  const page = await extension.context.newPage();
+  await page.goto(url);
+  await expect(page.locator('#player')).toHaveJSProperty('readyState', 4);
+  await page.bringToFront();
+  const tab = await fixtureTab(extension.serviceWorker, url);
+  const shortcut = (command) => extension.serviceWorker.evaluate((name) => {
+    if (typeof chrome.commands.onCommand.dispatch !== 'function') {
+      throw new Error("This Chromium's shortcut event can't be reported from a test");
+    }
+    chrome.commands.onCommand.dispatch(name);
+  }, command);
+
+  const popup = await openPopupPage(extension, tab.id);
+  const speed = popup.getByRole('spinbutton', { name: 'Exact speed' });
+  await expect(speed).toHaveValue('0.80');
+  await expect(popup.locator('#power-toggle')).toBeChecked();
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+
+  await shortcut('toggle-effect');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 1);
+  await expect(popup.locator('#power-toggle')).not.toBeChecked();
+  await expect(popup.locator('#power-status')).toHaveText('Off');
+  await expect(popup.locator('#current-preset-bar')).toBeHidden();
+
+  await shortcut('toggle-nightcore');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 1.2);
+  await expect(popup.locator('#power-toggle')).toBeChecked();
+  await expect(speed).toHaveValue('1.20');
+  await expect(popup.locator('#current-preset-label')).toHaveText('Current Preset: Nightcore');
+
+  // The next change in the popup is made on top of the shortcut's.
+  await popup.getByRole('button', { name: 'Faster by 0.01x' }).click();
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 1.21);
+  await expect(popup.locator('#reverb-slider')).toHaveValue('0');
+});
+
 test("answers Spotify's turn-on with the effect running on a playing song", async ({
   extension
 }) => {

@@ -347,6 +347,73 @@ describe('background service worker', () => {
     assert.equal(harness.local.writes.length, 0);
   });
 
+  // A shortcut works while the popup is open, and the popup shows the tab as
+  // it was when it last looked (issue #181). So the background script tells
+  // it, once the change has been made.
+  describe('telling an open popup about a shortcut', () => {
+    const freshTab = (updateAnswer) => (_tabId, message) =>
+      message.type === 'GET_STATE'
+        ? { enabled: false, settings: DEFAULT_SETTINGS, blocked: false }
+        : updateAnswer;
+    // What the popup would hear, with how many changes the tab had been
+    // sent by then.
+    const listen = (options) => {
+      const heard = [];
+      const harness = setup({
+        ...options,
+        onRuntimeMessage(message) {
+          // Copied, as the script's own objects aren't this file's.
+          heard.push({ message: { ...message }, changesSent: updates(harness.calls).length });
+        }
+      });
+      return { harness, heard };
+    };
+
+    test('says which tab, after the change has been sent', async () => {
+      const { harness, heard } = listen({ onTabMessage: freshTab({ success: true }) });
+
+      await harness.events.command.emit('toggle-slowed-reverb');
+      assert.deepEqual(heard, [{ message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 1 }]);
+
+      await harness.events.command.emit('toggle-effect');
+      assert.equal(heard.length, 2);
+      assert.deepEqual(heard[1], { message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 2 });
+    });
+
+    test('says so too when the tab refused the change', async () => {
+      const { harness, heard } = listen({ onTabMessage: freshTab(null) });
+
+      await harness.events.command.emit('toggle-nightcore');
+      assert.deepEqual(heard, [{ message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 1 }]);
+    });
+
+    test('says nothing for a shortcut that changed nothing', async () => {
+      const { harness, heard } = listen({
+        onTabMessage(_tabId, message) {
+          return message.type === 'GET_STATE' ? { blocked: true, blockReason: 'drm' } : null;
+        }
+      });
+
+      await harness.events.command.emit('toggle-nightcore');
+      assert.deepEqual(heard, []);
+    });
+
+    // With no popup open the browser rejects the message: nothing received it.
+    test('changes the tab all the same when no popup is open to hear of it', async () => {
+      const harness = setup({
+        onTabMessage: freshTab({ success: true }),
+        async onRuntimeMessage() {
+          throw new Error('Could not establish connection. Receiving end does not exist.');
+        }
+      });
+
+      await harness.events.command.emit('toggle-slowed-reverb');
+      await flushPromises();
+      assert.equal(updates(harness.calls).length, 1);
+      assert.equal(harness.session.data['tabState:7'].enabled, true);
+    });
+  });
+
   test('tracks content state, answers recall requests, and forgets closed tabs', async () => {
     const harness = setup();
     const settings = { ...DEFAULT_SETTINGS, width: 160 };

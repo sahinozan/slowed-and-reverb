@@ -250,6 +250,26 @@ const STATES = [
     controls: [...BASIC_CONTROLS, '#reload-btn']
   },
   {
+    // The page's answer is held back. After five seconds the popup stops
+    // waiting for it, which is when its first paint ends here.
+    title: 'a page that doesn’t answer',
+    mock: { settings: SLOWED, answers: 'held' },
+    shows: (page) => expectPanel(page, '#reload-panel', {
+      text: "This page isn't responding. Reloading it usually fixes this.",
+      button: 'Reload page'
+    }),
+    controls: [...BASIC_CONTROLS, '#reload-btn'],
+    // The answer comes after all, and the popup shows what the tab plays with.
+    then: async (page) => {
+      await expect(page.locator('#power-toggle')).toBeDisabled();
+      await page.evaluate(() => window.letTabAnswer());
+      await expect(page.locator('#reload-panel')).toBeHidden();
+      await expect(page.locator('#power-toggle')).toBeChecked();
+      await expect(page.locator('#power-toggle')).toBeEnabled();
+      await expect(page.locator('#current-preset-label')).toHaveText('Current Preset: Slowed + Reverb');
+    }
+  },
+  {
     // The other state 46512dc fixed: a status line under a panel's button.
     title: 'a reload that failed',
     mock: { settings: SLOWED, injects: false, reload: 'error' },

@@ -298,20 +298,32 @@ api.commands.onCommand.addListener(async (command) => {
   const preset = COMMAND_PRESETS[command];
   if (preset) {
     const isActive = Boolean(state?.enabled && settingsMatch(state.settings, preset));
-    await queueTabApply(tab.id, tab.url, preset, !isActive);
+    await applyShortcut(tab, preset, !isActive);
     return;
   }
 
   if (command !== 'toggle-effect') return;
 
   if (state?.enabled) {
-    await queueTabApply(tab.id, tab.url, state.settings, false);
+    await applyShortcut(tab, state.settings, false);
     return;
   }
 
   const remembered = await recallTabState(tab.id, tab.url);
-  await queueTabApply(tab.id, tab.url, remembered?.settings ?? PRESETS.slowed, true);
+  await applyShortcut(tab, remembered?.settings ?? PRESETS.slowed, true);
 });
+
+// Does what a shortcut asks for. A shortcut works while the popup is open,
+// and the popup shows the tab as it was when it last looked, so it is told
+// to look again (handleShortcutReport in popup.js). Nothing hears this when
+// no popup is open.
+async function applyShortcut(tab, settings, enabled) {
+  try {
+    await queueTabApply(tab.id, tab.url, settings, enabled);
+  } finally {
+    api.runtime.sendMessage({ type: 'SHORTCUT_APPLIED', tabId: tab.id }).catch(() => {});
+  }
+}
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== 'object') return;

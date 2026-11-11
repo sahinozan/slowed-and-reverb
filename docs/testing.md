@@ -24,8 +24,12 @@ without scrolling with every control on screen, and saves a screenshot in the
 test report. It also updates an earlier version with a YouTube page open and
 checks that the popup asks for a reload and the effect starts after it, and
 closes the popup with a speed step not yet sent and checks that the step
-still reaches the tab. The popup there is a page in a tab, not the browser's
-popup window, so closing the real one is still checked by hand.
+still reaches the tab. With the popup open it reports a keyboard shortcut to
+the background script and checks that the popup shows what the shortcut did;
+no key pressed in a test reaches the browser's shortcuts, so pressing a real
+one with the popup open is checked by hand. The popup there is a page in a
+tab, not the browser's popup window, so closing the real one is still checked
+by hand.
 
 ## The extension in Firefox
 

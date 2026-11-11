@@ -41,6 +41,7 @@ const BLOCKED_TEXT = {
   unsupported: "The effects can't start on this page. Reloading it usually fixes this.",
   outdated: 'Reload the page to finish updating the extension.',
   outdatedSpotify: 'Reload Spotify to finish updating the extension.',
+  notResponding: "This page isn't responding. Reloading it usually fixes this.",
   noPlayer: 'Play a song to start the effects.',
   loadingPlayer: 'The effects start once the song loads.',
   spotifyEffects: 'Only speed works on Spotify here.'
@@ -50,6 +51,7 @@ const BLOCKED_TEXT = {
 const RELOAD_ACTIONS = {
   unsupported: { button: 'Reload page', progress: 'Reloading the page…' },
   outdated: { button: 'Reload page', progress: 'Reloading the page…' },
+  notResponding: { button: 'Reload page', progress: 'Reloading the page…' },
   outdatedSpotify: { button: 'Reload Spotify', progress: 'Reloading Spotify…' }
 };
 
@@ -315,6 +317,11 @@ const heldForTab = [
 ];
 // How long the tab may take to answer before the held parts dim.
 const TAB_SLOW_MS = 300;
+// How long a look at the tab may take before the popup stops waiting for it
+// and offers to reload the page (syncWithActiveTab). A page that is slow but
+// well answers sooner: its engine is given two seconds (ENGINE_TIMEOUT_MS in
+// content.js), and the rest takes a small part of one.
+const TAB_GIVE_UP_MS = 5000;
 // What a held part's controls report is dropped before their own listeners
 // hear it. `inert` already keeps new clicks and keys away from them, but not
 // what was under way when the hold began: Chromium lets a slider that is
@@ -345,6 +352,8 @@ let liveBlocked = false;
 let applyRevision = 0;
 let applyBusy = false;
 let unsentApply = null;
+// Settles when the changes now on their way have all been sent and answered.
+let appliesSent = Promise.resolve();
 let shownSpeed = DEFAULT_SETTINGS.speed;
 let presetWriteQueue = Promise.resolve();
 let spotifyPermissionTabId = null;
@@ -352,6 +361,14 @@ let tabOnSpotify = false;
 let youtubePermission = null;
 let tabSynced = false;
 let tabSlowTimer = null;
+// The looks at the tab so far (syncWithActiveTab). Only the newest shows
+// what it finds.
+let tabLook = 0;
+// The newest look is still waiting for the tab.
+let tabLookUnderWay = false;
+// The tab may have changed since the look under way asked it, so that look
+// asks again before it ends.
+let tabLookAgain = false;
 let processingPending = false;
 let tabReports = 0;
 let reloadReason = 'unsupported';
@@ -710,7 +727,7 @@ function saveAndApplySettings(enabled) {
   unsentApply.request = request;
   const { result } = unsentApply;
 
-  if (!applyBusy) sendUnsentApplies();
+  if (!applyBusy) appliesSent = sendUnsentApplies();
   return result;
 }
 
@@ -1338,6 +1355,7 @@ function bindControls() {
   // Returns nothing, so the background script still answers these messages.
   api.runtime.onMessage.addListener((message, sender) => {
     handleTabReport(message, sender);
+    handleShortcutReport(message, sender);
   });
 
   // Reset only the settings, so a song that is playing with the effect on
@@ -1382,11 +1400,14 @@ function bindControls() {
 // held meanwhile (init): they take no clicks or keys (`inert`, and
 // HELD_EVENTS for what was already under way) and look as they always do,
 // since the answer usually comes at once. Only when it takes longer than
-// TAB_SLOW_MS do they dim, to show that the popup is waiting.
+// TAB_SLOW_MS do they dim, to show that the popup is waiting. The hold ends
+// with the first look, which is also when the popup stops waiting for a tab
+// that doesn't answer (syncWithActiveTab): the controls are disabled then.
 //
-// Asking the tab again later, after a reload or a permission, needs no hold:
-// the controls are disabled by then, and syncWithActiveTab enables them only
-// once it has this tab's settings to show.
+// Asking the tab again later needs no hold. After a reload or a permission
+// the controls are disabled, and the look enables them only once it has this
+// tab's settings to show. After a shortcut they are in use, and the look
+// doesn't show an answer over a change made meanwhile (showActiveTab).
 function holdControlsForTab() {
   controlsHeld = true;
   for (const part of heldForTab) part.setAttribute('inert', '');
@@ -1405,27 +1426,93 @@ function releaseControlsForTab() {
   controlsHeld = false;
 }
 
+// Looks at the active tab and shows what it is playing with. The popup does
+// this when it opens, after a reload or a permission, and when a shortcut
+// has changed the tab (handleShortcutReport).
+//
+// A look waits on the browser and on the page, and a page that has stopped
+// responding never answers. So after TAB_GIVE_UP_MS the popup stops waiting:
+// it says that the page isn't responding and offers to reload it, and this
+// returns. The look itself goes on, and if the answer comes after all it is
+// shown. A newer look takes over from an older one still waiting, which then
+// shows nothing: its answer is the older one.
 async function syncWithActiveTab() {
+  const look = ++tabLook;
+  const newest = () => look === tabLook;
+  tabLookUnderWay = true;
+
+  let stopWaiting;
+  const gaveUp = new Promise((resolve) => {
+    stopWaiting = resolve;
+  });
+  const giveUpTimer = window.setTimeout(() => {
+    if (newest()) {
+      showTabNotResponding();
+      // What the look has shown by then may be under this notice, so once
+      // the tab does answer, everything is asked for and shown again.
+      tabLookAgain = true;
+    }
+    stopWaiting();
+  }, TAB_GIVE_UP_MS);
+
+  const looked = (async () => {
+    try {
+      do {
+        tabLookAgain = false;
+        await showActiveTab(newest);
+      } while (tabLookAgain && newest());
+    } finally {
+      window.clearTimeout(giveUpTimer);
+      if (newest()) tabLookUnderWay = false;
+    }
+  })();
+  // A look that fails after the popup stopped waiting has no one to tell.
+  looked.catch(() => {});
+  await Promise.race([looked, gaveUp]);
+}
+
+function showTabNotResponding() {
+  hideSpotifyPermissionPanel();
+  hideYouTubePermissionPanel();
+  setBlocked(true, 'notResponding');
+  setPowerUI(false);
+}
+
+// One look at the tab. `newest` says whether this is still the newest look;
+// once it isn't, nothing more is shown.
+async function showActiveTab(newest) {
+  // What the popup itself has changed reaches the tab first, so that the
+  // tab's answer is not from before it.
+  while (applyBusy) {
+    await appliesSent;
+    if (!newest()) return;
+  }
+  const revision = applyRevision;
+
   const tab = await getActiveTab();
+  if (!newest()) return;
   tabOnSpotify = isSpotifyUrl(tab?.url);
   spotifyPermissionTabId = tab?.id !== undefined && tabOnSpotify ? tab.id : null;
   if (tab?.id === undefined) return;
 
   const spotify = isSpotifyUrl(tab.url);
   const firefoxYouTubePermission = getFirefoxYouTubePermission(tab.url);
-  if (spotify && !(await api.permissions.contains({ origins: [SPOTIFY_ORIGIN] }))) {
-    hideYouTubePermissionPanel();
-    setBlocked(true, 'drm');
-    els.blockedBanner.hidden = true;
-    showSpotifyPermissionPanel('enable');
-    setPowerUI(false);
-    setTabIcon(tab.id, false);
-    return;
-  }
-
   if (spotify) {
+    const allowed = await api.permissions.contains({ origins: [SPOTIFY_ORIGIN] });
+    if (!newest()) return;
+    if (!allowed) {
+      hideYouTubePermissionPanel();
+      setBlocked(true, 'drm');
+      els.blockedBanner.hidden = true;
+      showSpotifyPermissionPanel('enable');
+      setPowerUI(false);
+      setTabIcon(tab.id, false);
+      return;
+    }
+
     hideYouTubePermissionPanel();
     await api.runtime.sendMessage({ type: 'SYNC_SPOTIFY_REGISTRATION' });
+    if (!newest()) return;
   } else if (!isYouTubeUrl(tab.url)) {
     hideSpotifyPermissionPanel();
     hideYouTubePermissionPanel();
@@ -1433,32 +1520,45 @@ async function syncWithActiveTab() {
     setPowerUI(false);
     setTabIcon(tab.id, false);
     return;
-  } else if (
-    firefoxYouTubePermission &&
-    !(await api.permissions.contains({ origins: [firefoxYouTubePermission.origin] }))
-  ) {
-    hideSpotifyPermissionPanel();
-    setBlocked(true, 'unsupported');
-    els.blockedBanner.hidden = true;
-    els.reloadPanel.hidden = true;
-    showYouTubePermissionPanel(firefoxYouTubePermission);
-    setPowerUI(false);
-    setTabIcon(tab.id, false);
-    return;
-  } else if (!(await ensureContentScript(tab.id))) {
-    hideSpotifyPermissionPanel();
-    hideYouTubePermissionPanel();
-    setBlocked(true, 'unsupported');
-    setPowerUI(false);
-    setTabIcon(tab.id, false);
-    return;
+  } else {
+    if (firefoxYouTubePermission) {
+      const allowed = await api.permissions.contains({ origins: [firefoxYouTubePermission.origin] });
+      if (!newest()) return;
+      if (!allowed) {
+        hideSpotifyPermissionPanel();
+        setBlocked(true, 'unsupported');
+        els.blockedBanner.hidden = true;
+        els.reloadPanel.hidden = true;
+        showYouTubePermissionPanel(firefoxYouTubePermission);
+        setPowerUI(false);
+        setTabIcon(tab.id, false);
+        return;
+      }
+    }
+
+    const injected = await ensureContentScript(tab.id);
+    if (!newest()) return;
+    if (!injected) {
+      hideSpotifyPermissionPanel();
+      hideYouTubePermissionPanel();
+      setBlocked(true, 'unsupported');
+      setPowerUI(false);
+      setTabIcon(tab.id, false);
+      return;
+    }
   }
 
   let state;
+  let answered = true;
   const reportsBefore = tabReports;
   try {
     state = await api.tabs.sendMessage(tab.id, { type: 'GET_STATE' });
   } catch {
+    answered = false;
+  }
+  if (!newest()) return;
+
+  if (!answered) {
     setBlocked(true, spotify ? 'drm' : 'unsupported');
     if (spotify) {
       els.blockedBanner.hidden = true;
@@ -1479,6 +1579,11 @@ async function syncWithActiveTab() {
   // Asked before the controls are enabled below, so that nothing can be
   // changed between their being enabled and this tab's settings being shown.
   const remembered = state?.enabled ? null : await recallTabState(tab.id, tab.url);
+  if (!newest()) return;
+  // A change made in the popup since this look began is newer than the
+  // tab's answer, and the tab gets what the popup shows. So the answer is
+  // not shown over it.
+  if (revision !== applyRevision) return;
 
   setBlocked(false);
   hideSpotifyPermissionPanel();
@@ -1507,6 +1612,26 @@ async function syncWithActiveTab() {
   // A tab with no prior state starts with the extension's primary preset enabled.
   applySettingsToUI(PRESETS.slowed);
   await saveAndApplySettings(true);
+}
+
+// A keyboard shortcut is handled by the background script, and works while
+// the popup is open. The background script says when one has changed a tab
+// (applyShortcut in background.js), and the popup then looks at the tab
+// again, so that it shows what the shortcut did and the next change made
+// here is made on top of it. A look already under way may have asked before
+// the shortcut's change, so it asks again.
+function handleShortcutReport(message, sender) {
+  if (message?.type !== 'SHORTCUT_APPLIED') return;
+  // From the extension's own background script, not from a page's script.
+  if (sender.id !== api.runtime.id || sender.tab) return;
+  if (lastActiveTab && message.tabId !== lastActiveTab.id) return;
+
+  // A saved preset being edited is compared with the settings shown, which
+  // are about to be the shortcut's, so the edit ends, as it does when
+  // another preset is chosen.
+  if (activePresetId) setActivePreset(null);
+  if (tabLookUnderWay) tabLookAgain = true;
+  else syncWithActiveTab().catch(() => {});
 }
 
 // The rating reminder shows once, after the panel has been opened with the
