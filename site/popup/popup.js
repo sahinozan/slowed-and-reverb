@@ -305,6 +305,37 @@ const blockableControls = [
   ...effectTabButtons
 ];
 
+// The parts of the popup that set the effect. They are held while the popup
+// asks the tab what it is playing with (holdControlsForTab).
+const heldForTab = [
+  document.querySelector('.header-power'),
+  document.querySelector('.presets-tabs-section'),
+  document.querySelector('.controls'),
+  els.resetBtn
+];
+// How long the tab may take to answer before the held parts dim.
+const TAB_SLOW_MS = 300;
+// What a held part's controls report is dropped before their own listeners
+// hear it. `inert` already keeps new clicks and keys away from them, but not
+// what was under way when the hold began: Chromium lets a slider that is
+// being dragged go on moving.
+const HELD_EVENTS = ['pointerdown', 'click', 'keydown', 'input', 'change', 'blur'];
+let controlsHeld = false;
+// The settings the popup showed last (applySettingsToUI), to put a slider
+// that moved while it was held back where it was.
+let settingsShown = null;
+for (const part of heldForTab) {
+  for (const type of HELD_EVENTS) {
+    // Added before any other listener, and for the way down, so it comes
+    // first on the part itself too.
+    part.addEventListener(type, (event) => {
+      if (!controlsHeld) return;
+      event.stopImmediatePropagation();
+      if (event.cancelable) event.preventDefault();
+    }, true);
+  }
+}
+
 const eqState = { low: 0, mid: 0, high: 0 };
 
 let customPresets = [];
@@ -320,6 +351,7 @@ let spotifyPermissionTabId = null;
 let tabOnSpotify = false;
 let youtubePermission = null;
 let tabSynced = false;
+let tabSlowTimer = null;
 let processingPending = false;
 let tabReports = 0;
 let reloadReason = 'unsupported';
@@ -559,6 +591,7 @@ function getCurrentSettings() {
 }
 
 function applySettingsToUI(settings) {
+  settingsShown = settings;
   for (const slider of SLIDERS) {
     const value = settings[slider.key] ?? DEFAULT_SETTINGS[slider.key];
     slider.input.value =
@@ -1342,6 +1375,36 @@ function bindControls() {
   });
 }
 
+// When it opens, and until the tab has answered, the popup shows the settings
+// used last in any tab, not this tab's. A change made then would be made on
+// top of the wrong settings, and the tab's answer, which is older than the
+// change, would then be shown over it. So the parts that set the effect are
+// held meanwhile (init): they take no clicks or keys (`inert`, and
+// HELD_EVENTS for what was already under way) and look as they always do,
+// since the answer usually comes at once. Only when it takes longer than
+// TAB_SLOW_MS do they dim, to show that the popup is waiting.
+//
+// Asking the tab again later, after a reload or a permission, needs no hold:
+// the controls are disabled by then, and syncWithActiveTab enables them only
+// once it has this tab's settings to show.
+function holdControlsForTab() {
+  controlsHeld = true;
+  for (const part of heldForTab) part.setAttribute('inert', '');
+  tabSlowTimer = window.setTimeout(() => document.body.classList.add('tab-slow'), TAB_SLOW_MS);
+}
+
+function releaseControlsForTab() {
+  window.clearTimeout(tabSlowTimer);
+  tabSlowTimer = null;
+  document.body.classList.remove('tab-slow');
+  for (const part of heldForTab) part.removeAttribute('inert');
+  // A slider dragged through the hold has moved, though the popup took none
+  // of it. Most ways the first look ends show settings again and so put it
+  // back; this does it for those that don't, such as a window with no tab.
+  if (controlsHeld && settingsShown) applySettingsToUI(settingsShown);
+  controlsHeld = false;
+}
+
 async function syncWithActiveTab() {
   const tab = await getActiveTab();
   tabOnSpotify = isSpotifyUrl(tab?.url);
@@ -1413,6 +1476,10 @@ async function syncWithActiveTab() {
     return;
   }
 
+  // Asked before the controls are enabled below, so that nothing can be
+  // changed between their being enabled and this tab's settings being shown.
+  const remembered = state?.enabled ? null : await recallTabState(tab.id, tab.url);
+
   setBlocked(false);
   hideSpotifyPermissionPanel();
   hideYouTubePermissionPanel();
@@ -1425,8 +1492,6 @@ async function syncWithActiveTab() {
     setTabIcon(tab.id, true);
     return;
   }
-
-  const remembered = await recallTabState(tab.id, tab.url);
 
   if (remembered) {
     applySettingsToUI(remembered.settings);
@@ -1502,15 +1567,26 @@ async function init() {
   bindControls();
   bindRating();
 
-  await loadCustomPresets();
-  applySettingsToUI(await api.storage.local.get(DEFAULT_SETTINGS));
-
+  // Held from here, not from the first question to the tab: what is stored
+  // is read first, and the controls could be reached meanwhile.
+  holdControlsForTab();
   try {
-    await syncWithActiveTab();
+    await loadCustomPresets();
+    applySettingsToUI(await api.storage.local.get(DEFAULT_SETTINGS));
+
+    try {
+      await syncWithActiveTab();
+    } finally {
+      tabSynced = true;
+      // Before the bar is worked out: letting go puts back a slider that
+      // moved while it was held, and the bar is named from the sliders.
+      releaseControlsForTab();
+      updateCurrentPresetBar();
+      settlePowerUI();
+    }
   } finally {
-    tabSynced = true;
-    updateCurrentPresetBar();
-    settlePowerUI();
+    // For a failure before the tab was asked. A second call changes nothing.
+    releaseControlsForTab();
   }
   await countDayOfUse().catch(() => {});
 }
