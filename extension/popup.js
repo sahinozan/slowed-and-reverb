@@ -332,7 +332,9 @@ let controlsHeld = false;
 // hold began, to put a slider that moved while it was held back where it was.
 let settingsShown = null;
 // The held control that had the keyboard when the hold began. `inert` takes
-// the keyboard away from it, and letting go gives it back.
+// the keyboard away from it, and letting go gives it back. A saved preset's
+// row is built again when a look shows the tab, so for a button in one,
+// `row` is the preset's id and `place` the button's place in the row.
 let heldFocus = null;
 for (const part of heldForTab) {
   for (const type of HELD_EVENTS) {
@@ -354,6 +356,11 @@ let blocked = false;
 let liveBlocked = false;
 let applyRevision = 0;
 let applyBusy = false;
+// The popup shows the tab as it is after every shortcut up to this time: all
+// those before it opened, and those it has been told of since. Each change
+// it sends says so, and the background script leaves out a change made
+// without knowing of the tab's last shortcut (APPLY_TO_TAB in background.js).
+let shortcutKnown = Date.now();
 let unsentApply = null;
 // Settles when the changes now on their way have all been sent and answered.
 let appliesSent = Promise.resolve();
@@ -726,7 +733,12 @@ function saveAndApplySettings(enabled) {
 function sendSettings(enabled) {
   // Enforce blocking here because every preset and control funnels through this path.
   const active = blocked ? false : enabled;
-  const request = { settings: getCurrentSettings(), enabled: active, revision: ++applyRevision };
+  const request = {
+    settings: getCurrentSettings(),
+    enabled: active,
+    revision: ++applyRevision,
+    knowsShortcut: shortcutKnown
+  };
 
   setPowerUI(active);
 
@@ -778,8 +790,8 @@ function takeUnsentApply() {
   return apply;
 }
 
-function applyMessage(tab, { settings, enabled }) {
-  return { type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled };
+function applyMessage(tab, { settings, enabled, knowsShortcut }) {
+  return { type: 'APPLY_TO_TAB', tabId: tab.id, url: tab.url, settings, enabled, knowsShortcut };
 }
 
 async function sendApply(tab, request) {
@@ -787,6 +799,16 @@ async function sendApply(tab, request) {
   const result = await api.runtime
     .sendMessage(applyMessage(tab, request))
     .catch(() => ({ success: false, blocked: true, blockReason: 'unsupported' }));
+
+  // A shortcut changed the tab, and this change was made without knowing of
+  // it, so the background script left it out. The tab is as the shortcut
+  // left it, and the popup shows that instead. Its word of the shortcut is
+  // usually on its way too; this doesn't wait for it.
+  if (result?.superseded) {
+    shortcutKnown = Math.max(shortcutKnown, result.shortcutAt);
+    syncWithActiveTab().catch(() => {});
+    return result;
+  }
 
   if (request.revision !== applyRevision) return result;
 
@@ -1181,6 +1203,7 @@ function createIconButton(className, glyph, title, onClick) {
 function buildPresetRow(preset) {
   const row = document.createElement('div');
   row.className = 'custom-preset-item';
+  row.dataset.presetId = preset.id;
 
   const apply = document.createElement('button');
   apply.type = 'button';
@@ -1423,7 +1446,10 @@ function holdControlsForTab() {
   controlsHeld = true;
   settingsShown = getCurrentSettings();
   const focused = document.activeElement;
-  heldFocus = heldForTab.some((part) => part.contains(focused)) ? focused : null;
+  const row = focused?.closest?.('.custom-preset-item');
+  heldFocus = heldForTab.some((part) => part.contains(focused))
+    ? { control: focused, row: row?.dataset.presetId, place: row ? [...row.children].indexOf(focused) : -1 }
+    : null;
   for (const part of heldForTab) part.setAttribute('inert', '');
   tabSlowTimer = window.setTimeout(() => {
     if (!blocked) document.body.classList.add('tab-slow');
@@ -1447,11 +1473,15 @@ function releaseControlsForTab() {
   updateCurrentPresetBar();
 
   // Only if the keyboard is where `inert` left it, with no control.
-  const focused = heldFocus;
+  const had = heldFocus;
   heldFocus = null;
-  if (focused?.isConnected && !focused.disabled && document.activeElement === document.body) {
-    focused.focus({ preventScroll: true });
+  if (!had || document.activeElement !== document.body) return;
+  let { control } = had;
+  if (!control.isConnected && had.row !== undefined) {
+    const row = [...els.customPresetsList.children].find((item) => item.dataset.presetId === had.row);
+    control = row?.children[had.place];
   }
+  if (control?.isConnected && !control.disabled) control.focus({ preventScroll: true });
 }
 
 // Looks at the active tab and shows what it is playing with. The popup does
@@ -1676,6 +1706,7 @@ function handleShortcutReport(message, sender) {
   // From the extension's own background script, not from a page's script.
   if (sender.id !== api.runtime.id || sender.tab) return;
   if (lastActiveTab && message.tabId !== lastActiveTab.id) return;
+  if (typeof message.at === 'number') shortcutKnown = Math.max(shortcutKnown, message.at);
   // The popup is still reading what is stored. Its first look comes after
   // that, and so after the shortcut's change.
   if (tabLook === 0) return;

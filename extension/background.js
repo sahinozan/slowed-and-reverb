@@ -19,6 +19,9 @@ const ICONS = {
 const RESTORABLE_URL = /^https?:\/\//i;
 const TAB_STATE_PREFIX = 'tabState:';
 const tabApplyQueues = new Map();
+// When a shortcut last changed each tab, to tell a change the popup made
+// before it knew of the shortcut (APPLY_TO_TAB).
+const shortcutTimes = new Map();
 const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';
 const SPOTIFY_PAGE_ORIGIN = 'https://open.spotify.com';
 const SPOTIFY_SCRIPT_IDS = ['spotify-main', 'spotify-bridge'];
@@ -316,12 +319,17 @@ api.commands.onCommand.addListener(async (command) => {
 // Does what a shortcut asks for. A shortcut works while the popup is open,
 // and the popup shows the tab as it was when it last looked, so it is told
 // to look again (handleShortcutReport in popup.js). Nothing hears this when
-// no popup is open.
+// no popup is open. Until the popup has heard, a change it sends was made
+// on top of the settings from before the shortcut, and would undo the
+// shortcut if it came after it; the time kept here lets APPLY_TO_TAB leave
+// such a change out.
 async function applyShortcut(tab, settings, enabled) {
+  const at = Date.now();
+  shortcutTimes.set(tab.id, at);
   try {
     await queueTabApply(tab.id, tab.url, settings, enabled);
   } finally {
-    api.runtime.sendMessage({ type: 'SHORTCUT_APPLIED', tabId: tab.id }).catch(() => {});
+    api.runtime.sendMessage({ type: 'SHORTCUT_APPLIED', tabId: tab.id, at }).catch(() => {});
   }
 }
 
@@ -372,6 +380,14 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'APPLY_TO_TAB') {
     if (!extensionPageSender) return;
     if (message.tabId === undefined || !message.url) return;
+    // The popup says how recent a shortcut it knew of when the change was
+    // made. A change made without knowing of this tab's last one is left
+    // out, and the popup is told which shortcut that was.
+    const shortcutAt = shortcutTimes.get(message.tabId);
+    if (typeof message.knowsShortcut === 'number' && shortcutAt > message.knowsShortcut) {
+      sendResponse({ success: false, superseded: true, shortcutAt });
+      return;
+    }
     queueTabApply(
       message.tabId,
       message.url,
@@ -474,6 +490,7 @@ api.runtime.onStartup.addListener(() => {
 });
 
 api.tabs.onRemoved.addListener((tabId) => {
+  shortcutTimes.delete(tabId);
   spotifyBridgeTabs.delete(tabId);
   youtubeTabs.delete(tabId);
   forgetTabState(tabId).catch(() => {});

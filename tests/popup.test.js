@@ -116,6 +116,13 @@ function heldApplies(window) {
   };
 }
 
+// Waits until the clock shows a later millisecond, so that what comes next
+// is later than what came before by the extension's own reckoning.
+async function nextMillisecond() {
+  const start = Date.now();
+  while (Date.now() === start) await new Promise((resolve) => setImmediate(resolve));
+}
+
 // Puts the popup's timers in the test's hands, so a hold or a wait takes
 // no real time and ends exactly when the test says.
 function fakeTimers(window) {
@@ -2454,6 +2461,8 @@ describe('popup behavior', () => {
       assert.deepEqual(shown(harness), {
         on: true, status: 'On', speed: '0.80', reverb: '40', bar: 'Current Preset: Slowed + Reverb'
       });
+      // The shortcuts are later than the popup's opening.
+      await nextMillisecond();
 
       await harness.events.command.emit('toggle-effect');
       await settle();
@@ -2688,6 +2697,102 @@ describe('popup behavior', () => {
       assert.equal(asks(harness), 1);
       assert.equal(inert(harness), 0);
       assert.equal(shown(harness).speed, '0.80');
+    });
+
+    // The popup sends one change at a time. A second one, waiting for the
+    // first one's answer, is older than a shortcut pressed meanwhile, and
+    // sent after it would undo it. The background script leaves it out.
+    test("doesn't undo a shortcut with a change that was waiting to be sent before it", async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      let applies;
+      const { harness } = await open(t, tab, {
+        beforeLoad(window) {
+          applies = heldApplies(window);
+        }
+      });
+      const { window } = harness;
+      const reverb = window.document.getElementById('reverb-slider');
+      await nextMillisecond();
+
+      // 0.81x is with the tab and its answer is on its way; reverb 55 waits.
+      applies.hold();
+      window.document.getElementById('speed-up-btn').click();
+      await settle();
+      reverb.value = '55';
+      reverb.dispatchEvent(new window.Event('input', { bubbles: true }));
+      await settle();
+      assert.equal(applies.held.length, 1);
+      assert.equal(tab.state.settings.speed, 0.81);
+      assert.equal(tab.state.settings.reverb, 40);
+
+      await harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.equal(tab.state.settings.speed, 1.2);
+      assert.equal(inert(harness), 4);
+
+      applies.letGo();
+      await settle();
+      assert.equal(tab.state.settings.speed, 1.2);
+      assert.equal(tab.state.settings.reverb, 0);
+      assert.equal(audioUpdates(harness).length, 2);
+      assert.equal(inert(harness), 0);
+      assert.deepEqual(shown(harness), {
+        on: true, status: 'On', speed: '1.20', reverb: '0', bar: 'Current Preset: Nightcore'
+      });
+    });
+
+    // Between a shortcut and the background script's word of it, the popup
+    // still shows the settings from before, and its controls work. A change
+    // made then is left out as well, and the popup shows what the shortcut
+    // did without waiting for that word.
+    test('drops a change made after a shortcut that the popup had not yet heard of', async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      const reports = [];
+      let holdingReports = true;
+      const { harness } = await open(t, tab, {
+        beforeLoad(window) {
+          const { runtime } = window.chrome;
+          const send = runtime.sendMessage.bind(runtime);
+          runtime.sendMessage = async (message, ...rest) => {
+            if (holdingReports && message?.type === 'SHORTCUT_APPLIED') {
+              await new Promise((resolve) => reports.push(resolve));
+            }
+            return send(message, ...rest);
+          };
+        }
+      });
+      const document = harness.window.document;
+      await nextMillisecond();
+
+      await harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.equal(reports.length, 1);
+      assert.equal(tab.state.settings.speed, 1.2);
+      assert.equal(shown(harness).speed, '0.80');
+
+      document.getElementById('speed-up-btn').click();
+      await settle();
+      assert.equal(tab.state.settings.speed, 1.2);
+      assert.equal(audioUpdates(harness).length, 1);
+      const nightcore = {
+        on: true, status: 'On', speed: '1.20', reverb: '0', bar: 'Current Preset: Nightcore'
+      };
+      assert.deepEqual(shown(harness), nightcore);
+      assert.equal(notice(harness), false);
+      assert.equal(document.getElementById('speed-up-btn').disabled, false);
+
+      // The next change is made knowing of the shortcut, and is taken.
+      document.getElementById('speed-up-btn').click();
+      await settle();
+      assert.equal(tab.state.settings.speed, 1.21);
+      assert.equal(tab.state.settings.reverb, 0);
+
+      // The word of the shortcut comes last, and changes nothing.
+      holdingReports = false;
+      reports.shift()();
+      await settle();
+      assert.equal(shown(harness).speed, '1.21');
+      assert.equal(tab.state.settings.speed, 1.21);
     });
 
     // The popup's change goes by way of the background script, and a

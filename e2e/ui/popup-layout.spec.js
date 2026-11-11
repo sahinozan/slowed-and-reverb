@@ -889,6 +889,48 @@ test.describe("the controls before the tab's first answer", () => {
     }
   });
 
+  // The saved presets' rows are built again when the look shows the tab, so
+  // the button that had the keyboard is gone. The same button of the same
+  // preset's new row gets it.
+  test('give the keyboard back to a saved preset’s button after a shortcut', async ({ browser, browserName }) => {
+    const { context, page, errors } = await openPopup(browser, browserName, patient.baseUrl, {
+      settings: SLOWED, customPresets: savedPresets(3)
+    });
+    const focusedRowButton = () => page.evaluate(() => {
+      const focused = document.activeElement;
+      const item = focused.closest('.custom-preset-item');
+      return item && {
+        row: [...item.parentElement.children].indexOf(item) + 1,
+        button: focused.className,
+        name: item.querySelector('.custom-preset-btn').textContent
+      };
+    });
+    try {
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      await page.locator('#tab-custom').click();
+      await expectPresetsList(page, 3);
+      await page.locator(row(2, 'edit-preset-btn')).focus();
+      const before = await focusedRowButton();
+      expect(before).toEqual({ row: 2, button: 'edit-preset-btn', name: savedPresets(3)[1].name });
+      await page.evaluate(() => {
+        window.focusedBefore = document.activeElement;
+        window.holdTabAnswers();
+        window.tellPopup({ type: 'SHORTCUT_APPLIED', tabId: 9 });
+      });
+      expect(await page.locator('[inert]').count()).toBe(HELD_PARTS.length);
+      expect(await focusedRowButton()).toBe(null);
+
+      await page.evaluate(() => window.letTabAnswer());
+      await expect(page.locator('[inert]')).toHaveCount(0);
+      // The rows are new ones, and the same button of the same row has the keyboard.
+      expect(await page.evaluate(() => window.focusedBefore.isConnected)).toBe(false);
+      expect(await focusedRowButton()).toEqual(before);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
   // Without the hold on the parts, the Tab key reaches the controls. (A
   // click still does nothing: what the control reports is dropped.)
   test('finds controls that the Tab key reaches before the answer', async ({ browser, browserName }) => {
