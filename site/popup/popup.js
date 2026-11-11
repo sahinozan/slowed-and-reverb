@@ -1578,10 +1578,14 @@ async function init() {
       await syncWithActiveTab();
     } finally {
       tabSynced = true;
+      // Before the bar is worked out: letting go puts back a slider that
+      // moved while it was held, and the bar is named from the sliders.
+      releaseControlsForTab();
       updateCurrentPresetBar();
       settlePowerUI();
     }
   } finally {
+    // For a failure before the tab was asked. A second call changes nothing.
     releaseControlsForTab();
   }
   await countDayOfUse().catch(() => {});

@@ -1707,6 +1707,7 @@ describe('popup behavior', () => {
       const harness = await createPopupHarness({
         activeTab: null,
         local: { ...SLOWED },
+        localStorage: { [PRESET_BAR_KEY]: 'Current Preset: Slowed + Reverb' },
         beforeLoad(window) {
           const { tabs } = window.chrome;
           const query = tabs.query.bind(tabs);
@@ -1739,6 +1740,41 @@ describe('popup behavior', () => {
       assert.equal(reverb.value, '40');
       assert.equal(document.getElementById('speed-input').value, '0.80');
       assert.equal(document.getElementById('reverb-value').textContent, '(40%)');
+      // The bar is named from the sliders as they were put back.
+      assert.deepEqual(presetBar(harness), { hidden: false, label: 'Current Preset: Slowed + Reverb' });
+      assert.equal(harness.window.localStorage.getItem(PRESET_BAR_KEY), 'Current Preset: Slowed + Reverb');
+    });
+
+    test('names the preset a new tab starts with, though a slider moved while it was sent', async (t) => {
+      const first = deferredTabState();
+      const changes = [];
+      const harness = await createPopupHarness({
+        onTabMessage(tabId, message) {
+          if (message.type !== 'UPDATE_AUDIO') return first.onTabMessage(tabId, message);
+          return new Promise((resolve) => changes.push(() => resolve({ success: true })));
+        }
+      });
+      t.after(() => close(harness));
+      const document = harness.window.document;
+      const slider = document.getElementById('speed-slider');
+
+      first.release(answer({ enabled: false }));
+      await settle();
+      assert.equal(changes.length, 1);
+      assert.equal(slider.value, '0.8');
+
+      // The preset is on its way; the slider moves as a drag from before the
+      // hold moves it.
+      slider.value = '1.31';
+      slider.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+      changes.shift()();
+      await settle();
+
+      assert.equal(held(harness), false);
+      assert.equal(slider.value, '0.8');
+      assert.deepEqual(presetBar(harness), { hidden: false, label: 'Current Preset: Slowed + Reverb' });
+      assert.equal(harness.window.localStorage.getItem(PRESET_BAR_KEY), 'Current Preset: Slowed + Reverb');
+      assert.equal(audioUpdates(harness).length, 1);
     });
 
     // After a reload or a permission the popup asks the tab again. The

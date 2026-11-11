@@ -751,12 +751,22 @@ test.describe("the controls before the tab's first answer", () => {
       await page.goto(`${baseUrl}/popup.html`, { waitUntil: 'commit' });
       const slider = page.locator('#speed-slider');
       await slider.waitFor();
+      // The styles have loaded, so the slider is where it will be pressed.
+      await page.waitForFunction(() => {
+        const sheet = document.querySelector('link[rel="stylesheet"]')?.sheet;
+        return Boolean(sheet) && document.getElementById('speed-slider').getBoundingClientRect().width > 100;
+      });
       // As the page is written, before the script: 1.00x, the thumb midway.
       expect(Number(await slider.inputValue())).toBe(1);
       const box = await slider.boundingBox();
       const y = box.y + box.height / 2;
       await page.mouse.move(box.x + box.width / 2, y);
       await page.mouse.down();
+      // The slider follows the mouse, with no script in the page yet: the
+      // drag is under way before anything of the popup's can hold it.
+      await page.mouse.move(box.x + box.width * 0.6, y, { steps: 3 });
+      expect(Number(await slider.inputValue()), 'the drag did not begin').toBeGreaterThan(1.05);
+      expect(await page.evaluate(() => typeof holdControlsForTab)).toBe('undefined');
 
       letScriptLoad();
       // The script has run: it shows what is stored, and holds the controls.
