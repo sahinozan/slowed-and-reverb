@@ -15,6 +15,11 @@
 // Node's own modules and this file, and make no network requests.
 // Claude Code loads its settings only in a session started at a checkout's
 // root, so a session started in a folder below it has no hooks.
+// Codex runs a project's hooks once the owner has trusted the project and
+// approved them (/hooks). In a linked worktree it reads .codex/hooks.json
+// from the main checkout, not the worktree's own (Codex 0.167), so no
+// worktree has hooks while the main checkout is without that file. The
+// commands in it run the scripts of the checkout the session is in.
 
 const fs = require('node:fs');
 const path = require('node:path');
