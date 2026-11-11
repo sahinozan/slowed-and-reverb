@@ -380,6 +380,31 @@ describe('background service worker', () => {
       assert.deepEqual(heard[1], { message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 2 });
     });
 
+    // The popup asks the tab when it hears this, so the tab must have the
+    // change by then, not only have been sent it.
+    test("says nothing until the tab has answered the change", async () => {
+      let answerChange;
+      const { harness, heard } = listen({
+        onTabMessage(_tabId, message) {
+          if (message.type === 'GET_STATE') {
+            return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false };
+          }
+          return new Promise((resolve) => {
+            answerChange = () => resolve({ success: true });
+          });
+        }
+      });
+
+      const handled = harness.events.command.emit('toggle-slowed-reverb');
+      for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
+      assert.equal(updates(harness.calls).length, 1);
+      assert.deepEqual(heard, []);
+
+      answerChange();
+      await handled;
+      assert.equal(heard.length, 1);
+    });
+
     test('says so too when the tab refused the change', async () => {
       const { harness, heard } = listen({ onTabMessage: freshTab(null) });
 

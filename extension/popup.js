@@ -328,9 +328,12 @@ const TAB_GIVE_UP_MS = 5000;
 // being dragged go on moving.
 const HELD_EVENTS = ['pointerdown', 'click', 'keydown', 'input', 'change', 'blur'];
 let controlsHeld = false;
-// The settings the popup showed last (applySettingsToUI), to put a slider
-// that moved while it was held back where it was.
+// The settings the popup showed last (applySettingsToUI), or had when the
+// hold began, to put a slider that moved while it was held back where it was.
 let settingsShown = null;
+// The held control that had the keyboard when the hold began. `inert` takes
+// the keyboard away from it, and letting go gives it back.
+let heldFocus = null;
 for (const part of heldForTab) {
   for (const type of HELD_EVENTS) {
     // Added before any other listener, and for the way down, so it comes
@@ -364,13 +367,11 @@ let tabSlowTimer = null;
 // The looks at the tab so far (syncWithActiveTab). Only the newest shows
 // what it finds.
 let tabLook = 0;
-// The popup is waiting for the newest look: it has neither ended nor taken
-// too long.
-let tabLookUnderWay = false;
-// The tab has changed since the newest look asked it, or the popup has
-// stopped waiting for the look. What its pass is told is not shown, and the
-// look makes another pass.
-let tabLookAgain = false;
+// Settles when the newest look is over: it has shown the tab, has run out of
+// time, or has been given up for a reload.
+let tabLookOver = Promise.resolve();
+// Ends the wait for the newest look, when a newer one takes over from it.
+let endTabLook = null;
 let processingPending = false;
 let tabReports = 0;
 let reloadReason = 'unsupported';
@@ -535,6 +536,8 @@ function watchForTabReload(tabId) {
 }
 
 async function reloadTab(tab, statusElement, statusText) {
+  // A look still waiting for this page will not be answered by it now.
+  forgetTabLook();
   statusElement.textContent = statusText;
   const reloadWatcher = watchForTabReload(tab.id);
   try {
@@ -713,6 +716,14 @@ function updateAdvancedBadge() {
 // a key gives the tab the newest settings, always including the last, without
 // a message for every step before them.
 function saveAndApplySettings(enabled) {
+  // While the controls are held, nothing they do is sent. Their events are
+  // dropped already (HELD_EVENTS); this is for what was under way when the
+  // hold began and needs no further event, such as a button held down.
+  if (controlsHeld) return Promise.resolve(null);
+  return sendSettings(enabled);
+}
+
+function sendSettings(enabled) {
   // Enforce blocking here because every preset and control funnels through this path.
   const active = blocked ? false : enabled;
   const request = { settings: getCurrentSettings(), enabled: active, revision: ++applyRevision };
@@ -1395,25 +1406,28 @@ function bindControls() {
   });
 }
 
-// When it opens, and until the tab has answered, the popup shows the settings
-// used last in any tab, not this tab's. A change made then would be made on
-// top of the wrong settings, and the tab's answer, which is older than the
-// change, would then be shown over it. So the parts that set the effect are
-// held meanwhile (init): they take no clicks or keys (`inert`, and
-// HELD_EVENTS for what was already under way) and look as they always do,
-// since the answer usually comes at once. Only when it takes longer than
-// TAB_SLOW_MS do they dim, to show that the popup is waiting. The hold ends
-// with the first look, which is also when the popup stops waiting for a tab
-// that doesn't answer (syncWithActiveTab): the controls are disabled then.
-//
-// Asking the tab again later needs no hold. After a reload or a permission
-// the controls are disabled, and the look enables them only once it has this
-// tab's settings to show. After a shortcut they are in use, and the look
-// shows nothing once a change has been made meanwhile (syncWithActiveTab).
+// While the popup is asking the tab what it is playing with, what it shows
+// may not be the tab's: when it opens it shows the settings used last in
+// any tab, and after a shortcut the settings from before it. A change made
+// then would be made on top of the wrong settings, and the tab's answer,
+// which is older than the change, would then be shown over it. So the parts
+// that set the effect are held for as long as a look at the tab is under
+// way (syncWithActiveTab), and from the start of init: they take no clicks
+// or keys (`inert`, and HELD_EVENTS for what was already under way), and
+// nothing is sent for them (saveAndApplySettings). They look as they always
+// do, since the answer usually comes at once. Only when it takes longer
+// than TAB_SLOW_MS do they dim, to show that the popup is waiting. Controls
+// that are disabled anyway, as after a reload, don't dim.
 function holdControlsForTab() {
+  if (controlsHeld) return;
   controlsHeld = true;
+  settingsShown = getCurrentSettings();
+  const focused = document.activeElement;
+  heldFocus = heldForTab.some((part) => part.contains(focused)) ? focused : null;
   for (const part of heldForTab) part.setAttribute('inert', '');
-  tabSlowTimer = window.setTimeout(() => document.body.classList.add('tab-slow'), TAB_SLOW_MS);
+  tabSlowTimer = window.setTimeout(() => {
+    if (!blocked) document.body.classList.add('tab-slow');
+  }, TAB_SLOW_MS);
 }
 
 function releaseControlsForTab() {
@@ -1421,78 +1435,96 @@ function releaseControlsForTab() {
   tabSlowTimer = null;
   document.body.classList.remove('tab-slow');
   for (const part of heldForTab) part.removeAttribute('inert');
-  // A slider dragged through the hold has moved, though the popup took none
-  // of it. Most ways the first look ends show settings again and so put it
-  // back; this does it for those that don't, such as a window with no tab.
-  if (controlsHeld && settingsShown) applySettingsToUI(settingsShown);
+  const wasHeld = controlsHeld;
   controlsHeld = false;
+  if (!wasHeld) return;
+
+  // A slider dragged through the hold has moved, though the popup took none
+  // of it. Most ways a look ends show settings again and so put it back;
+  // this does it for those that don't, such as a window with no tab. The
+  // bar is named from the sliders, so it comes after.
+  if (settingsShown) applySettingsToUI(settingsShown);
+  updateCurrentPresetBar();
+
+  // Only if the keyboard is where `inert` left it, with no control.
+  const focused = heldFocus;
+  heldFocus = null;
+  if (focused?.isConnected && !focused.disabled && document.activeElement === document.body) {
+    focused.focus({ preventScroll: true });
+  }
 }
 
 // Looks at the active tab and shows what it is playing with. The popup does
 // this when it opens, after a reload or a permission, and when a shortcut
-// has changed the tab (handleShortcutReport).
+// has changed the tab (handleShortcutReport). The controls are held
+// meanwhile, and this returns when no look is under way any more.
 //
-// A look asks the tab once or more: each asking is a pass (showActiveTab).
-// What a pass is told is shown only while it is still the state of things:
-// no newer look has begun, no shortcut has changed the tab since the pass
-// began, and nothing has been changed in the popup since. After a shortcut
-// the look makes another pass. After a change in the popup it shows
-// nothing: that change is the newer, the tab gets what the popup shows, and
-// the change's own answer says if the tab took it.
+// A newer look takes over from an older one, at once: the older one shows
+// nothing more, since what it is told is from before, and whoever waited for
+// it waits for the newer one instead.
 //
-// A pass waits on the browser and on the page, and a page that has stopped
-// responding never answers. So after TAB_GIVE_UP_MS the popup stops waiting:
-// it says that the page isn't responding and offers to reload it, and this
-// returns. The pass itself goes on, and if it is answered after all the
-// look makes another pass, with a time limit of its own, and shows the tab.
-// Meanwhile a reload or a shortcut starts a new look, which takes over.
+// A look waits on the browser and on the page, and a page that has stopped
+// responding never answers. So after TAB_GIVE_UP_MS the look is over: the
+// popup says that the page isn't responding and offers to reload it. What
+// the look is told after that is not shown either, but if it is told
+// anything at all the page is answering again, and a new look is made.
 async function syncWithActiveTab() {
+  holdControlsForTab();
+  const own = lookAtTab();
+  let over = own.then(() => {}, () => {});
+  tabLookOver = over;
+  try {
+    await own;
+  } finally {
+    while (over !== tabLookOver) {
+      over = tabLookOver;
+      await over;
+    }
+    releaseControlsForTab();
+  }
+}
+
+// One look. Resolves when it is over, and rejects if it fails before that.
+function lookAtTab() {
   const look = ++tabLook;
   const newest = () => look === tabLook;
-  tabLookUnderWay = true;
+  let outOfTime = false;
+  endTabLook?.();
 
-  let stopWaiting;
-  const gaveUp = new Promise((resolve) => {
-    stopWaiting = resolve;
+  return new Promise((resolve, reject) => {
+    // Ended with the look, also when a newer one takes over (endTabLook).
+    const timer = window.setTimeout(() => {
+      outOfTime = true;
+      showTabNotResponding();
+      resolve();
+    }, TAB_GIVE_UP_MS);
+    endTabLook = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+
+    // Whether what the look has learned may still be shown.
+    const current = () => newest() && !outOfTime;
+    const ended = (error) => {
+      window.clearTimeout(timer);
+      if (newest() && outOfTime) {
+        // Something answered after all.
+        syncWithActiveTab().catch(() => {});
+      } else if (newest() && error) {
+        reject(error.reason);
+        return;
+      }
+      resolve();
+    };
+    showActiveTab(current).then(() => ended(null), (reason) => ended({ reason }));
   });
-  const giveUp = (pass) => {
-    if (newest()) {
-      // A tab that has taken a change made in the popup meanwhile is
-      // responding, whatever became of this pass.
-      if (pass.revision === applyRevision) showTabNotResponding();
-      // The popup isn't waiting any more, so a shortcut now starts a look of
-      // its own. What this pass has shown may be under the notice, and what
-      // it is told will be old, so if the tab does answer, it is asked again.
-      tabLookUnderWay = false;
-      tabLookAgain = true;
-    }
-    stopWaiting();
-  };
+}
 
-  const looked = (async () => {
-    try {
-      do {
-        tabLookAgain = false;
-        const pass = {
-          // The newest change made in the popup when the pass began. The
-          // pass's own change, a new tab's preset, is counted in (sendOwn).
-          revision: applyRevision,
-          current: () => newest() && !tabLookAgain && pass.revision === applyRevision
-        };
-        const giveUpTimer = window.setTimeout(() => giveUp(pass), TAB_GIVE_UP_MS);
-        try {
-          await showActiveTab(pass);
-        } finally {
-          window.clearTimeout(giveUpTimer);
-        }
-      } while (tabLookAgain && newest());
-    } finally {
-      if (newest()) tabLookUnderWay = false;
-    }
-  })();
-  // A look that fails after the popup stopped waiting has no one to tell.
-  looked.catch(() => {});
-  await Promise.race([looked, gaveUp]);
+// Gives up the look under way, for a reload: the page it asked is going.
+function forgetTabLook() {
+  tabLook++;
+  endTabLook?.();
+  endTabLook = null;
 }
 
 function showTabNotResponding() {
@@ -1502,25 +1534,18 @@ function showTabNotResponding() {
   setPowerUI(false);
 }
 
-// One pass of a look at the tab. After each wait, `pass.current()` says
-// whether what the pass has learned may still be shown.
-async function showActiveTab(pass) {
-  // The pass's own change is not one made in the popup since it began.
-  const sendOwn = (enabled) => {
-    const sent = saveAndApplySettings(enabled);
-    pass.revision = applyRevision;
-    return sent;
-  };
-
+// What a look does. After each wait, `current()` says whether what it has
+// learned may still be shown.
+async function showActiveTab(current) {
   // What the popup has changed already reaches the tab first, so that the
   // tab's answer is not from before it.
   while (applyBusy) {
     await appliesSent;
-    if (!pass.current()) return;
+    if (!current()) return;
   }
 
   const tab = await getActiveTab();
-  if (!pass.current()) return;
+  if (!current()) return;
   tabOnSpotify = isSpotifyUrl(tab?.url);
   spotifyPermissionTabId = tab?.id !== undefined && tabOnSpotify ? tab.id : null;
   if (tab?.id === undefined) return;
@@ -1529,7 +1554,7 @@ async function showActiveTab(pass) {
   const firefoxYouTubePermission = getFirefoxYouTubePermission(tab.url);
   if (spotify) {
     const allowed = await api.permissions.contains({ origins: [SPOTIFY_ORIGIN] });
-    if (!pass.current()) return;
+    if (!current()) return;
     if (!allowed) {
       hideYouTubePermissionPanel();
       setBlocked(true, 'drm');
@@ -1542,7 +1567,7 @@ async function showActiveTab(pass) {
 
     hideYouTubePermissionPanel();
     await api.runtime.sendMessage({ type: 'SYNC_SPOTIFY_REGISTRATION' });
-    if (!pass.current()) return;
+    if (!current()) return;
   } else if (!isYouTubeUrl(tab.url)) {
     hideSpotifyPermissionPanel();
     hideYouTubePermissionPanel();
@@ -1553,7 +1578,7 @@ async function showActiveTab(pass) {
   } else {
     if (firefoxYouTubePermission) {
       const allowed = await api.permissions.contains({ origins: [firefoxYouTubePermission.origin] });
-      if (!pass.current()) return;
+      if (!current()) return;
       if (!allowed) {
         hideSpotifyPermissionPanel();
         setBlocked(true, 'unsupported');
@@ -1567,7 +1592,7 @@ async function showActiveTab(pass) {
     }
 
     const injected = await ensureContentScript(tab.id);
-    if (!pass.current()) return;
+    if (!current()) return;
     if (!injected) {
       hideSpotifyPermissionPanel();
       hideYouTubePermissionPanel();
@@ -1586,7 +1611,7 @@ async function showActiveTab(pass) {
   } catch {
     answered = false;
   }
-  if (!pass.current()) return;
+  if (!current()) return;
 
   if (!answered) {
     setBlocked(true, spotify ? 'drm' : 'unsupported');
@@ -1609,7 +1634,7 @@ async function showActiveTab(pass) {
   // Asked before the controls are enabled below, so that nothing can be
   // changed between their being enabled and this tab's settings being shown.
   const remembered = state?.enabled ? null : await recallTabState(tab.id, tab.url);
-  if (!pass.current()) return;
+  if (!current()) return;
 
   setBlocked(false);
   hideSpotifyPermissionPanel();
@@ -1627,7 +1652,7 @@ async function showActiveTab(pass) {
   if (remembered) {
     applySettingsToUI(remembered.settings);
     if (remembered.enabled) {
-      await sendOwn(true);
+      await sendSettings(true);
     } else {
       setPowerUI(false);
       setTabIcon(tab.id, false);
@@ -1637,28 +1662,29 @@ async function showActiveTab(pass) {
 
   // A tab with no prior state starts with the extension's primary preset enabled.
   applySettingsToUI(PRESETS.slowed);
-  await sendOwn(true);
+  await sendSettings(true);
 }
 
 // A keyboard shortcut is handled by the background script, and works while
 // the popup is open. The background script says when one has changed a tab
 // (applyShortcut in background.js), and the popup then looks at the tab
 // again, so that it shows what the shortcut did and the next change made
-// here is made on top of it. A look the popup is still waiting for may have
-// asked before the shortcut's change, so what it is told is not shown and it
-// asks again. A look the popup has stopped waiting for is taken over.
+// here is made on top of it. The new look takes over from one under way,
+// which may have asked before the shortcut's change.
 function handleShortcutReport(message, sender) {
   if (message?.type !== 'SHORTCUT_APPLIED') return;
   // From the extension's own background script, not from a page's script.
   if (sender.id !== api.runtime.id || sender.tab) return;
   if (lastActiveTab && message.tabId !== lastActiveTab.id) return;
+  // The popup is still reading what is stored. Its first look comes after
+  // that, and so after the shortcut's change.
+  if (tabLook === 0) return;
 
   // A saved preset being edited is compared with the settings shown, which
   // are about to be the shortcut's, so the edit ends, as it does when
   // another preset is chosen.
   if (activePresetId) setActivePreset(null);
-  if (tabLookUnderWay) tabLookAgain = true;
-  else syncWithActiveTab().catch(() => {});
+  syncWithActiveTab().catch(() => {});
 }
 
 // The rating reminder shows once, after the panel has been opened with the
@@ -1729,10 +1755,10 @@ async function init() {
     try {
       await syncWithActiveTab();
     } finally {
+      // The look has let go of the controls, which put back a slider that
+      // moved while it was held. The bar is named from the sliders, so it
+      // is worked out only now.
       tabSynced = true;
-      // Before the bar is worked out: letting go puts back a slider that
-      // moved while it was held, and the bar is named from the sliders.
-      releaseControlsForTab();
       updateCurrentPresetBar();
       settlePowerUI();
     }
