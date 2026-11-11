@@ -161,8 +161,9 @@ const HOME = path.join(__dirname, '..', '..');
 // Where a file is, when it is in a checkout of this repository: the main
 // one or any of its worktrees, wherever the session started. Its path is
 // given from that checkout's root, with forward slashes. Null for any other
-// file. `anyCase` says that names there ignore letter case, which a file
-// that isn't there yet can't show by its own spelling (see real).
+// file. `anyCase` says that names there ignore letter case. A file that
+// isn't there yet, or a link meant itself, keeps the spelling given (see
+// real), which is then one of several for the same name.
 function place(file, home = HOME) {
   const checkout = checkoutOf(file);
   const repository = repositoryOf(home);
@@ -170,24 +171,35 @@ function place(file, home = HOME) {
   return {
     checkout,
     file: path.relative(checkout, file).split(path.sep).join('/'),
-    anyCase: !fs.existsSync(file) && fs.existsSync(path.join(checkout, '.GIT'))
+    anyCase: fs.existsSync(path.join(checkout, '.GIT'))
   };
 }
 
+const isLink = (file) => {
+  try {
+    return fs.lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+
 // A path as the file system has it: links followed and, where names
 // ignore case, spelled as the file is. What isn't there yet keeps the
-// spelling given, under the nearest folder that is. With `itself`, a link
-// by that name is meant and not the file it leads to, as when it is
-// deleted or moved away.
-function real(file, itself = false) {
-  if (itself && fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
-    return path.join(real(path.dirname(file)), path.basename(file));
-  }
+// spelling given, under the nearest folder that is, and a link to what
+// isn't there yet leads to where that would be. With `itself`, a link by
+// that name is meant and not the file it leads to, as when it is deleted
+// or moved away.
+function real(file, itself = false, links = 0) {
+  if (itself && isLink(file)) return path.join(real(path.dirname(file)), path.basename(file));
   const missing = [];
   for (let at = file; ; at = path.dirname(at)) {
     try {
       return path.join(fs.realpathSync.native(at), ...missing);
     } catch {
+      // Links that lead back to themselves are followed no further.
+      if (links < 40 && isLink(at)) {
+        return real(path.join(path.resolve(real(path.dirname(at)), fs.readlinkSync(at)), ...missing), false, links + 1);
+      }
       if (at === path.dirname(at)) return file;
       missing.unshift(path.basename(at));
     }

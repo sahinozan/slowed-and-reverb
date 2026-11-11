@@ -502,6 +502,28 @@ describe('a generated file reached by another name', () => {
     assert.equal(refusal(edit(path.join(links, 'pages', 'notes.md'), 'a', 'b', '')), null);
   });
 
+  test('is refused through a link to where it will be, before it is there', () => {
+    // Writing to such a link makes the file it leads to, when the folder
+    // for it is there. Tried with the applier: an added file and a moved
+    // one both land there, through one link or several.
+    const links = folder();
+    assert.ok(!fs.existsSync(path.join(root, 'site', 'popup', 'popup.new')));
+    fs.symlinkSync(path.join(root, 'site', 'popup', 'popup.new'), path.join(links, 'made.js'));
+    fs.symlinkSync('made.js', path.join(links, 'again.js'));
+    fs.symlinkSync(path.join('..', path.basename(links), 'again.js'), path.join(links, 'beside.js'));
+    for (const name of ['made.js', 'again.js', 'beside.js']) {
+      for (const input of [writeWhole(name, 'new', links), patch([`Add File: ${name}`], links), patch([`Update File: ordinary.md\n*** Move to: ${name}`], links)]) {
+        assert.ok(refusal(input)?.startsWith('site/popup/popup.new is generated'), `${input.tool_name} of ${name}`);
+      }
+      assert.equal(refusal(patch([`Delete File: ${name}`], links)), null, name);
+    }
+    // Links that lead to each other lead nowhere, and to no end.
+    fs.symlinkSync('there.js', path.join(links, 'here.js'));
+    fs.symlinkSync('here.js', path.join(links, 'there.js'));
+    assert.equal(refusal(patch(['Add File: here.js'], links)), null);
+    assert.equal(refusal(writeWhole('here.js/below.js', 'new', links)), null);
+  });
+
   test('is refused in other letter case, where the file system takes the two for one file', () => {
     const one = fs.existsSync(path.join(root, 'DOCS', 'CHECKS.MD'));
     for (const file of ['DOCS/CHECKS.MD', 'Site/Popup/Popup.JS', 'release-checklist.MD']) {
@@ -515,6 +537,17 @@ describe('a generated file reached by another name', () => {
     }
     assert.equal(refusal(writeWhole('site/popup/POPUP-host.new', 'new')), null);
     assert.ok(matches('dist/**', 'DIST/New.js', true) && !matches('dist/**', 'DIST/New.js') && !matches('site/*.js', 'SITE/a/b.js', true));
+    // Nor has a link that is deleted or moved away, which goes by the
+    // name given. Here the generated file is itself a link.
+    const { main } = repository();
+    write(path.join(main, 'ordinary.txt'), 'a\n');
+    fs.mkdirSync(path.join(main, 'docs'));
+    fs.symlinkSync(path.join('..', 'ordinary.txt'), path.join(main, 'docs', 'checks.md'));
+    const same = fs.existsSync(path.join(main, 'docs', 'CHECKS.md'));
+    for (const input of [patch(['Delete File: docs/CHECKS.md'], main), patch(['Update File: docs/CHECKS.md\n*** Move to: ordinary.md'], main)]) {
+      assert.equal(refusal(input, main) !== null, same, input.tool_input.command);
+    }
+    assert.ok(refusal(patch(['Delete File: docs/checks.md'], main), main)?.startsWith('docs/checks.md is generated'));
   });
 });
 
