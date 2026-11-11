@@ -216,9 +216,11 @@ describe('content script audio processing', () => {
   // normal speed to the other. The output is silent around such a change.
   const FIREFOX_AGENT = 'Mozilla/5.0 (Macintosh; rv:158.0) Gecko/20100101 Firefox/158.0';
   const PITCH_FOLLOWS = { ...SETTINGS, keepPitch: false };
+  // Faded out by 1.03 s, silent until 50 ms after the player changes at
+  // 1.00 s on the test's clock (80 ms in Chromium), and back by 1.075 s.
   const SILENT_GAP = [
     { to: 0, endTime: 1.03 },
-    { to: 1, endTime: 1.105 }
+    { to: 1, endTime: 1.075 }
   ];
   const BELOW_NORMAL = 1 - 0.0001;
   const ABOVE_NORMAL = 1 + 0.0001;
@@ -298,7 +300,7 @@ describe('content script audio processing', () => {
     assert.equal(harness.media.playbackRate, 1.01);
     assert.deepEqual(ramps(processed.gain).slice(-2), [
       { to: 0, endTime: 2.03 },
-      { to: 1, endTime: 2.105 }
+      { to: 1, endTime: 2.075 }
     ]);
     fadedOut();
 
@@ -341,8 +343,8 @@ describe('content script audio processing', () => {
     await set(1, false);
     assert.equal(harness.media.playbackRate, 1);
     const [unchanged, processed] = outputGains(harness.getContext());
-    assert.equal(unchanged.gain.valueAt(2.07), 0);
-    assert.equal(processed.gain.valueAt(2.07), 0);
+    assert.equal(unchanged.gain.valueAt(2.04), 0);
+    assert.equal(processed.gain.valueAt(2.04), 0);
     assert.equal(unchanged.gain.valueAt(2.3), 1);
   });
 
