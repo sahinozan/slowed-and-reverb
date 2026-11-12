@@ -412,9 +412,8 @@ describe('background service worker', () => {
       assert.deepEqual(heard, [{ message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 1 }]);
     });
 
-    // What a shortcut does isn't known until its turn, and by then the tab
-    // counts it. The popup is told, so that it reads the new count.
-    test('says so too for a shortcut that changed nothing', async () => {
+    // The popup would look at the tab again and find what it shows already.
+    test('says nothing for a shortcut that found nothing it could do', async () => {
       const { harness, heard } = listen({
         onTabMessage(_tabId, message) {
           return message.type === 'GET_STATE' ? { blocked: true, blockReason: 'drm' } : null;
@@ -422,7 +421,8 @@ describe('background service worker', () => {
       });
 
       await harness.events.command.emit('toggle-nightcore');
-      assert.deepEqual(heard, [{ message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 0 }]);
+      assert.deepEqual(heard, []);
+      assert.equal(updates(harness.calls).length, 0);
     });
 
     test('says nothing for a shortcut that is not the extension\'s, or with no tab to change', async () => {
@@ -565,6 +565,40 @@ describe('background service worker', () => {
       assert.deepEqual(updates(harness.calls).map(({ message }) => message.enabled), [false, true]);
       assert.equal(tab.enabled, true);
       assert.deepEqual({ ...tab.settings }, SLOWED);
+    });
+
+    // The tab went to another site while the shortcut waited for its turn.
+    // The shortcut acts on the page that is there, and the tab is
+    // remembered under that site, not under the one it left.
+    test('acts on the page the tab is on when its turn comes', async () => {
+      const activeTab = { id: 7, url: 'https://www.youtube.com/watch?v=one' };
+      const answers = [];
+      const harness = setup({
+        activeTab,
+        grantedOrigins: ['https://open.spotify.com/*'],
+        onTabMessage(_tabId, message) {
+          if (message.type === 'GET_STATE') {
+            return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false };
+          }
+          return new Promise((resolve) => answers.push(() => resolve({ success: true })));
+        },
+        onRuntimeMessage() {}
+      });
+
+      const changed = change(harness, { shortcut: null });
+      await settle();
+      const handled = harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.equal(answers.length, 1);
+      activeTab.url = 'https://open.spotify.com/track/example';
+
+      answers.shift()();
+      await changed;
+      await settle();
+      answers.shift()();
+      await handled;
+      assert.equal(harness.session.data['tabState:7'].origin, 'https://open.spotify.com');
+      assert.equal(harness.session.data['tabState:7'].settings.speed, 1.2);
     });
 
     // The same for a change from the popup that came just before: the

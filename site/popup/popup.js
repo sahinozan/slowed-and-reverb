@@ -234,6 +234,7 @@ const els = {
   powerStatus: el('power-status'),
   blockedBanner: el('blocked-banner'),
   blockedBannerText: el('blocked-banner-text'),
+  noticeAnnouncer: el('notice-announcer'),
   spotifyPermissionPanel: el('spotify-permission-panel'),
   spotifyPermissionText: el('spotify-permission-text'),
   spotifyPermissionBtn: el('spotify-permission-btn'),
@@ -339,6 +340,9 @@ const TAB_SLOW_MS = 300;
 // answer (ENGINE_TIMEOUT_MS in content.js). A page that is still loading
 // can take longer, since the scripts wait for it.
 const TAB_GIVE_UP_MS = 5000;
+// How often the browser is asked about a tab the popup has stopped waiting
+// for (showTabNotAnswering).
+const TAB_WATCH_MS = 1000;
 // What a held part's controls report is dropped before their own listeners
 // hear it. `inert` already keeps new clicks and keys away from them, but not
 // what was under way when the hold began: Chromium lets a slider that is
@@ -399,6 +403,9 @@ let tabLook = 0;
 let tabLookOver = Promise.resolve();
 // Ends the wait for the newest look, when a newer one takes over from it.
 let endTabLook = null;
+// Ends the watch on the tab that a look whose time was up has left
+// (showTabNotAnswering).
+let endTabWatch = null;
 // How many reloads of the tab the popup is waiting for (watchForTabReload).
 // The page is going or coming meanwhile, and the look that follows the
 // reload shows the tab; nothing else starts one before that.
@@ -1422,6 +1429,14 @@ function bindControls() {
   els.reloadBtn.addEventListener('click', handleReloadAction);
   // A notice shortens the list (see popup.css), so check its scrollbar again.
   new ResizeObserver(updateCustomPresetsScrollGap).observe(els.customPresetsList);
+  // The tab's loading is followed for as long as the popup is open, so that
+  // a look whose time is up knows whether the page is still loading
+  // (showTabNotAnswering).
+  api.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status && tabId === lastActiveTab?.id) {
+      lastActiveTab = { ...lastActiveTab, status: changeInfo.status };
+    }
+  });
   // Returns nothing, so the background script still answers these messages.
   api.runtime.onMessage.addListener((message, sender) => {
     handleTabReport(message, sender);
@@ -1529,7 +1544,8 @@ function releaseControlsForTab() {
 //
 // A look waits on the browser and on the page, and a page that has stopped
 // responding never answers. So after TAB_GIVE_UP_MS the look is over: the
-// popup says that the page isn't responding and offers to reload it. What
+// popup says that the page isn't responding and offers to reload it, or,
+// for a page that is still loading, says that (showTabNotAnswering). What
 // the look is told after that is not shown either, but if it is told
 // anything at all the page is answering again, and a new look is made.
 async function syncWithActiveTab() {
@@ -1556,6 +1572,8 @@ function lookAtTab() {
   // What `tabLook` was left at when the look's time was up.
   let timeUpAt = 0;
   endTabLook?.();
+  endTabWatch?.();
+  announceNotice('');
 
   return new Promise((resolve, reject) => {
     // Ended with the look, also when a newer one takes over (endTabLook).
@@ -1591,41 +1609,80 @@ function forgetTabLook() {
   tabLook++;
   endTabLook?.();
   endTabLook = null;
+  endTabWatch?.();
 }
 
 // What the popup shows when a look's time is up. `view` is what `tabLook`
 // was left at.
 //
-// A page that is still loading has not stopped responding: the scripts
-// wait for it, and reloading it would only start the loading again. So the
-// popup says that it is loading, and looks again when it has loaded. That
-// look has a time limit of its own, for a page that has loaded and then
-// doesn't answer.
+// A page that has stopped responding gets the reload panel. A page that is
+// still loading has not stopped responding: the scripts wait for it, and
+// reloading it would only start the loading again. So the popup says that
+// it is loading, and offers no reload.
+//
+// From then on the tab is watched, until something looks at it again or a
+// reload begins (endTabWatch). When it has loaded, the popup looks again;
+// that look has a time limit of its own, for a page that has loaded and
+// then doesn't answer. When it begins to load, as after a reload made in
+// the browser, the notice becomes the one for a page that is loading. The
+// browser says both as they happen, and is asked every TAB_WATCH_MS as
+// well, in case its word was missed.
 function showTabNotAnswering(view) {
   hideSpotifyPermissionPanel();
   hideYouTubePermissionPanel();
   setPowerUI(false);
   const tab = lastActiveTab;
-  if (tab?.status !== 'loading') {
-    setBlocked(true, 'notResponding');
-    return;
-  }
-  setBlocked(true, 'loadingPage');
+  let loading = null;
+  const show = (isLoading) => {
+    if (isLoading === loading) return;
+    loading = isLoading;
+    const reason = loading ? 'loadingPage' : 'notResponding';
+    setBlocked(true, reason);
+    announceNotice(BLOCKED_TEXT[reason]);
+  };
+  show(tab?.status === 'loading');
+  if (!tab) return;
 
   const lookAgain = () => {
-    api.tabs.onUpdated.removeListener(onUpdated);
     if (view === tabLook) syncWithActiveTab().catch(() => {});
   };
   const onUpdated = (tabId, changeInfo) => {
-    // Something else has looked at the tab since, or a reload has begun.
-    if (view !== tabLook) api.tabs.onUpdated.removeListener(onUpdated);
-    else if (tabId === tab.id && changeInfo.status === 'complete') lookAgain();
+    if (tabId !== tab.id || view !== tabLook) return;
+    if (changeInfo.status === 'complete') lookAgain();
+    else if (changeInfo.status === 'loading') show(true);
   };
+  let askTimer = null;
+  const ask = async () => {
+    const now = await getActiveTab().catch(() => null);
+    if (view !== tabLook) return;
+    if (now?.id === tab.id) {
+      if (now.status === 'loading') {
+        show(true);
+      } else if (loading) {
+        lookAgain();
+        return;
+      }
+    }
+    askTimer = window.setTimeout(ask, TAB_WATCH_MS);
+  };
+
   api.tabs.onUpdated.addListener(onUpdated);
-  // The tab was loading when the look began; it may have loaded since.
-  getActiveTab().then((now) => {
-    if (now?.id !== tab.id || now.status !== 'loading') lookAgain();
-  }, () => {});
+  endTabWatch = () => {
+    api.tabs.onUpdated.removeListener(onUpdated);
+    window.clearTimeout(askTimer);
+    endTabWatch = null;
+  };
+  ask();
+}
+
+// Tells a screen reader of a notice that comes while the popup is open
+// (showTabNotAnswering). The notice's own element appears together with
+// its text, which screen readers don't read out; this one is always on the
+// page, and it is its text changing that they read. It is emptied when the
+// popup looks at the tab again, so that the same notice is read again if
+// it comes back.
+function announceNotice(text) {
+  if (els.noticeAnnouncer.textContent !== text) els.noticeAnnouncer.textContent = text;
 }
 
 // What a look does. Two rules keep it right, and anything added here has to
@@ -1736,8 +1793,8 @@ async function showActiveTab(current) {
     return;
   }
 
-  // The last thing waited for. Nothing is shown before it, so that the
-  // tab's settings are shown and its controls enabled in one step.
+  // The last wait before the tab is shown. Nothing is shown before it, so
+  // that the tab's settings are shown and its controls enabled in one step.
   const remembered = state?.enabled ? null : await recallTabState(tab.id, tab.url);
   if (!current()) return;
 

@@ -2593,7 +2593,10 @@ describe('popup behavior', () => {
         tab.hold('GET_STATE');
         const { harness, timers, loaded } = await openOnLoadingPage(t, tab);
 
+        // At once, with no moment in which it offers a reload.
         timers.advance(5000);
+        assert.equal(banner(harness), LOADING);
+        assert.equal(shown(harness).panel, null);
         await settle();
         assert.equal(banner(harness), LOADING);
         assert.deepEqual(
@@ -2677,6 +2680,222 @@ describe('popup behavior', () => {
         await settle();
         assert.equal(asks(harness), 2);
         assert.equal(shown(harness).speed, '0.80');
+      });
+
+      // The popup follows the tab's loading while it is open, so when the
+      // look's time is up it knows that the page has loaded meanwhile.
+      test("says at once that the page isn't responding when it loaded during the look", async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers, loaded } = await openOnLoadingPage(t, tab);
+        timers.advance(3000);
+        await loaded();
+        await settle();
+
+        timers.advance(2000);
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).panel, NOT_RESPONDING);
+        await settle();
+        assert.equal(shown(harness).panel, NOT_RESPONDING);
+        assert.equal(asks(harness), 1);
+      });
+
+      // The browser's word that the page has loaded can be missed. The
+      // popup asks it every second while the notice is up.
+      test('finds within a second that the page has loaded, without being told', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers, activeTab } = await openOnLoadingPage(t, tab);
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+
+        // Still loading: asking changes nothing.
+        timers.advance(3000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+        assert.equal(asks(harness), 1);
+
+        tab.hold(null);
+        activeTab.status = 'complete';
+        timers.advance(999);
+        await settle();
+        assert.equal(asks(harness), 1);
+        timers.advance(1);
+        await settle();
+        assert.equal(asks(harness), 2);
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).speed, '0.80');
+      });
+
+      // A screen reader reads a notice out when the text of an element
+      // that was already on the page changes.
+      test('tells a screen reader of each notice as it comes, and again if it comes back', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers, loaded } = await openOnLoadingPage(t, tab);
+        const announcer = harness.window.document.getElementById('notice-announcer');
+        assert.equal(announcer.getAttribute('role'), 'status');
+        assert.equal(announcer.hidden, false);
+        assert.equal(announcer.textContent, '');
+
+        timers.advance(5000);
+        await settle();
+        assert.equal(announcer.textContent, LOADING);
+
+        // The page has loaded; the popup asks again, and that look's time
+        // runs out too.
+        await loaded();
+        await settle();
+        assert.equal(announcer.textContent, '');
+        timers.advance(5000);
+        await settle();
+        assert.equal(announcer.textContent, NOT_RESPONDING);
+
+        tab.letGo();
+        await settle();
+        assert.equal(announcer.textContent, '');
+        assert.equal(shown(harness).usable, true);
+      });
+
+      // The page had loaded when the look began, and began to load again
+      // while the look waited: a reload made in the browser, or a link.
+      test('says that it is loading when it began to load during the look', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const activeTab = { id: 9, url: 'https://www.youtube.com/watch?v=example', status: 'complete' };
+        const { harness, timers } = await open(t, tab, { activeTab });
+        activeTab.status = 'loading';
+        await harness.events.tabUpdated.emit(9, { status: 'loading' }, { ...activeTab });
+
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+        assert.equal(shown(harness).panel, null);
+        assert.equal(shown(harness).usable, false);
+
+        tab.hold(null);
+        activeTab.status = 'complete';
+        await harness.events.tabUpdated.emit(9, { status: 'complete' }, { ...activeTab });
+        await settle();
+        assert.equal(asks(harness), 2);
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).usable, true);
+        assert.equal(shown(harness).speed, '0.80');
+      });
+
+      // The page is reloaded in the browser, not with the popup's button.
+      test("follows a page that wasn't responding when it loads again", async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const activeTab = { id: 9, url: 'https://www.youtube.com/watch?v=example', status: 'complete' };
+        const { harness, timers } = await open(t, tab, { activeTab });
+        timers.advance(5000);
+        await settle();
+        assert.equal(shown(harness).panel, NOT_RESPONDING);
+
+        activeTab.status = 'loading';
+        await harness.events.tabUpdated.emit(9, { status: 'loading' }, { ...activeTab });
+        await settle();
+        assert.equal(banner(harness), LOADING);
+        assert.equal(shown(harness).panel, null);
+        assert.equal(asks(harness), 1);
+
+        // Another tab's loading is not this one's.
+        await harness.events.tabUpdated.emit(4, { status: 'complete' }, { id: 4 });
+        await settle();
+        assert.equal(asks(harness), 1);
+
+        tab.hold(null);
+        activeTab.status = 'complete';
+        await harness.events.tabUpdated.emit(9, { status: 'complete' }, { ...activeTab });
+        await settle();
+        assert.equal(asks(harness), 2);
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).speed, '0.80');
+      });
+
+      // The tab is watched only from a look's time being up until
+      // something looks at it again.
+      test('stops watching the tab when something looks at it again', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        const { harness, timers } = await openOnLoadingPage(t, tab);
+        const watching = () => harness.events.tabUpdated.listeners.length;
+        const notWatching = watching();
+        const report = () => dispatchRuntimeMessage(
+          harness.events.runtimeMessage, { type: 'SHORTCUT_APPLIED', tabId: 9 }, { id: 'example' }
+        );
+
+        for (let round = 1; round <= 3; round++) {
+          tab.hold('GET_STATE');
+          await report();
+          await settle();
+          timers.advance(5000);
+          await settle();
+          assert.equal(banner(harness), LOADING, `round ${round}`);
+          assert.equal(watching(), notWatching + 1, `round ${round}`);
+
+          // A shortcut the page answers: the look after it shows the tab.
+          tab.hold(null);
+          await report();
+          await settle();
+          assert.equal(banner(harness), null, `round ${round}`);
+          assert.equal(watching(), notWatching, `round ${round}`);
+          tab.letGo();
+          await settle();
+
+          // The browser is no longer asked about the tab either.
+          const asked = () => harness.calls.order.filter((call) => call === 'tabs.query').length;
+          const askedBefore = asked();
+          timers.advance(3000);
+          await settle();
+          assert.equal(asked(), askedBefore, `round ${round}`);
+        }
+      });
+
+      // The page begins to load again, and the browser's word of it is
+      // missed.
+      test('finds within a second that a page that was not responding has begun to load', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const activeTab = { id: 9, url: 'https://www.youtube.com/watch?v=example', status: 'complete' };
+        const { harness, timers } = await open(t, tab, { activeTab });
+        timers.advance(5000);
+        await settle();
+        assert.equal(shown(harness).panel, NOT_RESPONDING);
+
+        activeTab.status = 'loading';
+        timers.advance(1000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+        assert.equal(shown(harness).panel, null);
+        assert.equal(asks(harness), 1);
+      });
+
+      test('stops watching the tab when a reload begins', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers } = await open(t, tab, {
+          beforeLoad(window) {
+            // A reload that takes its time: it is still under way at the end.
+            window.chrome.tabs.reload = async () => {};
+          }
+        });
+        const watching = () => harness.events.tabUpdated.listeners.length;
+        const notWatching = watching();
+        timers.advance(5000);
+        await settle();
+        assert.equal(shown(harness).panel, NOT_RESPONDING);
+        assert.equal(watching(), notWatching + 1);
+
+        harness.window.document.getElementById('reload-btn').click();
+        await settle();
+        assert.equal(shown(harness).status, 'Reloading the page…');
+        // One listener still: the reload's own, which waits for the page.
+        assert.equal(watching(), notWatching + 1);
+        timers.advance(15_000);
+        await settle();
+        assert.equal(watching(), notWatching);
       });
 
       test("says the page isn't responding when it had loaded before the look began", async (t) => {

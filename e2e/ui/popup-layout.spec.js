@@ -279,9 +279,15 @@ const STATES = [
       await expect(page.locator('#reload-panel')).toBeHidden();
     },
     controls: BASIC_CONTROLS,
+    // The page has loaded: the popup asks it again, holding the controls,
+    // and shows the tab when the answer comes.
     then: async (page) => {
       await expect(page.locator('#power-toggle')).toBeDisabled();
+      expect(await page.locator('[inert]').count()).toBe(0);
+      await page.evaluate(() => window.tabLoaded());
+      await expect(page.locator('[inert]')).toHaveCount(4);
       await page.evaluate(() => window.letTabAnswer());
+      await expect(page.locator('[inert]')).toHaveCount(0);
       await expect(page.locator('#blocked-banner')).toBeHidden();
       await expect(page.locator('#power-toggle')).toBeChecked();
       await expect(page.locator('#power-toggle')).toBeEnabled();
