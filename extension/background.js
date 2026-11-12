@@ -19,11 +19,11 @@ const ICONS = {
 const RESTORABLE_URL = /^https?:\/\//i;
 const TAB_STATE_PREFIX = 'tabState:';
 const tabApplyQueues = new Map();
-// How many shortcuts have had a turn with each tab since this script
-// started, whatever they did there. An open popup shows a tab as it was
-// after a certain one of them, and names that one with each change it
-// sends (shortcutMark); a change made on top of settings from before the
-// tab's last shortcut is left out (APPLY_TO_TAB).
+// How many shortcuts have changed each tab since this script started. An
+// open popup shows a tab as it was after a certain one of them, and names
+// that one with each change it sends (shortcutMark); a change made on top
+// of settings from before the tab's last shortcut is left out
+// (APPLY_TO_TAB).
 //
 // Nothing of this is stored. The browser stops this script when it has had
 // nothing to do for a while, or has been kept busy for minutes, and starts
@@ -316,53 +316,45 @@ async function getActiveTab() {
 }
 
 api.commands.onCommand.addListener(async (command) => {
-  if (!COMMAND_PRESETS[command] && command !== 'toggle-effect') return;
   const tab = await getActiveTab();
   if (tab?.id === undefined) return;
 
-  // The tab's count of shortcuts is raised in the same step as the shortcut
-  // is put in the tab's queue. So whatever is asked for the tab after this
-  // comes after the shortcut, and with the new mark. It is raised whatever
-  // the shortcut goes on to do: what that is isn't known until its turn.
-  shortcutCounts.set(tab.id, (shortcutCounts.get(tab.id) ?? 0) + 1);
-  try {
-    await queueForTab(tab.id, () => runShortcut(tab, command));
-  } finally {
-    // A shortcut works while the popup is open, and the popup shows the tab
-    // as it was when it last looked, so it is told to look again
-    // (handleShortcutReport in popup.js). Nothing hears this when no popup
-    // is open. Also a shortcut that found nothing it could do is reported:
-    // it has been counted, and a popup that didn't read the new count would
-    // have its next change left out.
-    api.runtime.sendMessage({ type: 'SHORTCUT_APPLIED', tabId: tab.id }).catch(() => {});
-  }
-});
-
-// Does what a shortcut asks for, in the shortcut's turn. The tab is read
-// here and not before, so that what the shortcut does follows from the tab
-// as the changes before it left it: a press of the same shortcut a moment
-// earlier, or a change from the popup.
-async function runShortcut(tab, command) {
   const state = await getTabState(tab.id);
   if (state?.blocked) return;
-  // The page the tab is on now, which is the one that was just read: it
-  // may have gone to another page while the shortcut waited for its turn.
-  const url = (await api.tabs.get(tab.id).catch(() => null))?.url ?? tab.url;
 
   const preset = COMMAND_PRESETS[command];
   if (preset) {
     const isActive = Boolean(state?.enabled && settingsMatch(state.settings, preset));
-    await applyToTab(tab.id, url, preset, !isActive);
+    await applyShortcut(tab, preset, !isActive);
     return;
   }
+
+  if (command !== 'toggle-effect') return;
 
   if (state?.enabled) {
-    await applyToTab(tab.id, url, state.settings, false);
+    await applyShortcut(tab, state.settings, false);
     return;
   }
 
-  const remembered = await recallTabState(tab.id, url);
-  await applyToTab(tab.id, url, remembered?.settings ?? PRESETS.slowed, true);
+  const remembered = await recallTabState(tab.id, tab.url);
+  await applyShortcut(tab, remembered?.settings ?? PRESETS.slowed, true);
+});
+
+// Does what a shortcut asks for. A shortcut works while the popup is open,
+// and the popup shows the tab as it was when it last looked, so it is told
+// to look again (handleShortcutReport in popup.js). Nothing hears this when
+// no popup is open.
+//
+// The tab's count of shortcuts is raised in the same step as the change is
+// put in the tab's queue. So whatever is asked for the tab after this comes
+// after the shortcut's change, and with the new mark.
+async function applyShortcut(tab, settings, enabled) {
+  shortcutCounts.set(tab.id, (shortcutCounts.get(tab.id) ?? 0) + 1);
+  try {
+    await queueTabApply(tab.id, tab.url, settings, enabled);
+  } finally {
+    api.runtime.sendMessage({ type: 'SHORTCUT_APPLIED', tabId: tab.id }).catch(() => {});
+  }
 }
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {

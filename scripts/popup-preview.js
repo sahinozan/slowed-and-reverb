@@ -88,14 +88,12 @@ function startServer(extraRoutes = new Map()) {
 // - `answers: false`: nothing in the page answers GET_STATE.
 // - `answers: 'held'`: the page's answer to GET_STATE waits until the test
 //   calls `window.letTabAnswer()`.
-// - `loading: true`: the tab is still loading its page.
 //
-// For what happens after the popup has opened, the page gets four functions:
+// For what happens after the popup has opened, the page gets three functions:
 // `window.holdTabAnswers()` holds the answers to GET_STATE from then on, until
 // `window.letTabAnswer()`; `window.setTab(fields)` changes what the tab
-// answers; `window.tellPopup(message)` gives the popup a message as the
-// extension's background script would send it; and `window.tabLoaded()` has
-// the tab finish loading its page.
+// answers; and `window.tellPopup(message)` gives the popup a message as the
+// extension's background script would send it.
 // - `permissionRequest`: 'granted', 'denied' or 'error'.
 // - `reload: 'error'`: reloading the tab fails.
 // - `firefox: true`: the manifest has Firefox's settings, as the Firefox build's does.
@@ -104,10 +102,10 @@ function installPopupBrowserMock({
   theme, settings, customPresets = [],
   url = 'https://www.youtube.com/watch?v=store-preview', siteAccess = true,
   tab = {}, injects = true, answers = true, permissionRequest = 'granted',
-  reload = 'complete', firefox = false, storage = {}, loading = false
+  reload = 'complete', firefox = false, storage = {}
 }) {
   const localData = { uiTheme: theme, customPresets, ...settings, ...storage };
-  const activeTab = { id: 9, url, status: loading ? 'loading' : 'complete' };
+  const activeTab = { id: 9, url };
   const tabState = { enabled: true, settings, blocked: false, live: false, ...tab };
   const tabStatus = () => ({
     pending: Boolean(tabState.pending),
@@ -126,10 +124,6 @@ function installPopupBrowserMock({
   window.setTab = (fields) => Object.assign(tabState, fields);
   window.tellPopup = (message) => {
     for (const listener of messageListeners) listener(message, { id: 'store-preview-extension' });
-  };
-  window.tabLoaded = () => {
-    activeTab.status = 'complete';
-    for (const listener of [...updateListeners]) listener(activeTab.id, { status: 'complete' });
   };
   const manifest = firefox ? { browser_specific_settings: { gecko: { id: 'preview@example.invalid' } } } : {};
 
