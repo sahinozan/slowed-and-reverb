@@ -2576,7 +2576,8 @@ describe('popup behavior', () => {
       const announcer = harness.window.document.getElementById('notice-announcer');
       assert.equal(announcer.getAttribute('role'), 'status');
       assert.equal(announcer.hidden, false);
-      assert.equal(announcer.closest('[inert]'), null);
+      // Compared this way so that a failure doesn't print the page.
+      assert.ok(announcer.closest('[inert]') === null, 'the announcer is inside a held part');
       assert.equal(announcer.textContent, '');
 
       timers.advance(5000);
@@ -3127,7 +3128,7 @@ describe('popup behavior', () => {
 
       await harness.events.command.emit('toggle-nightcore');
       await settle();
-      assert.equal(document.querySelector('.custom-preset-name-input'), null);
+      assert.ok(document.querySelector('.custom-preset-name-input') === null, 'the edit is still open');
       assert.equal(shown(harness).bar, 'Current Preset: Nightcore');
       assert.equal(harness.local.data.customPresets[0].speed, 0.97);
     });
