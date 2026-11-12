@@ -412,8 +412,9 @@ describe('background service worker', () => {
       assert.deepEqual(heard, [{ message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 1 }]);
     });
 
-    // The popup would look at the tab again and find what it shows already.
-    test('says nothing for a shortcut that found nothing it could do', async () => {
+    // It has been counted, and a popup that didn't read the new count
+    // would have its next change left out.
+    test('says so too for a shortcut that found nothing it could do', async () => {
       const { harness, heard } = listen({
         onTabMessage(_tabId, message) {
           return message.type === 'GET_STATE' ? { blocked: true, blockReason: 'drm' } : null;
@@ -421,8 +422,7 @@ describe('background service worker', () => {
       });
 
       await harness.events.command.emit('toggle-nightcore');
-      assert.deepEqual(heard, []);
-      assert.equal(updates(harness.calls).length, 0);
+      assert.deepEqual(heard, [{ message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 0 }]);
     });
 
     test('says nothing for a shortcut that is not the extension\'s, or with no tab to change', async () => {

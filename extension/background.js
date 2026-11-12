@@ -325,20 +325,16 @@ api.commands.onCommand.addListener(async (command) => {
   // comes after the shortcut, and with the new mark. It is raised whatever
   // the shortcut goes on to do: what that is isn't known until its turn.
   shortcutCounts.set(tab.id, (shortcutCounts.get(tab.id) ?? 0) + 1);
-  // Whether the shortcut did anything to the tab. Taken as yes if it fails.
-  let acted = true;
   try {
-    acted = await queueForTab(tab.id, () => runShortcut(tab, command));
+    await queueForTab(tab.id, () => runShortcut(tab, command));
   } finally {
     // A shortcut works while the popup is open, and the popup shows the tab
     // as it was when it last looked, so it is told to look again
     // (handleShortcutReport in popup.js). Nothing hears this when no popup
-    // is open. A shortcut that found nothing it could do isn't reported: the
-    // popup shows what it showed, and learns of the new count when it next
-    // looks at the tab or has a change left out.
-    if (acted) {
-      api.runtime.sendMessage({ type: 'SHORTCUT_APPLIED', tabId: tab.id }).catch(() => {});
-    }
+    // is open. Also a shortcut that found nothing it could do is reported:
+    // it has been counted, and a popup that didn't read the new count would
+    // have its next change left out.
+    api.runtime.sendMessage({ type: 'SHORTCUT_APPLIED', tabId: tab.id }).catch(() => {});
   }
 });
 
@@ -348,7 +344,7 @@ api.commands.onCommand.addListener(async (command) => {
 // earlier, or a change from the popup.
 async function runShortcut(tab, command) {
   const state = await getTabState(tab.id);
-  if (state?.blocked) return false;
+  if (state?.blocked) return;
   // The page the tab is on now, which is the one that was just read: it
   // may have gone to another page while the shortcut waited for its turn.
   const url = (await api.tabs.get(tab.id).catch(() => null))?.url ?? tab.url;
@@ -357,17 +353,16 @@ async function runShortcut(tab, command) {
   if (preset) {
     const isActive = Boolean(state?.enabled && settingsMatch(state.settings, preset));
     await applyToTab(tab.id, url, preset, !isActive);
-    return true;
+    return;
   }
 
   if (state?.enabled) {
     await applyToTab(tab.id, url, state.settings, false);
-    return true;
+    return;
   }
 
   const remembered = await recallTabState(tab.id, url);
   await applyToTab(tab.id, url, remembered?.settings ?? PRESETS.slowed, true);
-  return true;
 }
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {

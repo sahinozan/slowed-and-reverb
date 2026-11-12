@@ -340,9 +340,6 @@ const TAB_SLOW_MS = 300;
 // answer (ENGINE_TIMEOUT_MS in content.js). A page that is still loading
 // can take longer, since the scripts wait for it.
 const TAB_GIVE_UP_MS = 5000;
-// How often the browser is asked about a tab the popup has stopped waiting
-// for (showTabNotAnswering).
-const TAB_WATCH_MS = 1000;
 // What a held part's controls report is dropped before their own listeners
 // hear it. `inert` already keeps new clicks and keys away from them, but not
 // what was under way when the hold began: Chromium lets a slider that is
@@ -1433,8 +1430,13 @@ function bindControls() {
   // a look whose time is up knows whether the page is still loading
   // (showTabNotAnswering).
   api.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status && tabId === lastActiveTab?.id) {
-      lastActiveTab = { ...lastActiveTab, status: changeInfo.status };
+    if (!changeInfo.status || tabId !== lastActiveTab?.id) return;
+    lastActiveTab = { ...lastActiveTab, status: changeInfo.status };
+    // The tab has begun to load while a look is under way. What the look
+    // is told may come from the page that is going, so it starts over, and
+    // then waits for the page that is coming.
+    if (changeInfo.status === 'loading' && controlsHeld && tabLook > 0 && tabReloads === 0) {
+      syncWithActiveTab().catch(() => {});
     }
   });
   // Returns nothing, so the background script still answers these messages.
@@ -1621,12 +1623,11 @@ function forgetTabLook() {
 // it is loading, and offers no reload.
 //
 // From then on the tab is watched, until something looks at it again or a
-// reload begins (endTabWatch). When it has loaded, the popup looks again;
-// that look has a time limit of its own, for a page that has loaded and
-// then doesn't answer. When it begins to load, as after a reload made in
-// the browser, the notice becomes the one for a page that is loading. The
-// browser says both as they happen, and is asked every TAB_WATCH_MS as
-// well, in case its word was missed.
+// reload begins (endTabWatch). When the browser says that it has loaded,
+// the popup looks again; that look has a time limit of its own, for a page
+// that has loaded and then doesn't answer. When it says that the tab has
+// begun to load, as after a reload made in the browser, the notice becomes
+// the one for a page that is loading.
 function showTabNotAnswering(view) {
   hideSpotifyPermissionPanel();
   hideYouTubePermissionPanel();
@@ -1643,36 +1644,16 @@ function showTabNotAnswering(view) {
   show(tab?.status === 'loading');
   if (!tab) return;
 
-  const lookAgain = () => {
-    if (view === tabLook) syncWithActiveTab().catch(() => {});
-  };
   const onUpdated = (tabId, changeInfo) => {
     if (tabId !== tab.id || view !== tabLook) return;
-    if (changeInfo.status === 'complete') lookAgain();
+    if (changeInfo.status === 'complete') syncWithActiveTab().catch(() => {});
     else if (changeInfo.status === 'loading') show(true);
   };
-  let askTimer = null;
-  const ask = async () => {
-    const now = await getActiveTab().catch(() => null);
-    if (view !== tabLook) return;
-    if (now?.id === tab.id) {
-      if (now.status === 'loading') {
-        show(true);
-      } else if (loading) {
-        lookAgain();
-        return;
-      }
-    }
-    askTimer = window.setTimeout(ask, TAB_WATCH_MS);
-  };
-
   api.tabs.onUpdated.addListener(onUpdated);
   endTabWatch = () => {
     api.tabs.onUpdated.removeListener(onUpdated);
-    window.clearTimeout(askTimer);
     endTabWatch = null;
   };
-  ask();
 }
 
 // Tells a screen reader of a notice that comes while the popup is open
@@ -1847,7 +1828,21 @@ function handleShortcutReport(message, sender) {
   // are about to be the shortcut's, so the edit ends, as it does when
   // another preset is chosen.
   if (activePresetId) setActivePreset(null);
-  syncWithActiveTab().catch(() => {});
+
+  // A look empties the lines under the panels' buttons, such as "You can
+  // allow it any time.", which is right for a look that follows what a
+  // button did. This one follows a shortcut: a line still stands if the
+  // look ends on its panel again. Not while a look is already under way,
+  // whose own line would be one of progress.
+  const lines = controlsHeld
+    ? []
+    : [els.spotifyPermissionStatus, els.youtubePermissionStatus, els.reloadStatus]
+      .map((line) => [line, line.textContent]);
+  syncWithActiveTab().catch(() => {}).then(() => {
+    for (const [line, text] of lines) {
+      if (text && !line.textContent && !line.closest('[hidden]')) line.textContent = text;
+    }
+  });
 }
 
 // The rating reminder shows once, after the panel has been opened with the

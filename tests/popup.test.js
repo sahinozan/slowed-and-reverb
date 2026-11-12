@@ -2636,28 +2636,6 @@ describe('popup behavior', () => {
         assert.equal(shown(harness).speed, '0.80');
       });
 
-      // The page was loading when the look began and has loaded since,
-      // with nothing to say so. The popup looks again, and that look has
-      // five seconds of its own.
-      test("says the page isn't responding when it has loaded and still doesn't answer", async (t) => {
-        const tab = fakeTab({ enabled: true, settings: SLOWED });
-        tab.hold('GET_STATE');
-        const { harness, timers, activeTab } = await openOnLoadingPage(t, tab);
-        activeTab.status = 'complete';
-
-        timers.advance(5000);
-        await settle();
-        assert.equal(asks(harness), 2);
-        assert.equal(shown(harness).panel, null);
-        assert.equal(shown(harness).inert, 4);
-
-        timers.advance(5000);
-        await settle();
-        assert.equal(banner(harness), null);
-        assert.equal(shown(harness).panel, NOT_RESPONDING);
-        assert.equal(shown(harness).inert, 0);
-      });
-
       // Something else has looked at the tab since the notice; the page's
       // having loaded then starts nothing more.
       test('leaves it to a newer look when the page has loaded', async (t) => {
@@ -2700,37 +2678,10 @@ describe('popup behavior', () => {
         assert.equal(asks(harness), 1);
       });
 
-      // The browser's word that the page has loaded can be missed. The
-      // popup asks it every second while the notice is up.
-      test('finds within a second that the page has loaded, without being told', async (t) => {
-        const tab = fakeTab({ enabled: true, settings: SLOWED });
-        tab.hold('GET_STATE');
-        const { harness, timers, activeTab } = await openOnLoadingPage(t, tab);
-        timers.advance(5000);
-        await settle();
-        assert.equal(banner(harness), LOADING);
-
-        // Still loading: asking changes nothing.
-        timers.advance(3000);
-        await settle();
-        assert.equal(banner(harness), LOADING);
-        assert.equal(asks(harness), 1);
-
-        tab.hold(null);
-        activeTab.status = 'complete';
-        timers.advance(999);
-        await settle();
-        assert.equal(asks(harness), 1);
-        timers.advance(1);
-        await settle();
-        assert.equal(asks(harness), 2);
-        assert.equal(banner(harness), null);
-        assert.equal(shown(harness).speed, '0.80');
-      });
-
       // A screen reader reads a notice out when the text of an element
-      // that was already on the page changes.
-      test('tells a screen reader of each notice as it comes, and again if it comes back', async (t) => {
+      // that was already on the page changes. Whether one does is not
+      // checked here, only that the text changes with each notice.
+      test("puts each notice's text in the element a screen reader follows, and empties it in between", async (t) => {
         const tab = fakeTab({ enabled: true, settings: SLOWED });
         tab.hold('GET_STATE');
         const { harness, timers, loaded } = await openOnLoadingPage(t, tab);
@@ -2765,10 +2716,19 @@ describe('popup behavior', () => {
         tab.hold('GET_STATE');
         const activeTab = { id: 9, url: 'https://www.youtube.com/watch?v=example', status: 'complete' };
         const { harness, timers } = await open(t, tab, { activeTab });
+        timers.advance(2000);
         activeTab.status = 'loading';
         await harness.events.tabUpdated.emit(9, { status: 'loading' }, { ...activeTab });
+        await settle();
+        // The look has started over, for the page that is coming, with five
+        // seconds of its own.
+        assert.equal(asks(harness), 2);
+        timers.advance(4999);
+        await settle();
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).inert, 4);
 
-        timers.advance(5000);
+        timers.advance(1);
         await settle();
         assert.equal(banner(harness), LOADING);
         assert.equal(shown(harness).panel, null);
@@ -2778,10 +2738,53 @@ describe('popup behavior', () => {
         activeTab.status = 'complete';
         await harness.events.tabUpdated.emit(9, { status: 'complete' }, { ...activeTab });
         await settle();
-        assert.equal(asks(harness), 2);
+        assert.equal(asks(harness), 3);
         assert.equal(banner(harness), null);
         assert.equal(shown(harness).usable, true);
         assert.equal(shown(harness).speed, '0.80');
+      });
+
+      // The page has loaded, the popup is asking it, and the tab begins to
+      // load another page. The answer on its way is the old page's.
+      test("doesn't show the answer of a page that the tab has since left", async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers, activeTab, loaded } = await openOnLoadingPage(t, tab);
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+
+        await loaded();
+        await settle();
+        assert.equal(asks(harness), 2);
+
+        // The tab goes on to another page, where the effect is on at 1.20x.
+        tab.state.settings = { ...DEFAULT_SETTINGS, speed: 1.2 };
+        activeTab.status = 'loading';
+        await harness.events.tabUpdated.emit(9, { status: 'loading' }, { ...activeTab });
+        await settle();
+        assert.equal(asks(harness), 3);
+
+        // The old page's answers: on, at 0.80x.
+        tab.letGo(2);
+        await settle();
+        assert.equal(shown(harness).usable, false);
+        assert.equal(shown(harness).on, false);
+        assert.equal(shown(harness).speed, '1.00');
+        assert.equal(shown(harness).inert, 4);
+
+        // The popup is still following the tab: it says that it is loading,
+        // and shows the new page when that has loaded and answers.
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+        tab.hold(null);
+        await loaded();
+        await settle();
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).usable, true);
+        assert.equal(shown(harness).on, true);
+        assert.equal(shown(harness).speed, '1.20');
       });
 
       // The page is reloaded in the browser, not with the popup's button.
@@ -2843,33 +2846,7 @@ describe('popup behavior', () => {
           assert.equal(watching(), notWatching, `round ${round}`);
           tab.letGo();
           await settle();
-
-          // The browser is no longer asked about the tab either.
-          const asked = () => harness.calls.order.filter((call) => call === 'tabs.query').length;
-          const askedBefore = asked();
-          timers.advance(3000);
-          await settle();
-          assert.equal(asked(), askedBefore, `round ${round}`);
         }
-      });
-
-      // The page begins to load again, and the browser's word of it is
-      // missed.
-      test('finds within a second that a page that was not responding has begun to load', async (t) => {
-        const tab = fakeTab({ enabled: true, settings: SLOWED });
-        tab.hold('GET_STATE');
-        const activeTab = { id: 9, url: 'https://www.youtube.com/watch?v=example', status: 'complete' };
-        const { harness, timers } = await open(t, tab, { activeTab });
-        timers.advance(5000);
-        await settle();
-        assert.equal(shown(harness).panel, NOT_RESPONDING);
-
-        activeTab.status = 'loading';
-        timers.advance(1000);
-        await settle();
-        assert.equal(banner(harness), LOADING);
-        assert.equal(shown(harness).panel, null);
-        assert.equal(asks(harness), 1);
       });
 
       test('stops watching the tab when a reload begins', async (t) => {
@@ -3006,6 +2983,109 @@ describe('popup behavior', () => {
       assert.equal(tab.state.settings.speed, 1.21);
       assert.equal(tab.state.settings.reverb, 0);
       assert.equal(shown(harness).bar, 'Current Preset: Custom');
+    });
+
+    // The shortcut found the page not answering and did nothing, but it has
+    // been counted. The popup reads the new count, so its next change is
+    // taken.
+    test('takes the next change after a shortcut that could do nothing', async (t) => {
+      const tab = fakeTab({ enabled: true, settings: SLOWED });
+      let failNext = false;
+      const { harness } = await open(t, tab, {
+        onTabMessage(tabId, message) {
+          if (failNext && message.type === 'GET_STATE') {
+            failNext = false;
+            throw new Error('The page did not answer');
+          }
+          return tab.onTabMessage(tabId, message);
+        }
+      });
+      const document = harness.window.document;
+      const asksBefore = asks(harness);
+
+      failNext = true;
+      await harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.equal(audioUpdates(harness).length, 0);
+      // The shortcut's question, and the popup's after it.
+      assert.equal(asks(harness), asksBefore + 2);
+      assert.equal(shown(harness).speed, '0.80');
+
+      document.getElementById('speed-up-btn').click();
+      await settle();
+      assert.equal(tab.state.settings.speed, 0.81);
+      assert.equal(shown(harness).speed, '0.81');
+    });
+
+    // A look empties the line under a panel's button. After a shortcut that
+    // could do nothing here, the panel is the same and its line still stands.
+    test('keeps the line under a panel when a shortcut changes nothing', async (t) => {
+      const tab = fakeTab({ enabled: false });
+      const { harness } = await open(t, tab, {
+        activeTab: { id: 9, url: 'https://open.spotify.com/track/example' },
+        permissionRequestResult: false
+      });
+      const document = harness.window.document;
+      const line = document.getElementById('spotify-permission-status');
+      document.getElementById('spotify-permission-btn').click();
+      await settle();
+      assert.equal(line.textContent, 'You can allow it any time.');
+
+      await harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.equal(document.getElementById('spotify-permission-panel').hidden, false);
+      assert.equal(line.textContent, 'You can allow it any time.');
+      assert.equal(inert(harness), 0);
+    });
+
+    // The line belongs to its panel. When the shortcut did change the tab
+    // and the panel is gone, the line goes with it.
+    test("doesn't keep the line when the look after a shortcut ends on something else", async (t) => {
+      const tab = fakeTab({ enabled: false, blocked: true, blockReason: 'unsupported' });
+      const { harness } = await open(t, tab, {
+        beforeLoad(window) {
+          window.chrome.tabs.reload = async () => {
+            throw new Error('The reload failed');
+          };
+        }
+      });
+      const document = harness.window.document;
+      const line = document.getElementById('reload-status');
+      document.getElementById('reload-btn').click();
+      await settle();
+      assert.equal(line.textContent, "That didn't work. Reload the page yourself and try again.");
+
+      // The page answers again, and the shortcut turns the effect on.
+      tab.state.blocked = false;
+      await harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.equal(document.getElementById('reload-panel').hidden, true);
+      assert.equal(line.textContent, '');
+      assert.equal(shown(harness).speed, '1.20');
+    });
+
+    // But a line of progress is not kept: the look after a reload is under
+    // way when the shortcut's report comes, and "Reloading the page…" must
+    // not come back when that look ends on the same panel.
+    test("doesn't bring back a line of progress when a look was already under way", async (t) => {
+      const tab = fakeTab({ enabled: false, blocked: true, blockReason: 'unsupported' });
+      const { harness } = await open(t, tab);
+      const document = harness.window.document;
+      const line = document.getElementById('reload-status');
+
+      tab.hold('GET_STATE');
+      document.getElementById('reload-btn').click();
+      await settle();
+      assert.equal(line.textContent, 'Reloading the page…');
+      assert.equal(inert(harness), 4);
+
+      await report(harness);
+      await settle();
+      tab.letGo();
+      await settle();
+      assert.equal(document.getElementById('reload-panel').hidden, false);
+      assert.equal(line.textContent, '');
+      assert.equal(inert(harness), 0);
     });
 
     // Reports are left alone while the popup waits for a reload, and only
