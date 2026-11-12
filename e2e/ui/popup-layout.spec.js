@@ -250,6 +250,26 @@ const STATES = [
     controls: [...BASIC_CONTROLS, '#reload-btn']
   },
   {
+    // The page's answer is held back. After five seconds the popup stops
+    // waiting for it, which is when its first paint ends here.
+    title: 'a page that doesn’t answer',
+    mock: { settings: SLOWED, answers: 'held' },
+    shows: (page) => expectPanel(page, '#reload-panel', {
+      text: "This page isn't responding. Reloading it usually fixes this.",
+      button: 'Reload page'
+    }),
+    controls: [...BASIC_CONTROLS, '#reload-btn'],
+    // The answer comes after all, and the popup shows what the tab plays with.
+    then: async (page) => {
+      await expect(page.locator('#power-toggle')).toBeDisabled();
+      await page.evaluate(() => window.letTabAnswer());
+      await expect(page.locator('#reload-panel')).toBeHidden();
+      await expect(page.locator('#power-toggle')).toBeChecked();
+      await expect(page.locator('#power-toggle')).toBeEnabled();
+      await expect(page.locator('#current-preset-label')).toHaveText('Current Preset: Slowed + Reverb');
+    }
+  },
+  {
     // The other state 46512dc fixed: a status line under a panel's button.
     title: 'a reload that failed',
     mock: { settings: SLOWED, injects: false, reload: 'error' },
@@ -628,6 +648,19 @@ test.describe('speed controls', () => {
 // it go.
 test.describe("the controls before the tab's first answer", () => {
   const HELD = { settings: SLOWED, answers: 'held' };
+  // These tests hold the tab's answer for as long as their steps take, which
+  // on a slow machine could be longer than the five seconds the popup waits
+  // for it. So the popup they open waits an hour. The five seconds are
+  // checked by the state "a page that doesn't answer" above and by the unit
+  // tests.
+  const PATIENT = [/const TAB_GIVE_UP_MS = 5000;/, 'const TAB_GIVE_UP_MS = 3_600_000;'];
+  let patient;
+  test.beforeAll(async () => {
+    patient = await serveWith({ 'popup.js': patched('popup.js', [PATIENT]) });
+  });
+  test.afterAll(async () => {
+    await patient?.close();
+  });
   const shown = (page) => page.evaluate(() => ({
     speed: document.getElementById('speed-input').value,
     reverb: document.getElementById('reverb-slider').value,
@@ -682,7 +715,7 @@ test.describe("the controls before the tab's first answer", () => {
   };
 
   test('take no click and no key, and work once it has come', async ({ browser, browserName }) => {
-    await withHeldPopup(browser, browserName, server.baseUrl, async (page) => {
+    await withHeldPopup(browser, browserName, patient.baseUrl, async (page) => {
       await takesNothingWhileHeld(page);
 
       // The themes are not the effect's: they work meanwhile.
@@ -719,7 +752,7 @@ test.describe("the controls before the tab's first answer", () => {
   };
 
   test('drop a click that reaches a control all the same', async ({ browser, browserName }) => {
-    await withHeldPopup(browser, browserName, server.baseUrl, async (page) => {
+    await withHeldPopup(browser, browserName, patient.baseUrl, async (page) => {
       await dropsAClickThatReaches(page);
       await page.evaluate(() => window.letTabAnswer());
       await page.waitForFunction(() => !document.body.classList.contains('booting'));
@@ -783,7 +816,7 @@ test.describe("the controls before the tab's first answer", () => {
   }
 
   test('drop what a slider dragged since before the hold reports', async ({ browser, browserName }) => {
-    await withDragBeforeTheHold(browser, browserName, server.baseUrl, async (page) => {
+    await withDragBeforeTheHold(browser, browserName, patient.baseUrl, async (page) => {
       expect(await speedTaken(page), 'during a drag that began before the hold').toBe('0.80x');
       await page.mouse.up();
       expect(await speedTaken(page), 'after a drag that began before the hold').toBe('0.80x');
@@ -810,11 +843,100 @@ test.describe("the controls before the tab's first answer", () => {
     }
   });
 
+  // After a shortcut the popup looks at the tab again, and until the answer
+  // it still shows the settings from before the shortcut. The controls are
+  // held for that look too. `inert` takes the keyboard from the control that
+  // had it, and it gets it back.
+  test('are held again while the popup looks at the tab after a shortcut', async ({ browser, browserName }) => {
+    const { context, page, errors } = await openPopup(browser, browserName, patient.baseUrl, { settings: SLOWED });
+    try {
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      expect(await shown(page)).toEqual({ ...AS_OPENED, on: true });
+      await page.locator('#reverb-slider').focus();
+
+      // What a shortcut for Nightcore leaves in the tab, and the background
+      // script's word of it. The tab's answer is held.
+      await page.evaluate(() => {
+        window.setTab({ settings: { speed: 1.2, reverb: 0 } });
+        window.holdTabAnswers();
+        window.tellPopup({ type: 'SHORTCUT_APPLIED', tabId: 9 });
+      });
+      expect(await page.locator('[inert]').count()).toBe(HELD_PARTS.length);
+      for (const selector of PRESSED.filter((pressed) => !pressed.includes('switch'))) {
+        await clickAt(page, selector);
+        expect(await shown(page), `after a click on ${selector}`).toEqual({ ...AS_OPENED, on: true });
+      }
+      expect(await page.evaluate(() => document.activeElement.id)).not.toBe('reverb-slider');
+      for (const part of HELD_PARTS) {
+        await expect.poll(() => opacity(page, part), part).toBe('0.4');
+      }
+
+      await page.evaluate(() => window.letTabAnswer());
+      await expect(page.locator('#speed-input')).toHaveValue('1.20');
+      expect(await page.locator('[inert]').count()).toBe(0);
+      expect(await shown(page)).toEqual({ speed: '1.20', reverb: '0', on: true });
+      expect(await page.evaluate(() => document.activeElement.id)).toBe('reverb-slider');
+      for (const part of HELD_PARTS) {
+        await expect.poll(() => opacity(page, part), part).toBe('1');
+      }
+
+      // The next change is made on top of the shortcut's.
+      await clickAt(page, '#speed-up-btn');
+      expect(await shown(page)).toEqual({ speed: '1.21', reverb: '0', on: true });
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
+  // The saved presets' rows are built again when the look shows the tab, so
+  // the button that had the keyboard is gone. The same button of the same
+  // preset's new row gets it.
+  test('give the keyboard back to a saved preset’s button after a shortcut', async ({ browser, browserName }) => {
+    const { context, page, errors } = await openPopup(browser, browserName, patient.baseUrl, {
+      settings: SLOWED, customPresets: savedPresets(3)
+    });
+    const focusedRowButton = () => page.evaluate(() => {
+      const focused = document.activeElement;
+      const item = focused.closest('.custom-preset-item');
+      return item && {
+        row: [...item.parentElement.children].indexOf(item) + 1,
+        button: focused.className,
+        name: item.querySelector('.custom-preset-btn').textContent
+      };
+    });
+    try {
+      await page.waitForFunction(() => !document.body.classList.contains('booting'));
+      await page.locator('#tab-custom').click();
+      await expectPresetsList(page, 3);
+      await page.locator(row(2, 'edit-preset-btn')).focus();
+      const before = await focusedRowButton();
+      expect(before).toEqual({ row: 2, button: 'edit-preset-btn', name: savedPresets(3)[1].name });
+      await page.evaluate(() => {
+        window.focusedBefore = document.activeElement;
+        window.holdTabAnswers();
+        window.tellPopup({ type: 'SHORTCUT_APPLIED', tabId: 9 });
+      });
+      expect(await page.locator('[inert]').count()).toBe(HELD_PARTS.length);
+      expect(await focusedRowButton()).toBe(null);
+
+      await page.evaluate(() => window.letTabAnswer());
+      await expect(page.locator('[inert]')).toHaveCount(0);
+      // The rows are new ones, and the same button of the same row has the keyboard.
+      expect(await page.evaluate(() => window.focusedBefore.isConnected)).toBe(false);
+      expect(await focusedRowButton()).toEqual(before);
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
   // Without the hold on the parts, the Tab key reaches the controls. (A
   // click still does nothing: what the control reports is dropped.)
   test('finds controls that the Tab key reaches before the answer', async ({ browser, browserName }) => {
     const controlServer = await serveWith({
       'popup.js': patched('popup.js', [
+        PATIENT,
         [/for \(const part of heldForTab\) part\.setAttribute\('inert', ''\);/, '']
       ])
     });
@@ -831,7 +953,7 @@ test.describe("the controls before the tab's first answer", () => {
   // popup shows and sends, as every control did before the answer.
   test('finds a reachable control that is heard before the answer', async ({ browser, browserName }) => {
     const controlServer = await serveWith({
-      'popup.js': patched('popup.js', [[/if \(!controlsHeld\) return;/, 'return;']])
+      'popup.js': patched('popup.js', [PATIENT, [/if \(!controlsHeld\) return;/, 'return;']])
     });
     try {
       await withHeldPopup(browser, browserName, controlServer.baseUrl, async (page) => {
@@ -849,7 +971,7 @@ test.describe("the controls before the tab's first answer", () => {
   test('finds a drag from before the hold that is heard', async ({ browser, browserName }) => {
     test.skip(browserName !== 'chromium', 'Firefox ends the drag itself');
     const controlServer = await serveWith({
-      'popup.js': patched('popup.js', [[/if \(!controlsHeld\) return;/, 'return;']])
+      'popup.js': patched('popup.js', [PATIENT, [/if \(!controlsHeld\) return;/, 'return;']])
     });
     try {
       await withDragBeforeTheHold(browser, browserName, controlServer.baseUrl, async (page) => {

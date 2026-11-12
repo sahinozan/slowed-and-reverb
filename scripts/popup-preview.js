@@ -88,6 +88,12 @@ function startServer(extraRoutes = new Map()) {
 // - `answers: false`: nothing in the page answers GET_STATE.
 // - `answers: 'held'`: the page's answer to GET_STATE waits until the test
 //   calls `window.letTabAnswer()`.
+//
+// For what happens after the popup has opened, the page gets three functions:
+// `window.holdTabAnswers()` holds the answers to GET_STATE from then on, until
+// `window.letTabAnswer()`; `window.setTab(fields)` changes what the tab
+// answers; and `window.tellPopup(message)` gives the popup a message as the
+// extension's background script would send it.
 // - `permissionRequest`: 'granted', 'denied' or 'error'.
 // - `reload: 'error'`: reloading the tab fails.
 // - `firefox: true`: the manifest has Firefox's settings, as the Firefox build's does.
@@ -107,11 +113,18 @@ function installPopupBrowserMock({
     effectsUnavailable: Boolean(tabState.effectsUnavailable)
   });
   const updateListeners = new Set();
-  const heldAnswer = answers === 'held'
-    ? new Promise((resolve) => {
-        window.letTabAnswer = resolve;
-      })
-    : null;
+  const messageListeners = new Set();
+  let heldAnswer = null;
+  window.holdTabAnswers = () => {
+    heldAnswer = new Promise((resolve) => {
+      window.letTabAnswer = resolve;
+    });
+  };
+  if (answers === 'held') window.holdTabAnswers();
+  window.setTab = (fields) => Object.assign(tabState, fields);
+  window.tellPopup = (message) => {
+    for (const listener of messageListeners) listener(message, { id: 'store-preview-extension' });
+  };
   const manifest = firefox ? { browser_specific_settings: { gecko: { id: 'preview@example.invalid' } } } : {};
 
   const storageGet = (defaults) => {
@@ -138,7 +151,7 @@ function installPopupBrowserMock({
     runtime: {
       id: 'store-preview-extension',
       getManifest: () => manifest,
-      onMessage: { addListener: () => {} },
+      onMessage: { addListener: (listener) => messageListeners.add(listener) },
       sendMessage: async (message) => {
         if (message.type === 'GET_TAB_STATE') return tabState;
         if (message.type === 'APPLY_TO_TAB') {
@@ -176,8 +189,10 @@ function installPopupBrowserMock({
       sendMessage: async (_tabId, message) => {
         if (message.type !== 'GET_STATE') return { success: true };
         if (!answers) throw new Error('Preview: nothing in the page answered');
+        // The answer says what the tab was set to when it was asked.
+        const answer = { ...tabState };
         await heldAnswer;
-        return tabState;
+        return answer;
       }
     }
   };

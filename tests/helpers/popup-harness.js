@@ -26,6 +26,7 @@ async function createPopupHarness(options = {}) {
     grantedOrigins: options.grantedOrigins,
     permissionRequestResult: options.permissionRequestResult,
     executeScriptError: options.executeScriptError,
+    runtimeResponseTimeoutMs: options.runtimeResponseTimeoutMs,
     onTabMessage(tabId, message) {
       if (options.onTabMessage) return options.onTabMessage(tabId, message);
       if (message.type === 'GET_STATE') return options.contentState ?? null;

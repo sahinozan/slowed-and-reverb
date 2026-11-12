@@ -347,6 +347,342 @@ describe('background service worker', () => {
     assert.equal(harness.local.writes.length, 0);
   });
 
+  // A shortcut works while the popup is open, and the popup shows the tab as
+  // it was when it last looked (issue #181). So the background script tells
+  // it, once the change has been made.
+  describe('telling an open popup about a shortcut', () => {
+    const freshTab = (updateAnswer) => (_tabId, message) =>
+      message.type === 'GET_STATE'
+        ? { enabled: false, settings: DEFAULT_SETTINGS, blocked: false }
+        : updateAnswer;
+    // What the popup would hear, with how many changes the tab had been
+    // sent by then.
+    const listen = (options) => {
+      const heard = [];
+      const harness = setup({
+        ...options,
+        onRuntimeMessage(message) {
+          // Copied, as the script's own objects aren't this file's.
+          heard.push({ message: { ...message }, changesSent: updates(harness.calls).length });
+        }
+      });
+      return { harness, heard };
+    };
+
+    test('says which tab, after the change has been sent', async () => {
+      const { harness, heard } = listen({ onTabMessage: freshTab({ success: true }) });
+
+      await harness.events.command.emit('toggle-slowed-reverb');
+      assert.deepEqual(heard, [{ message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 1 }]);
+
+      await harness.events.command.emit('toggle-effect');
+      assert.equal(heard.length, 2);
+      assert.deepEqual(heard[1], { message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 2 });
+    });
+
+    // The popup asks the tab when it hears this, so the tab must have the
+    // change by then, not only have been sent it.
+    test("says nothing until the tab has answered the change", async () => {
+      let answerChange;
+      const { harness, heard } = listen({
+        onTabMessage(_tabId, message) {
+          if (message.type === 'GET_STATE') {
+            return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false };
+          }
+          return new Promise((resolve) => {
+            answerChange = () => resolve({ success: true });
+          });
+        }
+      });
+
+      const handled = harness.events.command.emit('toggle-slowed-reverb');
+      for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
+      assert.equal(updates(harness.calls).length, 1);
+      assert.deepEqual(heard, []);
+
+      answerChange();
+      await handled;
+      assert.equal(heard.length, 1);
+    });
+
+    test('says so too when the tab refused the change', async () => {
+      const { harness, heard } = listen({ onTabMessage: freshTab(null) });
+
+      await harness.events.command.emit('toggle-nightcore');
+      assert.deepEqual(heard, [{ message: { type: 'SHORTCUT_APPLIED', tabId: 7 }, changesSent: 1 }]);
+    });
+
+    test('says nothing for a shortcut that changed nothing', async () => {
+      const { harness, heard } = listen({
+        onTabMessage(_tabId, message) {
+          return message.type === 'GET_STATE' ? { blocked: true, blockReason: 'drm' } : null;
+        }
+      });
+
+      await harness.events.command.emit('toggle-nightcore');
+      assert.deepEqual(heard, []);
+    });
+
+    // With no popup open the browser rejects the message: nothing received it.
+    test('changes the tab all the same when no popup is open to hear of it', async () => {
+      const harness = setup({
+        onTabMessage: freshTab({ success: true }),
+        async onRuntimeMessage() {
+          throw new Error('Could not establish connection. Receiving end does not exist.');
+        }
+      });
+
+      await harness.events.command.emit('toggle-slowed-reverb');
+      await flushPromises();
+      assert.equal(updates(harness.calls).length, 1);
+      assert.equal(harness.session.data['tabState:7'].enabled, true);
+    });
+  });
+
+  // The popup shows a tab as it was after a certain shortcut, and names that
+  // one with each change. A change made on top of settings from before the
+  // tab's last shortcut would undo the shortcut, so it is left out, and the
+  // popup is told.
+  // The tests here that hold an answer back wait for it with no limit of
+  // real time, so the group has a deadline, which its tests share.
+  describe('a change the popup made on top of settings from before a shortcut', { timeout: 20_000 }, () => {
+    const NIGHTCORE = { ...DEFAULT_SETTINGS, speed: 1.2 };
+    const popup = { id: 'example', url: 'chrome-extension://example/popup.html' };
+    // A tab that keeps what it is set to. The script's own objects aren't
+    // this file's, so settings are copied before they are compared.
+    const livingTab = () => {
+      const tab = { enabled: false, settings: DEFAULT_SETTINGS };
+      return {
+        tab,
+        onTabMessage(_tabId, message) {
+          if (message.type === 'GET_STATE') return { ...tab, blocked: false };
+          Object.assign(tab, { enabled: message.enabled, settings: message.settings });
+          return { success: true };
+        }
+      };
+    };
+    const ask = (harness, message) => dispatchRuntimeMessage(
+      harness.events.runtimeMessage, message, popup, null
+    );
+    const change = (harness, fields) => ask(harness, {
+      type: 'APPLY_TO_TAB', tabId: 7, url: 'https://www.youtube.com/watch?v=one',
+      settings: SLOWED, enabled: true, ...fields
+    });
+    // The tab's last shortcut, as the popup is given it when it waits.
+    const shortcutOf = async (harness, tabId = 7) =>
+      (await ask(harness, { type: 'WAIT_FOR_TAB', tabId })).shortcut;
+    const settle = async () => {
+      for (let attempt = 0; attempt < 8; attempt++) await flushPromises();
+    };
+    // The answer, if it comes without anything else having to happen first,
+    // and otherwise PENDING. A test that waited for an answer that is held
+    // back would never end.
+    const PENDING = Symbol('no answer yet');
+    const atOnce = (answer) => Promise.race([answer, settle().then(() => PENDING)]);
+    const withShortcut = async () => {
+      const { tab, onTabMessage } = livingTab();
+      const harness = setup({ onTabMessage, onRuntimeMessage() {} });
+      const before = await shortcutOf(harness);
+      await harness.events.command.emit('toggle-nightcore');
+      return { harness, tab, before };
+    };
+
+    test('names each shortcut that changed a tab, and not one that changed nothing', async () => {
+      const { harness, before } = await withShortcut();
+      assert.equal(before, null);
+      const first = await shortcutOf(harness);
+      assert.equal(typeof first, 'string');
+      assert.equal(await shortcutOf(harness, 8), null);
+
+      await harness.events.command.emit('toggle-effect');
+      const second = await shortcutOf(harness);
+      assert.equal(typeof second, 'string');
+      assert.notEqual(second, first);
+
+      const blocked = setup({
+        onTabMessage: () => ({ blocked: true, blockReason: 'drm' }),
+        onRuntimeMessage() {}
+      });
+      await blocked.events.command.emit('toggle-nightcore');
+      assert.equal(await shortcutOf(blocked), null);
+    });
+
+    test('is left out, and the popup is told', async () => {
+      const { harness, tab, before } = await withShortcut();
+
+      const answer = await change(harness, { shortcut: before });
+      assert.deepEqual({ ...answer }, { success: false, superseded: true });
+      assert.equal(updates(harness.calls).length, 1);
+      assert.deepEqual({ ...tab.settings }, NIGHTCORE);
+      assert.deepEqual({ ...harness.session.data['tabState:7'].settings }, NIGHTCORE);
+    });
+
+    test('is left out when it was made after an earlier shortcut, not the last', async () => {
+      const { harness, tab } = await withShortcut();
+      const first = await shortcutOf(harness);
+      await harness.events.command.emit('toggle-nightcore');
+      assert.equal(tab.enabled, false);
+
+      const answer = await change(harness, { shortcut: first });
+      assert.equal(answer.superseded, true);
+      assert.equal(tab.enabled, false);
+    });
+
+    test('is taken when it was made on top of what the shortcut left', async () => {
+      const { harness, tab } = await withShortcut();
+
+      const answer = await change(harness, { shortcut: await shortcutOf(harness) });
+      assert.equal(answer.success, true);
+      assert.deepEqual({ ...tab.settings }, SLOWED);
+    });
+
+    test('is taken on a tab no shortcut has changed', async () => {
+      const { harness } = await withShortcut();
+
+      const answer = await change(harness, { tabId: 8, shortcut: null });
+      assert.equal(answer.success, true);
+      assert.equal(updates(harness.calls).length, 2);
+    });
+
+    // The website's popup and the tests' stand-ins name no shortcut.
+    test('is taken when it names nothing', async () => {
+      const { harness, tab } = await withShortcut();
+
+      const answer = await change(harness, {});
+      assert.equal(answer.success, true);
+      assert.deepEqual({ ...tab.settings }, SLOWED);
+    });
+
+    // The tab's changes are made one after another, so a change of the
+    // popup's that comes while the shortcut's is still being made would be
+    // made after it. And what the popup reads from the tab meanwhile would
+    // be from before the shortcut, so the popup is made to wait.
+    test('is left out while the shortcut is still being made, and the popup waits for the shortcut', async () => {
+      let answerShortcut;
+      const harness = setup({
+        onTabMessage(_tabId, message) {
+          if (message.type === 'GET_STATE') {
+            return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false };
+          }
+          return new Promise((resolve) => {
+            answerShortcut = () => resolve({ success: true });
+          });
+        },
+        onRuntimeMessage() {}
+      });
+      const before = await shortcutOf(harness);
+      const handled = harness.events.command.emit('toggle-nightcore');
+      await settle();
+      assert.equal(updates(harness.calls).length, 1);
+
+      const answer = await atOnce(change(harness, { shortcut: before }));
+      assert.notEqual(answer, PENDING);
+      assert.equal(answer.superseded, true);
+
+      const waited = shortcutOf(harness);
+      assert.equal(await atOnce(waited), PENDING);
+
+      answerShortcut();
+      await handled;
+      assert.equal(typeof (await atOnce(waited)), 'string');
+      assert.equal(updates(harness.calls).length, 1);
+    });
+
+    // A second shortcut begins while the popup waits for the first. What
+    // the popup then reads from the tab may be from before the second one,
+    // so it is given the first, as when it asked, and a change it makes on
+    // top of that is left out.
+    test('gives the popup the shortcut that was the last when it began to wait', async () => {
+      const answers = [];
+      const harness = setup({
+        onTabMessage(_tabId, message) {
+          if (message.type === 'GET_STATE') {
+            return { enabled: false, settings: DEFAULT_SETTINGS, blocked: false };
+          }
+          return new Promise((resolve) => answers.push(() => resolve({ success: true })));
+        },
+        onRuntimeMessage() {}
+      });
+      const first = harness.events.command.emit('toggle-nightcore');
+      await settle();
+
+      const waited = shortcutOf(harness);
+      await settle();
+      const second = harness.events.command.emit('toggle-slowed-reverb');
+      assert.equal(await atOnce(waited), PENDING);
+
+      answers.shift()();
+      await first;
+      const given = await atOnce(waited);
+      assert.equal(typeof given, 'string');
+      const answer = await atOnce(change(harness, { shortcut: given }));
+      assert.notEqual(answer, PENDING);
+      assert.equal(answer.superseded, true);
+
+      // The second shortcut's change has reached the tab by now.
+      await settle();
+      answers.shift()();
+      await second;
+      assert.notEqual(await shortcutOf(harness), given);
+    });
+
+    // The browser stops this script when it has had nothing to do for a
+    // while, and starts it again for the next message. Nothing of the
+    // shortcuts is stored, so it then remembers none, and a popup that is
+    // still open can go on changing the tab.
+    test('is taken after the background script has been started again', async () => {
+      const { tab, onTabMessage } = livingTab();
+      const first = setup({ onTabMessage, onRuntimeMessage() {} });
+      await first.events.command.emit('toggle-nightcore');
+      const seen = await shortcutOf(first);
+      assert.deepEqual(Object.keys(first.session.data), ['tabState:7']);
+
+      const again = setup({ onTabMessage, onRuntimeMessage() {}, session: first.session.data });
+      assert.equal(await shortcutOf(again), null);
+      const answer = await change(again, { shortcut: seen });
+      assert.equal(answer.success, true);
+      assert.deepEqual({ ...tab.settings }, SLOWED);
+    });
+
+    // After a restart the count begins again. The first shortcut then must
+    // not be taken for the first one of the run before, which an open popup
+    // has seen.
+    test('is left out after a restart when a new shortcut has changed the tab', async () => {
+      const { tab, onTabMessage } = livingTab();
+      const first = setup({ onTabMessage, onRuntimeMessage() {} });
+      await first.events.command.emit('toggle-slowed-reverb');
+      const seen = await shortcutOf(first);
+
+      const again = setup({ onTabMessage, onRuntimeMessage() {}, session: first.session.data });
+      await again.events.command.emit('toggle-nightcore');
+      assert.notEqual(await shortcutOf(again), seen);
+      const answer = await change(again, { shortcut: seen });
+      assert.equal(answer.superseded, true);
+      assert.deepEqual({ ...tab.settings }, NIGHTCORE);
+    });
+
+    test('is taken after the tab has closed and its number is used again', async () => {
+      const { harness, tab, before } = await withShortcut();
+
+      await harness.events.tabRemoved.emit(7);
+      await flushPromises();
+      assert.equal(await shortcutOf(harness), null);
+      const answer = await change(harness, { shortcut: before });
+      assert.equal(answer.success, true);
+      assert.deepEqual({ ...tab.settings }, SLOWED);
+    });
+
+    test('answers the wait only for the extension\'s own pages', async () => {
+      const { harness } = await withShortcut();
+      const fromPage = await dispatchRuntimeMessage(
+        harness.events.runtimeMessage,
+        { type: 'WAIT_FOR_TAB', tabId: 7 },
+        { id: 'example', tab: { id: 7, url: 'https://www.youtube.com/watch?v=one' } }
+      );
+      assert.equal(fromPage, undefined);
+    });
+  });
+
   test('tracks content state, answers recall requests, and forgets closed tabs', async () => {
     const harness = setup();
     const settings = { ...DEFAULT_SETTINGS, width: 160 };

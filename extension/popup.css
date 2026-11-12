@@ -398,6 +398,17 @@ h1 {
   text-shadow: 0 0 6px hsl(var(--accent-hsl) / 0.6);
 }
 
+/* For screen readers only: always on the page, and never seen. */
+.announcer {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .blocked-banner {
   display: flex;
   align-items: flex-start;

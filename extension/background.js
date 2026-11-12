@@ -19,6 +19,21 @@ const ICONS = {
 const RESTORABLE_URL = /^https?:\/\//i;
 const TAB_STATE_PREFIX = 'tabState:';
 const tabApplyQueues = new Map();
+// How many shortcuts have changed each tab since this script started. An
+// open popup shows a tab as it was after a certain one of them, and names
+// that one with each change it sends (shortcutMark); a change made on top
+// of settings from before the tab's last shortcut is left out
+// (APPLY_TO_TAB).
+//
+// Nothing of this is stored. The browser stops this script when it has had
+// nothing to do for a while, or has been kept busy for minutes, and starts
+// it again; then no shortcut is remembered and every change is taken. A
+// change is on its way for a moment, so one from before a shortcut is not
+// expected to outlast the script. The marks carry a name for this run of
+// the script, so that a shortcut after a restart isn't taken for one a
+// popup saw before it.
+const RUN = Math.random().toString(36).slice(2);
+const shortcutCounts = new Map();
 const SPOTIFY_ORIGIN = 'https://open.spotify.com/*';
 const SPOTIFY_PAGE_ORIGIN = 'https://open.spotify.com';
 const SPOTIFY_SCRIPT_IDS = ['spotify-main', 'spotify-bridge'];
@@ -158,6 +173,13 @@ async function forgetTabState(tabId) {
   await api.storage.session.remove(tabStateKey(tabId));
 }
 
+// The tab's last shortcut in this run of the script, or null when there
+// has been none.
+function shortcutMark(tabId) {
+  const count = shortcutCounts.get(tabId);
+  return count ? `${RUN}:${count}` : null;
+}
+
 async function storedTabStatesForOrigins(origins) {
   const stored = await api.storage.session.get(null);
   const matches = new Map();
@@ -273,8 +295,13 @@ async function applyToTab(tabId, url, settings, enabled) {
 }
 
 function queueTabApply(tabId, url, settings, enabled) {
+  return queueForTab(tabId, () => applyToTab(tabId, url, settings, enabled));
+}
+
+// One thing at a time is done to a tab, in the order asked for.
+function queueForTab(tabId, task) {
   const previous = tabApplyQueues.get(tabId) ?? Promise.resolve();
-  const next = previous.catch(() => {}).then(() => applyToTab(tabId, url, settings, enabled));
+  const next = previous.catch(() => {}).then(task);
   tabApplyQueues.set(tabId, next);
   const clearQueue = () => {
     if (tabApplyQueues.get(tabId) === next) tabApplyQueues.delete(tabId);
@@ -298,20 +325,37 @@ api.commands.onCommand.addListener(async (command) => {
   const preset = COMMAND_PRESETS[command];
   if (preset) {
     const isActive = Boolean(state?.enabled && settingsMatch(state.settings, preset));
-    await queueTabApply(tab.id, tab.url, preset, !isActive);
+    await applyShortcut(tab, preset, !isActive);
     return;
   }
 
   if (command !== 'toggle-effect') return;
 
   if (state?.enabled) {
-    await queueTabApply(tab.id, tab.url, state.settings, false);
+    await applyShortcut(tab, state.settings, false);
     return;
   }
 
   const remembered = await recallTabState(tab.id, tab.url);
-  await queueTabApply(tab.id, tab.url, remembered?.settings ?? PRESETS.slowed, true);
+  await applyShortcut(tab, remembered?.settings ?? PRESETS.slowed, true);
 });
+
+// Does what a shortcut asks for. A shortcut works while the popup is open,
+// and the popup shows the tab as it was when it last looked, so it is told
+// to look again (handleShortcutReport in popup.js). Nothing hears this when
+// no popup is open.
+//
+// The tab's count of shortcuts is raised in the same step as the change is
+// put in the tab's queue. So whatever is asked for the tab after this comes
+// after the shortcut's change, and with the new mark.
+async function applyShortcut(tab, settings, enabled) {
+  shortcutCounts.set(tab.id, (shortcutCounts.get(tab.id) ?? 0) + 1);
+  try {
+    await queueTabApply(tab.id, tab.url, settings, enabled);
+  } finally {
+    api.runtime.sendMessage({ type: 'SHORTCUT_APPLIED', tabId: tab.id }).catch(() => {});
+  }
+}
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== 'object') return;
@@ -360,6 +404,16 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'APPLY_TO_TAB') {
     if (!extensionPageSender) return;
     if (message.tabId === undefined || !message.url) return;
+    // The popup names the tab's last shortcut as of when it read the
+    // settings this change was made on top of. If a shortcut has changed the
+    // tab since, the change would undo it, so it is left out and the popup
+    // is told. The popup then looks at the tab again. A change that names
+    // nothing, as the website's popup sends, is taken.
+    const mark = shortcutMark(message.tabId);
+    if (mark !== null && message.shortcut !== undefined && message.shortcut !== mark) {
+      sendResponse({ success: false, superseded: true });
+      return;
+    }
     queueTabApply(
       message.tabId,
       message.url,
@@ -370,6 +424,18 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(() =>
         sendResponse({ success: false, blocked: true, blockReason: 'unsupported' })
       );
+    return true;
+  }
+
+  if (message.type === 'WAIT_FOR_TAB') {
+    if (!extensionPageSender || message.tabId === undefined) return;
+    // Answers once everything asked of the tab so far has been done, with
+    // the tab's last shortcut as it was when this was asked. What the popup
+    // then reads from the tab is from after that shortcut.
+    const shortcut = shortcutMark(message.tabId);
+    queueForTab(message.tabId, () => ({ shortcut }))
+      .then(sendResponse)
+      .catch(() => sendResponse({}));
     return true;
   }
 
@@ -462,6 +528,7 @@ api.runtime.onStartup.addListener(() => {
 });
 
 api.tabs.onRemoved.addListener((tabId) => {
+  shortcutCounts.delete(tabId);
   spotifyBridgeTabs.delete(tabId);
   youtubeTabs.delete(tabId);
   forgetTabState(tabId).catch(() => {});
