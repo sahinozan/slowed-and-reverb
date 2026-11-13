@@ -309,7 +309,11 @@ function installAudioTrialObserver(options) {
               currentTime: entry.context.currentTime,
               sampleRate: entry.sampleRate,
               baseLatency: entry.baseLatency,
-              outputLatency: entry.context.outputLatency ?? null,
+              // Not the context's output latency. In Firefox 160.0 on Linux
+              // with PulseAudio, reading it while the context plays can stop
+              // the page for good, and with it the sound of every other
+              // page, until the page's process ends (issue 186). Nothing the
+              // suites measure used it.
               destination: entry.destination,
               createdAtMs: entry.createdAtMs
             }
