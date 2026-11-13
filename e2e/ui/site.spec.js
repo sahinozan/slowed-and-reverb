@@ -386,9 +386,12 @@ async function gotoAndIcon(page, url) {
   return response;
 }
 
-async function openHome(page, siteUrl) {
+// `icon: true` waits for the page's icon as well, for a test that goes on
+// to another page.
+async function openHome(page, siteUrl, { icon = false } = {}) {
   await page.addInitScript(recordPlayback);
-  await page.goto(`${siteUrl}/`);
+  if (icon) await gotoAndIcon(page, `${siteUrl}/`);
+  else await page.goto(`${siteUrl}/`);
   // The popup has finished its first sync, and the page has heard from it.
   await expect(popupFrame(page).locator('body')).not.toHaveClass(/booting/);
   await expect(popupFrame(page).locator('#current-preset-label')).toHaveText('Current Preset: Slowed + Reverb');
@@ -493,7 +496,7 @@ test(`the demo plays and pauses, and follows the popup both ways ${PLAYBACK}`, a
 
 test("the popup's theme colors the page and the next page", async ({ page, siteUrl }) => {
   await page.setViewportSize(VIEWPORTS.desktop);
-  await openHome(page, siteUrl);
+  await openHome(page, siteUrl, { icon: true });
 
   await popupFrame(page).locator('#theme-picker-btn').click();
   await popupFrame(page).locator('.theme-option[data-theme="midnight"]').click();
