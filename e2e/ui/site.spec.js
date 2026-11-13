@@ -302,6 +302,8 @@ function recordPlayback() {
 
 // What the demo's audio is doing: every step, the ones still waiting, the
 // audio contexts' state and clocks, the <audio> elements and the demo's own state.
+// Not the contexts' output latency: reading it can stop the page in Firefox
+// 160.0 on Linux (tests/output-latency.test.js).
 const playbackReport = (page) => page.evaluate(() => {
   const record = window.__playback;
   if (!record) return { recorded: false };
@@ -315,8 +317,7 @@ const playbackReport = (page) => page.evaluate(() => {
       state: context.state,
       currentTime: context.currentTime,
       sampleRate: context.sampleRate,
-      baseLatency: context.baseLatency,
-      outputLatency: context.outputLatency
+      baseLatency: context.baseLatency
     })),
     media: record.played.map((element) => ({
       currentTime: element.currentTime,
