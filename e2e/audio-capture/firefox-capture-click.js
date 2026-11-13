@@ -264,8 +264,7 @@ async function main(runs, { atStart, quiet, seconds, rate, control, save }) {
         const wall = (end.wallMs - start.wallMs) / 1000;
         const rates = {
           context: Math.round(((end.context.currentTime - start.context.currentTime) / wall) * 1e5) / 1e5,
-          player: Math.round(((end.media.clock - start.media.clock) / wall) * 1e5) / 1e5,
-          outputLatency: end.context.outputLatency
+          player: Math.round(((end.media.clock - start.media.clock) / wall) * 1e5) / 1e5
         };
         const clicks = findClicks(...channels, read.sampleRate).map(({ frame, frames, peak, channel }) => {
           const slip = slipAt(channels[0], read.sampleRate, frame, TONE.leftHz * rate);
