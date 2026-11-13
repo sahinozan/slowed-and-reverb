@@ -18,6 +18,10 @@ async function launchWithExtension(tempRoot, extensionDir) {
   const context = await chromium.launchPersistentContext(path.join(tempRoot, 'profile'), {
     channel: 'chromium',
     headless: true,
+    // Playwright starts Chromium without its sandbox unless asked. On a Mac
+    // the sandbox needs no setup, so it stays on there. CI's Linux and
+    // Windows runners are left as they were.
+    chromiumSandbox: process.platform === 'darwin',
     viewport: { width: 340, height: 600 },
     args: [
       `--disable-extensions-except=${extensionDir}`,

@@ -395,7 +395,8 @@ async function main() {
   }
 
   const server = await startServer(routes);
-  const browser = await chromium.launch({ headless: true });
+  // On a Mac, Chromium keeps its sandbox, as in e2e/fixtures.js.
+  const browser = await chromium.launch({ headless: true, chromiumSandbox: process.platform === 'darwin' });
   const render = (target, html, width, height, scale) =>
     renderScaled(browser, server.baseUrl, target, html, width, height, scale);
 

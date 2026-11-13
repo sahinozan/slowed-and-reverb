@@ -822,7 +822,7 @@ test.describe('site controls', () => {
   });
 
   // Lets the held icon go, and returns how its request ended: in Firefox,
-  // stopped before it's let go.
+  // and in Chromium when the page was left, stopped before it's let go.
   async function iconEnded(icon, ended, browserName) {
     if (browserName === 'firefox') expect(await ended, 'Firefox stops loading the old icon').toBe('NS_BINDING_ABORTED');
     icon.release();
@@ -874,7 +874,10 @@ test.describe('site controls', () => {
   }
 
   // Firefox stops the icon of a page left before it arrives; with no new
-  // icon from that page, that counts.
+  // icon from that page, that counts. For Chromium, Playwright says the
+  // same: since 1.65 it reports what a page was still loading when it was
+  // left as stopped, whatever the browser does with it. Chromium's has no
+  // look at the page's icon, so it counts like any failed request.
   test("reports the page's icon stopped by leaving the page", async ({ page, siteUrl, guard, hold, browserName }) => {
     const icon = hold(ICON);
     const ended = iconEnd(page);
@@ -885,8 +888,8 @@ test.describe('site controls', () => {
     await guard.settle();
     const problems = guard.take();
     if (browserName !== 'firefox') {
-      expect(end).toBe('finished');
-      expect(problems).toEqual([]);
+      expect(end).toBe('net::ERR_ABORTED');
+      expect(problems).toEqual([`request failed: ${siteUrl}${ICON} (net::ERR_ABORTED)`]);
       return;
     }
     expect(problems).toEqual([

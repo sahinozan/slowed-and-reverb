@@ -53,7 +53,8 @@ function firefoxPath() {
 async function launch(name, unmuted) {
   if (name === 'chromium') {
     const { chromium } = require('@playwright/test');
-    const browser = await chromium.launch({ channel: 'chromium', headless: true, timeout: LAUNCH_MS, ...(unmuted ? { ignoreDefaultArgs: ['--mute-audio'] } : {}) });
+    // On a Mac, Chromium keeps its sandbox, as in e2e/fixtures.js.
+    const browser = await chromium.launch({ channel: 'chromium', headless: true, chromiumSandbox: process.platform === 'darwin', timeout: LAUNCH_MS, ...(unmuted ? { ignoreDefaultArgs: ['--mute-audio'] } : {}) });
     return {
       version: browser.version(),
       newPage: async (options) => {
