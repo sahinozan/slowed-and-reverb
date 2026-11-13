@@ -149,7 +149,8 @@ async function main() {
   fs.writeFileSync(path.join(assetsDir, 'icon.svg'), sources['']);
   fs.writeFileSync(path.join(assetsDir, 'icon-off.svg'), sources['-off']);
 
-  const browser = await chromium.launch();
+  // On a Mac, Chromium keeps its sandbox, as in e2e/fixtures.js.
+  const browser = await chromium.launch({ chromiumSandbox: process.platform === 'darwin' });
   try {
     const page = await browser.newPage({ deviceScaleFactor: 1 });
     const renderPng = async (source, size, file) => {

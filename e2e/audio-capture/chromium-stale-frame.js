@@ -38,7 +38,8 @@ function peakAround(samples, index, reach = 256) {
 
 async function main(runs) {
   const server = await startTrialServer();
-  const browser = await chromium.launch({ channel: 'chromium', headless: true, ignoreDefaultArgs: ['--mute-audio'] });
+  // On a Mac, Chromium keeps its sandbox, as in e2e/fixtures.js.
+  const browser = await chromium.launch({ channel: 'chromium', headless: true, chromiumSandbox: process.platform === 'darwin', ignoreDefaultArgs: ['--mute-audio'] });
   try {
     console.log(`Chromium ${browser.version()}; click threshold ${CLICK_THRESHOLD}`);
     const context = await browser.newContext();

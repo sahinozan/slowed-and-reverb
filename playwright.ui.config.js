@@ -62,6 +62,10 @@ module.exports = defineConfig({
         ...devices['Desktop Chrome'],
         channel: 'chromium',
         launchOptions: {
+          // Playwright starts Chromium without its sandbox unless asked. On a
+          // Mac the sandbox needs no setup, so it stays on there. CI's Linux
+          // and Windows runners are left as they were.
+          chromiumSandbox: process.platform === 'darwin',
           // The website's demo plays, silently. No name outside this machine
           // resolves, so nothing can connect out even past the tests' own
           // request blocking (e2e/ui/site.spec.js).

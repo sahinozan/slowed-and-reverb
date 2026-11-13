@@ -55,6 +55,8 @@ function chromiumBrowser({ muteAudio = false, label } = {}) {
       context = await chromium.launchPersistentContext(path.join(folder, 'profile'), {
         channel: 'chromium',
         headless: true,
+        // On a Mac, Chromium keeps its sandbox, as in e2e/fixtures.js.
+        chromiumSandbox: process.platform === 'darwin',
         ignoreDefaultArgs: muteAudio ? [] : ['--mute-audio'],
         args: [`--disable-extensions-except=${installed}`, `--load-extension=${installed}`]
       });
