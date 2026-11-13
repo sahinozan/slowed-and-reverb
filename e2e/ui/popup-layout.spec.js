@@ -918,7 +918,9 @@ test.describe("the controls before the tab's first answer", () => {
         window.tellPopup({ type: 'SHORTCUT_APPLIED', tabId: 9 });
       });
       expect(await page.locator('[inert]').count()).toBe(HELD_PARTS.length);
-      expect(await focusedRowButton()).toBe(null);
+      // The browser takes the keyboard from an inert control a moment after
+      // it becomes inert, not at once, so this waits for it.
+      await expect.poll(focusedRowButton, 'the held button has let go of the keyboard').toBe(null);
 
       await page.evaluate(() => window.letTabAnswer());
       await expect(page.locator('[inert]')).toHaveCount(0);
