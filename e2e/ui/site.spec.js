@@ -373,6 +373,19 @@ async function clickInPopup(page, selector) {
   await page.mouse.click(point.x, point.y);
 }
 
+// Goes to `url` and waits for the page's icon to arrive as well, for a test
+// that goes on to another page. Chromium asks for the icon only once the
+// page has loaded, a moment before these tests would leave it, and
+// Playwright reports what a page was still loading when it was left as a
+// failed request, which the guard counts.
+async function gotoAndIcon(page, url) {
+  const [response] = await Promise.all([
+    page.goto(url),
+    page.waitForEvent('requestfinished', { predicate: (request) => request.url().endsWith(ICON), timeout: 10_000 })
+  ]);
+  return response;
+}
+
 async function openHome(page, siteUrl) {
   await page.addInitScript(recordPlayback);
   await page.goto(`${siteUrl}/`);
@@ -634,7 +647,7 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
     // the elements that make it too wide.
     const tooWide = {};
     for (const pathname of PAGES) {
-      const response = await page.goto(`${siteUrl}${pathname}`);
+      const response = await gotoAndIcon(page, `${siteUrl}${pathname}`);
       expect(response.status(), pathname).toBe(200);
       await expect(page.locator('h1'), pathname).toBeVisible();
       await page.evaluate(() => document.fonts.ready);
@@ -646,7 +659,7 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
 }
 
 test('serves clean addresses and a 404 page, as Cloudflare does', async ({ page, siteUrl, guard }) => {
-  const redirected = await page.goto(`${siteUrl}/guide.html`);
+  const redirected = await gotoAndIcon(page, `${siteUrl}/guide.html`);
   expect(redirected.url()).toBe(`${siteUrl}/guide`);
   expect(redirected.status()).toBe(200);
 
@@ -876,8 +889,9 @@ test.describe('site controls', () => {
   // Firefox stops the icon of a page left before it arrives; with no new
   // icon from that page, that counts. For Chromium, Playwright says the
   // same: since 1.65 it reports what a page was still loading when it was
-  // left as stopped, whatever the browser does with it. Chromium's has no
-  // look at the page's icon, so it counts like any failed request.
+  // left as stopped, whatever the browser does with it. For Chromium the
+  // guard doesn't look at whether the page changed its icon, so it counts
+  // like any failed request.
   test("reports the page's icon stopped by leaving the page", async ({ page, siteUrl, guard, hold, browserName }) => {
     const icon = hold(ICON);
     const ended = iconEnd(page);
@@ -895,6 +909,26 @@ test.describe('site controls', () => {
     expect(problems).toEqual([
       `request failed: ${siteUrl}${ICON} (NS_BINDING_ABORTED), and the page that asked for it (${siteUrl}/) didn't change its icon`
     ]);
+  });
+
+  // The pages the other tests leave are left only once their icon has
+  // arrived (gotoAndIcon); without that, the test above is what they'd see.
+  test("waits for the page's icon before going on", async ({ page, siteUrl, guard, hold }) => {
+    const icon = hold(ICON);
+    let arrived = false;
+    const going = gotoAndIcon(page, `${siteUrl}/`).then((response) => {
+      arrived = true;
+      return response;
+    });
+    await icon.arrived;
+    await page.waitForLoadState('load');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(arrived, 'still waiting while the icon is held').toBe(false);
+    icon.release();
+    expect((await going).status()).toBe(200);
+    await page.goto(`${siteUrl}/faq`);
+    await guard.settle();
+    expect(guard.take()).toEqual([]);
   });
 
   test("reports the page's icon when it doesn't arrive", async ({ page, siteUrl, guard, hold }) => {
