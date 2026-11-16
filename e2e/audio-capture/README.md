@@ -156,18 +156,19 @@ once all of these hold; until then, run it and listen too:
   starts at 0.3 seconds and takes a frame from about 0.4 seconds in, where
   it has enough of the tones before it. A frame between 0.25 and 0.4
   seconds in, which an output slower than about 1.7 seconds could give,
-  still fails the check: it clicks, or the scan finds a slip it can't take
-  as the frame. Before 0.25 seconds the frame is in the engine's silence,
-  and nothing is heard or found.
+  can still fail the check: when it clicks, or when the scan finds a slip
+  it can't take as the frame. Before 0.25 seconds the frame is in the
+  engine's silence, and nothing is heard or found.
 
-  The scan can't close that gap. Each kept frame was put at these places in
+  No scan tried closes that gap. Each kept frame was put at these places in
   made-up recordings (the real sound, started later, with the engine's
   silence and fade) and scanned (November 16, 2026). Starting the scan at
-  0.25 seconds and taking a slip with one or two windows of the tones
-  before it, not five, takes every frame from 0.32 to 0.34 seconds, but a
-  frame in the fade or the first 45 ms of the tones has nothing before it
-  to measure. It would also let a slip in the engine's own start pass as
-  the frame, and let one odd window decide, in every run. So the scan is
+  0.25 seconds, letting a slip count as the frame from 0.25 or 0.275
+  seconds, and taking a slip with one or two windows of the tones before
+  it, not five, takes every frame from 0.32 to 0.34 seconds, but a frame
+  in the fade or the first 45 ms of the tones has nothing before it to
+  measure. It would also let a slip in the engine's own start pass as the
+  frame, and let one odd window decide, in every run. So the scan is
   left as it is, and the Mac's Firefox run goes through the muted speakers
   with Bluetooth off (the `mac-audio-run` skill), where no start-up
   measured has brought the frame within 2 seconds of the gap.

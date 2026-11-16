@@ -64,7 +64,8 @@ system_profiler SPBluetoothDataType  # "State: Off" when Bluetooth is off
    another output instead; the run then plays the tone aloud through it. An
    earlier yes doesn't count for a later run.
 3. After the yes, read the three again, so the run starts on what the owner
-   agreed to. Then:
+   agreed to. If a read fails or shows anything else, don't start: ask
+   again. Then:
 
 ```sh
 npm run test:audio:firefox
