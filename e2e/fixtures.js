@@ -41,16 +41,17 @@ async function launchWithExtension(tempRoot, extensionDir) {
 }
 
 const test = base.extend({
-  fixtureUrl: [
+  fixtureServer: [
     async ({}, use) => {
       const server = await startFixtureServer();
-      await use(server.url);
+      await use(server);
       await server.close();
     },
     { scope: 'worker' }
   ],
+  fixtureUrl: [async ({ fixtureServer }, use) => use(fixtureServer.url), { scope: 'worker' }],
   extension: [
-    async ({ fixtureUrl }, use) => {
+    async ({ fixtureServer, fixtureUrl }, use) => {
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'slowed-reverb-e2e-'));
       const extensionDir = prepareTestExtension(tempRoot, builtExtensionDir, 'chromium');
       let context;
@@ -58,7 +59,7 @@ const test = base.extend({
       try {
         const launched = await launchWithExtension(tempRoot, extensionDir);
         context = launched.context;
-        await use({ ...launched, fixtureUrl });
+        await use({ ...launched, fixtureUrl, letHeldPagesLoad: fixtureServer.letGo });
       } finally {
         await context?.close();
         fs.rmSync(tempRoot, { recursive: true, force: true });

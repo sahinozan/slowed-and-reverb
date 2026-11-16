@@ -2625,6 +2625,170 @@ describe('popup behavior', () => {
       assert.equal(shown(harness).status, '');
       assert.equal(button.disabled, false);
     });
+
+    // A page that is still loading has not stopped responding: the scripts
+    // a look puts into it wait for it to load, and a reload would only
+    // start the loading again (issue #183). The popup asks the browser
+    // which it is once, when the look's time is up, and follows the tab's
+    // loading no further.
+    describe('on a page that is still loading', () => {
+      const LOADING = 'This page is still loading.';
+      const WATCH = 'https://www.youtube.com/watch?v=example';
+      const banner = (harness) => {
+        const { document } = harness.window;
+        return document.getElementById('blocked-banner').hidden
+          ? null
+          : document.getElementById('blocked-banner-text').textContent;
+      };
+      const announced = (harness) => harness.window.document.getElementById('notice-announcer').textContent;
+      // The browser's first answer about the tab, held back until the test
+      // lets it go. Later ones come at once: the background script asks
+      // about the tab too, for a shortcut.
+      const heldTabStatus = (window) => {
+        const { tabs } = window.chrome;
+        const get = tabs.get.bind(tabs);
+        const held = [];
+        let asked = 0;
+        tabs.get = async (tabId) => {
+          const answer = await get(tabId);
+          if (++asked === 1) await new Promise((resolve) => held.push(resolve));
+          return answer;
+        };
+        return held;
+      };
+
+      test('says that it is loading, with no reload button, and shows the tab once it has loaded', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers } = await open(t, tab, {
+          activeTab: { id: 9, url: WATCH, status: 'loading' }
+        });
+
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), LOADING);
+        assert.equal(announced(harness), LOADING);
+        assert.deepEqual(shown(harness), {
+          panel: null,
+          button: 'Reload page',
+          status: '',
+          on: false,
+          usable: false,
+          speed: '1.00',
+          inert: 0,
+          dimmed: false
+        });
+        assert.equal(audioUpdates(harness).length, 0);
+
+        // The page has loaded, and the look's question is answered.
+        tab.letGo();
+        await settle();
+        assert.equal(banner(harness), null);
+        assert.equal(announced(harness), '');
+        assert.equal(shown(harness).usable, true);
+        assert.equal(shown(harness).on, true);
+        assert.equal(shown(harness).speed, '0.80');
+      });
+
+      // What the tab was doing when the look began says nothing about why
+      // the look ran out of time.
+      for (const [name, before, after, notice] of [
+        ['a page that began to load during the look', 'complete', 'loading', { banner: LOADING, panel: null }],
+        ['a page that loaded during the look and then never answered', 'loading', 'complete', { banner: null, panel: NOT_RESPONDING }]
+      ]) {
+        test(`goes by what the tab is doing when the time is up: ${name}`, async (t) => {
+          const tab = fakeTab({ enabled: true, settings: SLOWED });
+          tab.hold('GET_STATE');
+          const activeTab = { id: 9, url: WATCH, status: before };
+          const { harness, timers } = await open(t, tab, { activeTab });
+
+          timers.advance(4999);
+          await settle();
+          activeTab.status = after;
+          timers.advance(1);
+          await settle();
+          assert.deepEqual({ banner: banner(harness), panel: shown(harness).panel }, notice);
+          assert.equal(announced(harness), notice.banner ?? notice.panel);
+        });
+      }
+
+      test('keeps the controls held while the browser is asked, and shows no notice once something has looked since', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        let statusAnswers;
+        const { harness, timers } = await open(t, tab, {
+          activeTab: { id: 9, url: WATCH, status: 'loading' },
+          beforeLoad(window) {
+            statusAnswers = heldTabStatus(window);
+          }
+        });
+
+        timers.advance(5000);
+        await settle();
+        assert.equal(statusAnswers.length, 1);
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).panel, null);
+        assert.equal(shown(harness).inert, 4);
+
+        // A shortcut changes the tab, and the popup's look after it is
+        // answered.
+        tab.hold(null);
+        await harness.events.command.emit('toggle-nightcore');
+        await settle();
+        assert.equal(shown(harness).usable, true);
+        assert.equal(shown(harness).speed, '1.20');
+
+        // The browser's answer comes last, to a question nobody waits on.
+        for (const answer of statusAnswers.splice(0)) answer();
+        await settle();
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).panel, null);
+        assert.equal(announced(harness), '');
+        assert.equal(shown(harness).usable, true);
+        assert.equal(shown(harness).speed, '1.20');
+      });
+
+      test("offers the reload when the browser doesn't say what the tab is doing", async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        tab.hold('GET_STATE');
+        const { harness, timers } = await open(t, tab, {
+          activeTab: { id: 9, url: WATCH, status: 'loading' },
+          beforeLoad(window) {
+            window.chrome.tabs.get = async () => {
+              throw new Error('No tab with id: 9');
+            };
+          }
+        });
+
+        timers.advance(5000);
+        await settle();
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).panel, NOT_RESPONDING);
+      });
+
+      // The popup has no tab to ask about before a look has been told
+      // which tab is in front.
+      test('offers the reload, and asks about no tab, when the browser never said which tab is in front', async (t) => {
+        const tab = fakeTab({ enabled: true, settings: SLOWED });
+        let asked = 0;
+        const { harness, timers } = await open(t, tab, {
+          activeTab: { id: 9, url: WATCH, status: 'loading' },
+          beforeLoad(window) {
+            window.chrome.tabs.query = () => new Promise(() => {});
+            window.chrome.tabs.get = async () => {
+              asked++;
+              return { id: 9, status: 'loading' };
+            };
+          }
+        });
+
+        timers.advance(5000);
+        await settle();
+        assert.equal(asked, 0);
+        assert.equal(banner(harness), null);
+        assert.equal(shown(harness).panel, NOT_RESPONDING);
+      });
+    });
   });
 
   // The keyboard shortcuts are handled by the background script and work

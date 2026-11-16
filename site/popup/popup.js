@@ -43,6 +43,7 @@ const BLOCKED_TEXT = {
   outdatedSpotify: 'Reload Spotify to finish updating the extension.',
   notResponding: "This page isn't responding. Reloading it usually fixes this.",
   notRespondingSpotify: "This page isn't responding. Reloading it usually fixes this.",
+  loadingPage: 'This page is still loading.',
   noPlayer: 'Play a song to start the effects.',
   loadingPlayer: 'The effects start once the song loads.',
   spotifyEffects: 'Only speed works on Spotify here.'
@@ -112,8 +113,9 @@ async function recallTabState(tabId, url) {
 }
 
 // The tab the popup shows and sends to. It is kept for the moment the popup
-// closes, when there is no time to ask the browser (sendOnClose), and to
-// tell which tab a shortcut's report is about. Only two things write it,
+// closes, when there is no time to ask the browser (sendOnClose), to tell
+// which tab a shortcut's report is about, and to ask whether the tab is
+// still loading when a look's time is up. Only two things write it,
 // each when it acts on what it has found: a look that is still the newest
 // (showActiveTab), and the sending of a change (sendUnsentApplies). Asking
 // the browser for the active tab doesn't, so an answer that comes late, to
@@ -1536,9 +1538,10 @@ function releaseControlsForTab() {
 //
 // A look waits on the browser and on the page, and a page that has stopped
 // responding never answers. So after TAB_GIVE_UP_MS the look is over: the
-// popup says that the page isn't responding and offers to reload it. What
-// the look is told after that is not shown either, but if it is told
-// anything at all the page is answering again, and a new look is made.
+// popup says that the page isn't responding and offers to reload it, or
+// that the page is still loading (showTabNotAnswering). What the look is
+// told after that is not shown either, but if it is told anything at all
+// the page is answering again, and a new look is made.
 async function syncWithActiveTab() {
   holdControlsForTab();
   const own = lookAtTab();
@@ -1571,8 +1574,7 @@ function lookAtTab() {
       // Counted on, as a newer look would: this one shows nothing more,
       // and neither does the answer to a change it has sent.
       timeUpAt = ++tabLook;
-      showTabNotResponding();
-      resolve();
+      showTabNotAnswering(timeUpAt).then(resolve);
     }, TAB_GIVE_UP_MS);
     endTabLook = () => {
       window.clearTimeout(timer);
@@ -1601,16 +1603,41 @@ function forgetTabLook() {
   endTabLook = null;
 }
 
-function showTabNotResponding() {
+// Says why a look's time ran out. A page that is still loading hasn't
+// stopped responding: the scripts a look puts into it wait for it to load,
+// and a reload would only start the loading again. So the popup says that
+// the page is loading, and offers no reload.
+//
+// The browser is asked which it is once, now, with the controls still held,
+// and nothing follows the tab's loading afterward. The notice goes as it
+// would anyway: when the look is answered after all, which a loading page
+// does once it has loaded or has been replaced by another, or when a
+// shortcut or the reload button starts a new look. `view` is what `tabLook`
+// was left at; if something has looked since, nothing is shown.
+async function showTabNotAnswering(view) {
+  const loading = await tabIsLoading();
+  if (view !== tabLook) return;
+  const reason = loading ? 'loadingPage' : 'notResponding';
   hideSpotifyPermissionPanel();
   hideYouTubePermissionPanel();
-  setBlocked(true, 'notResponding');
+  setBlocked(true, reason);
   setPowerUI(false);
-  announceNotice(BLOCKED_TEXT.notResponding);
+  announceNotice(BLOCKED_TEXT[reason]);
+}
+
+// Whether the tab the popup shows is still loading its page. No answer
+// counts as not loading, which offers the reload.
+async function tabIsLoading() {
+  if (!lastActiveTab) return false;
+  try {
+    return (await api.tabs.get(lastActiveTab.id)).status === 'loading';
+  } catch {
+    return false;
+  }
 }
 
 // Tells a screen reader of the notice that comes while the popup is open
-// (showTabNotResponding). The notice's own element appears together with
+// (showTabNotAnswering). The notice's own element appears together with
 // its text, which screen readers don't read out; this one is always on the
 // page, and it is its text changing that they read. It is emptied when the
 // popup looks at the tab again, so that the notice is read again if it

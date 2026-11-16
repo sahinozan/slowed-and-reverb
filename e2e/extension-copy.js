@@ -50,12 +50,16 @@ function fixtureHtml() {
 </html>`;
 }
 
+// `/held` is the same page, still loading: its start is sent at once, and the
+// rest when letGo() is called.
 async function startFixtureServer() {
   const html = fixtureHtml();
+  const bodyAt = html.indexOf('<h1>');
+  const held = new Set();
   const server = http.createServer((request, response) => {
     const pathname = requestPathname(request, response, 'http://127.0.0.1');
     if (pathname === null) return;
-    if (pathname !== '/') {
+    if (pathname !== '/' && pathname !== '/held') {
       response.writeHead(404).end();
       return;
     }
@@ -64,7 +68,13 @@ async function startFixtureServer() {
       'Cache-Control': 'no-store',
       'Content-Type': 'text/html; charset=utf-8'
     });
-    response.end(html);
+    if (pathname === '/') {
+      response.end(html);
+      return;
+    }
+    response.write(html.slice(0, bodyAt));
+    held.add(response);
+    response.once('close', () => held.delete(response));
   });
 
   await new Promise((resolve, reject) => {
@@ -77,6 +87,10 @@ async function startFixtureServer() {
 
   return {
     url: `http://127.0.0.1:${address.port}/`,
+    letGo() {
+      for (const response of held) response.end(html.slice(bodyAt));
+      held.clear();
+    },
     async close() {
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
