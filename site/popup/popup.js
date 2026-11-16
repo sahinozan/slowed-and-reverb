@@ -337,14 +337,14 @@ const heldForTab = [
 // How long the tab may take to answer before the held parts dim.
 const TAB_SLOW_MS = 300;
 // How long a look at the tab may take before the popup stops waiting for it
-// and offers to reload the page (syncWithActiveTab). A look waits for the
+// and says why (syncWithActiveTab, showTabNotAnswering). A look waits for the
 // popup's own change that is on its way, for the scripts to be put into the
 // page, for what the background script is still doing to the tab, for the
 // tab's answer, and on a new tab for the answer to its starting preset. On
 // a page that is well each takes a small part of a second; the page's
 // engine is given two seconds for its answer (ENGINE_TIMEOUT_MS in
 // content.js). A page that is still loading can take longer, since the
-// scripts wait for it: the popup then offers the reload all the same, and
+// scripts wait for it: the popup then says that the page is loading, and
 // shows the tab by itself once the page has loaded.
 const TAB_GIVE_UP_MS = 5000;
 // What a held part's controls report is dropped before their own listeners
@@ -1625,8 +1625,9 @@ async function showTabNotAnswering(view) {
   announceNotice(BLOCKED_TEXT[reason]);
 }
 
-// Whether the tab the popup shows is still loading its page. No answer
-// counts as not loading, which offers the reload.
+// Whether the tab the popup shows is still loading its page. When the
+// popup knows of no tab, or the browser refuses to say, that counts as not
+// loading, which offers the reload.
 async function tabIsLoading() {
   if (!lastActiveTab) return false;
   try {
