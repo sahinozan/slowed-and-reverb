@@ -71,7 +71,7 @@ test('nothing asks an audio context for its output latency', () => {
   assert.deepEqual(latencyNames(sources), []);
 });
 
-test('either name is found however it is written, and other names are not', () => {
+test('either name is found in code, in a string, in a comment and with a letter written as an escape, and other names are not', () => {
   // Put together here so this file holds no escape of its own for a tool to
   // read as the letter.
   const backslash = String.fromCharCode(92);
