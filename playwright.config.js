@@ -18,7 +18,10 @@ module.exports = defineConfig({
   reporter: process.env.CI
     ? [['line'], ['html', { open: 'never' }]]
     : [['line']],
-  outputDir: 'test-results',
+  // A folder of its own: Playwright empties its output folder when a run
+  // starts, and test-results/ also holds the UI tests' results, the audio
+  // suites' recordings and anything kept from a failed run.
+  outputDir: 'test-results/e2e',
   timeout: 30_000,
   use: {
     screenshot: 'only-on-failure',
