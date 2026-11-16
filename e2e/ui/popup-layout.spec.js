@@ -270,6 +270,27 @@ const STATES = [
     }
   },
   {
+    // The same, on a page that is still loading: the popup says so, and
+    // offers no reload.
+    title: 'a page still loading that doesn’t answer',
+    mock: { theme: 'paper', settings: SLOWED, answers: 'held', loading: true },
+    shows: async (page) => {
+      await expectBanner(page, 'This page is still loading.');
+      await expect(page.locator('#reload-panel')).toBeHidden();
+    },
+    controls: BASIC_CONTROLS,
+    // The page has loaded and answers, and the popup shows what the tab
+    // plays with.
+    then: async (page) => {
+      await expect(page.locator('#power-toggle')).toBeDisabled();
+      await page.evaluate(() => window.letTabAnswer());
+      await expect(page.locator('#blocked-banner')).toBeHidden();
+      await expect(page.locator('#power-toggle')).toBeChecked();
+      await expect(page.locator('#power-toggle')).toBeEnabled();
+      await expect(page.locator('#current-preset-label')).toHaveText('Current Preset: Slowed + Reverb');
+    }
+  },
+  {
     // The other state 46512dc fixed: a status line under a panel's button.
     title: 'a reload that failed',
     mock: { settings: SLOWED, injects: false, reload: 'error' },

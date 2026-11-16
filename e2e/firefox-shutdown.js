@@ -62,7 +62,8 @@ function addTestDriver(extensionDir) {
   );
   fs.writeFileSync(
     path.join(extensionDir, 'e2e-background.js'),
-    `browser.runtime.onMessage.addListener((message, sender) => {
+    `const injections = new Map();
+browser.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== 'E2E_DRIVE') return;
   const target = { tabId: sender.tab.id };
   // What the extension itself has registered, for a failure's message.
@@ -71,6 +72,28 @@ function addTestDriver(extensionDir) {
   }
   if (message.site === 'youtube') {
     return queueTabApply(sender.tab.id, sender.tab.url, message.settings, true);
+  }
+  // A new tab on a page that is still loading, with the first script
+  // injection the popup makes into a tab under way; then what the tab is
+  // doing and whether that injection has ended; and the tab going to
+  // another page, or closing.
+  if (message.site === 'injection') {
+    const { url } = message.state;
+    return browser.tabs.create({ url, active: false }).then(async (tab) => {
+      // The injection is into the page the tab has by then.
+      while ((await browser.tabs.get(tab.id)).url !== url) await new Promise((resolve) => setTimeout(resolve, 25));
+      injections.set(tab.id, false);
+      const ended = () => injections.set(tab.id, true);
+      browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['youtube-main.js'], world: 'MAIN' }).then(ended, ended);
+      return tab.id;
+    });
+  }
+  if (message.site === 'injection-state') {
+    return browser.tabs.get(message.state.tabId).then((tab) => ({ status: tab.status, ended: injections.get(tab.id) }));
+  }
+  if (message.site === 'tab-goes') {
+    const { tabId, url } = message.state;
+    return (url ? browser.tabs.update(tabId, { url }) : browser.tabs.remove(tabId)).then(() => true);
   }
   // Spotify's scripts registered for the page, as Firefox injects them.
   if (message.site === 'spotify-registered') {
@@ -590,3 +613,52 @@ for (const [update, rollback] of UPDATES) {
     await page.close();
   });
 }
+
+// The popup's look at a tab that is still loading waits in a script
+// injection, which waits for the page. After five seconds the popup says
+// that the page is loading, and it counts on the browser ending that wait:
+// when the page has loaded, to show the tab, and when the page has been
+// replaced by another, to look again (lookAtTab and showTabNotAnswering in
+// popup.js). Firefox's popup can't be opened here, so this checks the wait
+// itself.
+test('ends a script injection that waits for a page once the page has loaded or been replaced in Firefox', async () => {
+  assert.equal(await browser.installExtension(extensionDir), EXTENSION_ID);
+  const page = await browser.newPage();
+  await page.goto(`${server.url}?injection`);
+  const ask = async (site, state) => {
+    const reply = await drive(page, site, state, DETAIL_TIMEOUT_MS);
+    if (reply.error !== undefined) assert.fail(`${site}: ${reply.error}; ${await firefoxSays()}`);
+    return reply.result;
+  };
+  const waiting = async (name) => {
+    const tabId = await ask('injection', { url: `${server.url}held?${name}` });
+    // Long enough for an injection that waited for nothing to have ended.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.deepEqual(await ask('injection-state', { tabId }), { status: 'loading', ended: false });
+    return tabId;
+  };
+  const ends = async (tabId, when) => {
+    let state;
+    await waitFor(
+      async () => {
+        state = await ask('injection-state', { tabId });
+        return state.ended && state.status === 'complete';
+      },
+      5_000,
+      `the injection was still waiting, or the tab still loading, when the page had ${when}`,
+      () => JSON.stringify(state)
+    );
+    await ask('tab-goes', { tabId });
+  };
+
+  const loads = await waiting('loads');
+  server.letGo();
+  await ends(loads, 'loaded');
+
+  const replaced = await waiting('replaced');
+  await ask('tab-goes', { tabId: replaced, url: `${server.url}?elsewhere` });
+  await ends(replaced, 'been replaced');
+
+  await browser.uninstallExtension(EXTENSION_ID);
+  await page.close();
+});

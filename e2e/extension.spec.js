@@ -297,6 +297,31 @@ test('shows in the open popup what a shortcut did', async ({ extension }) => {
   await expect(popup.locator('#reverb-slider')).toHaveValue('0');
 });
 
+// A page that is still loading hasn't stopped responding: the scripts the
+// popup puts into it wait for it to load. The popup says so when it has
+// waited five seconds, and counts on the browser ending that wait once the
+// page has loaded (issue #183).
+test('says that a page is still loading, and shows the tab once it has loaded', async ({ extension }) => {
+  const url = `${extension.fixtureUrl}held?loading`;
+  const page = await extension.context.newPage();
+  const loaded = page.goto(url);
+  await page.waitForURL(url, { waitUntil: 'commit' });
+  const tab = await fixtureTab(extension.serviceWorker, url);
+
+  const popup = await openPopupPage(extension, tab.id);
+  await expect(popup.locator('#blocked-banner-text')).toHaveText('This page is still loading.', { timeout: 10_000 });
+  await expect(popup.locator('#blocked-banner')).toBeVisible();
+  await expect(popup.locator('#reload-panel')).toBeHidden();
+  await expect(popup.locator('#power-toggle')).toBeDisabled();
+
+  extension.letHeldPagesLoad();
+  await loaded;
+  await expect(popup.locator('#blocked-banner')).toBeHidden();
+  await expect(popup.locator('#power-toggle')).toBeChecked();
+  await expect(popup.getByRole('spinbutton', { name: 'Exact speed' })).toHaveValue('0.80');
+  await expect(page.locator('#player')).toHaveJSProperty('playbackRate', 0.8);
+});
+
 test("answers Spotify's turn-on with the effect running on a playing song", async ({
   extension
 }) => {

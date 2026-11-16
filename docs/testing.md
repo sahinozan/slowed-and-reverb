@@ -27,7 +27,9 @@ closes the popup with a speed step not yet sent and checks that the step
 still reaches the tab. With the popup open it reports a keyboard shortcut to
 the background script and checks that the popup shows what the shortcut did;
 no key pressed in a test reaches the browser's shortcuts, so pressing a real
-one with the popup open is checked by hand. The popup there is a page in a
+one with the popup open is checked by hand. It opens the popup on a page that
+is still loading and checks that the popup says so after five seconds, with
+no reload offered, and shows the tab once the page has loaded. The popup there is a page in a
 tab, not the browser's popup window, so closing the real one is still checked
 by hand.
 
@@ -41,7 +43,11 @@ unchanged path; it does the same again after turning the extension back on
 and removing it. It checks that Spotify's own speed resets cause no silent
 gaps. It also updates an earlier version with a YouTube page open, and with a
 Spotify page open before turning the extension off and on, and checks that
-each old engine stays off until the page is reloaded. It can't hear the audio.
+each old engine stays off until the page is reloaded. It checks that a script
+injection waiting for a page that is still loading ends once the page has
+loaded or been replaced by another, which the popup's notice for a loading
+page counts on; the popup itself can't be opened in this test. It can't hear
+the audio.
 
 Before its tests it prints which Firefox it started, how long Firefox took to
 open its WebDriver BiDi port and what Firefox printed meanwhile; when Firefox
