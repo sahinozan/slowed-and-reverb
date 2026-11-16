@@ -36,6 +36,7 @@ const {
   dryRestoration,
   findClicks,
   fitTone,
+  lateObserverErrors,
   markProblems,
   outsidePauses,
   silentRuns,
@@ -245,10 +246,22 @@ describe('audio regression span health', () => {
     assert.deepEqual(health(parts.after, parts.after), []);
     assert.deepEqual(health(withError(parts.after)).map((problem) => problem.code), ['observer-error']);
     // The recording is read after the end snapshot, and the snapshot taken
-    // once that has settled is the last look at the page.
+    // once that has settled comes after the read.
     const late = health(parts.after, withError(parts.after));
     assert.deepEqual(late, [{ code: 'observer-error', message: error }]);
     assert.deepEqual(health(withError(parts.after), withError(parts.after)), late);
+  });
+
+  test('an error the observer records after both snapshots is found in a later read of its errors, and told once', () => {
+    const [first, second] = ['an error the snapshots have', 'an error recorded after them'];
+    const { after } = snapshots();
+    const end = { ...after, errors: [first] };
+    // No batch followed the span, so its end stands in for the settled
+    // snapshot, and only the read and the last question hold the new error.
+    assert.deepEqual(lateObserverErrors([end, end], [[first, second], [first, second]]), [{ code: 'observer-error', message: second }]);
+    assert.deepEqual(lateObserverErrors([end, end], [undefined, [first, second]]), [{ code: 'observer-error', message: second }]);
+    assert.deepEqual(lateObserverErrors([after, end], [[first], [first]]), []);
+    assert.deepEqual(lateObserverErrors([after, after], [[], []]), []);
   });
 
   test('missing frames fail, whatever the sound', () => {

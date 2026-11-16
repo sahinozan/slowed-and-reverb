@@ -44,6 +44,7 @@ const {
   decodeChannels,
   dryRestoration,
   envelope,
+  lateObserverErrors,
   markProblems,
   outsidePauses,
   phaseSlips,
@@ -613,6 +614,15 @@ function defineRegression(browser) {
         problems.push({ code: 'interrupted', message: `the player paused ${Math.round(event.atMs - startMs)} ms into the span, not by the check` });
       }
       problems.push(...span.checks);
+      const rateChanges = await ask(span.page, 'its speed changes', () => window.rateChanges ?? []);
+      const engineRequests = await ask(span.page, 'its engine requests', () => window.engineRequests ?? []);
+      // The observer's errors, as the last thing the span asks the page: one
+      // recorded since the snapshots its health was read from, while the
+      // recording or the evidence above was read, fails the span too.
+      const observerErrors = await ask(span.page, "its observer's errors", () => window.__audioTrial.errors.slice());
+      const late = lateObserverErrors([end, settled], [read.errors, observerErrors]);
+      health.push(...late);
+      problems.push(...late);
 
       const name = span.name;
       const toMs = (frame) => Math.round(((frame - span.fromFrame) / sampleRate) * 10_000) / 10;
@@ -661,10 +671,10 @@ function defineRegression(browser) {
         restorations,
         excerpts,
         marks: span.marks,
-        rateChanges: await ask(span.page, 'its speed changes', () => window.rateChanges ?? []),
+        rateChanges,
         playerEvents,
         ignoredMediaActions,
-        engineRequests: await ask(span.page, 'its engine requests', () => window.engineRequests ?? []),
+        engineRequests,
         envelope10ms: envelope(left, right, sampleRate),
         snapshots: { start: span.start, end, settled }
       };

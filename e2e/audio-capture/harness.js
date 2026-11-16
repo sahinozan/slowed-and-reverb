@@ -622,7 +622,14 @@ function defineTrial(browser, { full = true, compareWith } = {}) {
       await page.evaluate((timeout) => window.__audioTrial.waitReady(0, timeout), READY_TIMEOUT_MS);
       await sleep(SETTLE_MS);
       const windows = await recordWindows(page, { tones: toneList(expect), probe: true });
-      const contexts = await page.evaluate(() => window.__audioTrial.contextCount());
+      // With the observer's errors, as the last thing asked of the page: one
+      // recorded after the last window's read fails that window.
+      const { contexts, errors } = await page.evaluate(() => ({
+        contexts: window.__audioTrial.contextCount(),
+        errors: window.__audioTrial.errors.slice()
+      }));
+      const last = windows.at(-1).measurement;
+      last.errors = [...new Set([...last.errors, ...errors])];
       return { page, applied, windows, contexts };
     }
 

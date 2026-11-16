@@ -599,6 +599,18 @@ function outsidePauses({ events, actions = [], marks = [] }) {
   return events.filter((event) => event.type === 'pause' && !byAction(event.atMs));
 }
 
+// The observer's errors that none of `snapshots` holds, as a problem.
+// `lists` are reads of the observer's errors made after those snapshots: a
+// span's recording is read after its end snapshot, the snapshot taken once
+// that has settled stands in for the end when no batch follows it, and the
+// span's evidence is read after both. So the errors are read once more, as
+// the last thing a span asks the page (regression.js).
+function lateObserverErrors(snapshots, lists) {
+  const told = new Set(snapshots.flatMap((snapshot) => snapshot?.errors ?? []));
+  const late = [...new Set(lists.flatMap((list) => list ?? []))].filter((error) => !told.has(error));
+  return late.length ? [{ code: 'observer-error', message: late.join('; ') }] : [];
+}
+
 // Whether a span of recorded samples is valid data: what captureProblems
 // checks of a window's clock and recorder, between the page snapshots
 // `before` and `after`, plus that the frames recorded before `before` from
@@ -614,8 +626,9 @@ function spanHealth(before, after, channels, fromFrame, settled = after, { fromR
   const fail = (code, message) => problems.push({ code, message });
   const recorder = after.recorder ?? {};
   const start = before.recorder ?? {};
-  // The observer's errors up to the last snapshot taken: one recorded
-  // after `after`, while the recording was read, is in `settled` alone.
+  // The observer's errors in either snapshot: one recorded after `after`,
+  // while the recording was read, is in `settled` alone. Later ones are
+  // lateObserverErrors' to find.
   const errors = [...new Set([...(after.errors ?? []), ...(settled.errors ?? [])])];
   if (errors.length) fail('observer-error', errors.join('; '));
   if (!after.context) fail('no-context', 'no audio context was observed');
@@ -1116,6 +1129,7 @@ module.exports = {
   markProblems,
   maxSilentRunMs,
   measureChannels,
+  lateObserverErrors,
   measureWindow,
   phaseSlips,
   signalProblems,
