@@ -43,7 +43,11 @@ function listed(config, playback) {
     for (const child of suite.suites ?? []) walk(child);
   };
   for (const suite of report.suites) walk(suite);
-  return { projects: report.config.projects.map((project) => project.name), tests };
+  return {
+    projects: report.config.projects.map((project) => project.name),
+    outputFolders: [...new Set(report.config.projects.map((project) => path.relative(root, project.outputDir)))],
+    tests
+  };
 }
 
 const count = (tests, filter) => tests.filter(filter).length;
@@ -56,6 +60,15 @@ describe('Playwright configurations', () => {
     assert.ok(tests.length >= 7, `${tests.length} tests`);
     assert.deepEqual([...new Set(tests.map(({ file }) => file))], ['extension.spec.js']);
     assert.equal(new Set(tests.map(({ title }) => title)).size, tests.length);
+  });
+
+  // Playwright empties a configuration's output folder when a run starts.
+  // test-results/ also holds the audio suites' recordings and what is kept
+  // from failed runs, so neither configuration may have it as its own, or
+  // the other's.
+  test("each writes to a folder of its own, so a run doesn't empty the other's or test-results itself", () => {
+    assert.deepEqual(listed('playwright.config.js').outputFolders, [path.join('test-results', 'e2e')]);
+    assert.deepEqual(listed('playwright.ui.config.js').outputFolders, [path.join('test-results', 'ui')]);
   });
 
   test('npm run test:ui runs the popup layout, website and limiter tests in both engines', () => {
