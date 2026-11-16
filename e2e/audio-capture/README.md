@@ -31,7 +31,9 @@ Run one at a time, with no other browser tests, on a sound device
 - `FIREFOX_BIN` chooses another Firefox, as for `npm run test:firefox`.
 - `AUDIO_REGRESSION_MUTE=1` mutes the Chromium suite, which records the
   same samples either way. Firefox can't be muted: turning the effect on
-  during a song plays the tone aloud for about a second.
+  during a song plays the tone for about a second through the machine's
+  sound output. On the owner's Mac it runs through the muted speakers with
+  Bluetooth off (the `mac-audio-run` skill, and "Limits" for why).
 - `AUDIO_REGRESSION_EVIDENCE=compact` keeps only the sound around
   problems; `AUDIO_TRIAL_WINDOWS` (1 to 10) sets the trial's windows.
 
@@ -152,9 +154,23 @@ once all of these hold; until then, run it and listen too:
   November 13, 0.79 seconds in. A check's record has how long its output
   took: `firstArrivalMs` less `createdAtMs` in `snapshots.start`. The scan
   starts at 0.3 seconds and takes a frame from about 0.4 seconds in, where
-  it has enough of the tones before it. A frame earlier than that, which an
-  output slower than about 1.7 seconds could give, still fails the check
-  if it clicks or the scan finds its slip.
+  it has enough of the tones before it. A frame between 0.25 and 0.4
+  seconds in, which an output slower than about 1.7 seconds could give,
+  still fails the check: it clicks, or the scan finds a slip it can't take
+  as the frame. Before 0.25 seconds the frame is in the engine's silence,
+  and nothing is heard or found.
+
+  The scan can't close that gap. Each kept frame was put at these places in
+  made-up recordings (the real sound, started later, with the engine's
+  silence and fade) and scanned (November 16, 2026). Starting the scan at
+  0.25 seconds and taking a slip with one or two windows of the tones
+  before it, not five, takes every frame from 0.32 to 0.34 seconds, but a
+  frame in the fade or the first 45 ms of the tones has nothing before it
+  to measure. It would also let a slip in the engine's own start pass as
+  the frame, and let one odd window decide, in every run. So the scan is
+  left as it is, and the Mac's Firefox run goes through the muted speakers
+  with Bluetooth off (the `mac-audio-run` skill), where no start-up
+  measured has brought the frame within 2 seconds of the gap.
 - It records the graph's output inside the browser, not what reached a
   speaker; the song before the effect first turns on isn't recorded, and
   the observer's nodes haven't been compared with an uninstrumented

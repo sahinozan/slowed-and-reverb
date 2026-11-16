@@ -55,7 +55,9 @@ checklist's "When it applies" items again.
   branch up to date with `main` (the workflow tests the branch merged into
   `main`): in the pull request's audio workflow, both jobs, none skipped or
   canceled, and on this Mac, Chromium muted (`AUDIO_REGRESSION_MUTE=1`) and
-  Firefox, which plays the tone aloud, so ask first. A commit pushed after
+  Firefox through the Mac's own speakers, muted, with Bluetooth off. Firefox
+  plays the tone through the Mac's sound output, which is the owner's to
+  set, so ask first. A commit pushed after
   the runs needs runs of its own. A failure is kept with its evidence and
   explained before anything is run again, then fixed, or accepted in writing
   in the pull request; a run that passes later doesn't cancel it, and an
