@@ -186,7 +186,9 @@ function measureWindow(before, after, read, { tones = [[], []] } = {}) {
     // How late the page heard about recorded audio: message timing only,
     // not a gap in the audio.
     maxMessageGapMs: round(recorderAfter.maxArrivalGapMs ?? 0, 1),
-    errors: after.errors ?? [],
+    // The observer's errors at the window's end, and any recorded after
+    // that, which the read carries.
+    errors: [...new Set([...(after.errors ?? []), ...(read?.errors ?? [])])],
     contextCount: after.contextCount ?? 0,
     destination: after.context?.destination ?? null,
     media: after.media
@@ -612,7 +614,10 @@ function spanHealth(before, after, channels, fromFrame, settled = after, { fromR
   const fail = (code, message) => problems.push({ code, message });
   const recorder = after.recorder ?? {};
   const start = before.recorder ?? {};
-  if (after.errors?.length) fail('observer-error', after.errors.join('; '));
+  // The observer's errors up to the last snapshot taken: one recorded
+  // after `after`, while the recording was read, is in `settled` alone.
+  const errors = [...new Set([...(after.errors ?? []), ...(settled.errors ?? [])])];
+  if (errors.length) fail('observer-error', errors.join('; '));
   if (!after.context) fail('no-context', 'no audio context was observed');
   if (recorder.error) fail('recorder-error', recorder.error);
   if (!recorder.ready) fail('recorder-not-ready', 'the recorder never started');

@@ -84,11 +84,12 @@ background script, skipping the popup and its prompts.
 The observer also stands in for the two members of an audio context that
 give its output latency (the latency itself, and the output timestamp,
 which reads it in Firefox). In Firefox 160.0 on Linux with PulseAudio that
-read can stop the page for good (issue 186). A read of either is recorded
-as an error, which fails the check as `observer-error`, and never reaches
-the browser's own. `tests/output-latency.test.js` keeps both names out of
-the files; this is for a read that never writes the name, such as a loop
-over every property of a context.
+read can stop the page for good (issue 186). A read of the latency, or a
+call for the timestamp, is recorded as an error, which fails the check as
+`observer-error`, and never reaches the browser's own; taking the method
+without calling it reads nothing. `tests/output-latency.test.js` keeps both
+names out of the files; this is for a read that never writes the name, such
+as a loop over every property of a context.
 
 Every recorded block carries its frame number, and a native clock (an
 AudioParam ramp) confirms how far the context moved. Lost, dropped or

@@ -428,7 +428,9 @@ function installAudioTrialObserver(options) {
         for (let frame = from; frame < to; frame++) out[frame - from] = ring[frame % entry.retainFrames];
         return base64(out);
       });
-      return { from, to, sampleRate: entry.sampleRate, channels };
+      // With the errors as they stand now: one recorded since the snapshot
+      // before this read, or during it, is in no snapshot yet.
+      return { from, to, sampleRate: entry.sampleRate, channels, errors: errors.slice() };
     },
     // The page's own contexts, for the observer's checks with known signals.
     context: (id) => contexts[id]?.context

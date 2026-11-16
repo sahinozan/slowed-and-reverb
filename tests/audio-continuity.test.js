@@ -237,6 +237,20 @@ describe('audio regression span health', () => {
     assert.deepEqual(healthCodes(snapshots({ arrivalGapMs: 400 }), channels(RATE)), []);
   });
 
+  test('an error the observer records fails the span, also one recorded after its end snapshot', () => {
+    const error = 'the page asked an audio context for something it must not read';
+    const parts = snapshots();
+    const withError = (snapshot) => ({ ...snapshot, errors: [error] });
+    const health = (after, settled) => spanHealth(parts.before, after, channels(RATE), parts.before.recorder.nextFrame, settled);
+    assert.deepEqual(health(parts.after, parts.after), []);
+    assert.deepEqual(health(withError(parts.after)).map((problem) => problem.code), ['observer-error']);
+    // The recording is read after the end snapshot, and the snapshot taken
+    // once that has settled is the last look at the page.
+    const late = health(parts.after, withError(parts.after));
+    assert.deepEqual(late, [{ code: 'observer-error', message: error }]);
+    assert.deepEqual(health(withError(parts.after), withError(parts.after)), late);
+  });
+
   test('missing frames fail, whatever the sound', () => {
     assert.deepEqual(healthCodes(snapshots({ end: { lostFrames: 2048 } }), channels(RATE)), ['frames-lost']);
     assert.deepEqual(healthCodes(snapshots({ end: { contextFrameGaps: 1 } }), channels(RATE)), ['context-gap']);
