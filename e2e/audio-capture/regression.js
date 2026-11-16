@@ -127,15 +127,23 @@ const DRY_TONES = [
 ];
 // Turning the effect on while a song plays is recorded until this long
 // after it: Firefox's late frame after a playing player is routed into a
-// graph usually comes 2 to 4 s later (README.md in this folder), so it is
-// found and reported, without failing the check (LATE_FRAME_MS), and any
-// other click or slip then fails it.
+// graph comes 2 to 4 s later (README.md in this folder), so it is found and
+// reported, without failing the check (LATE_FRAME_MS), and any other click
+// or slip then fails it.
 const FIRST_ENABLE_OBSERVE_MS = 6000;
 // Where in that recording Firefox's late frame may be (phaseSlips in
-// metrics.js): 1.13 to 3.5 s after the effect turned on on this Mac so far,
-// and 2 to 4 s in the reproducer, with room either side. A click within
-// CLICK_PLACE_MS of where the phase scan puts the frame is the frame's.
-const LATE_FRAME_MS = [1000, 5000];
+// metrics.js). Counted from the routing it has come 2.05 to 3.89 s later
+// (73 frames on this Mac, October 31 to November 16, 2026). The recording
+// is counted from the graph's first output, and while the output device
+// starts, Firefox runs the graph on a clock of its own and the song goes
+// through it unrecorded: for 0.08 to 0.14 s with the Mac's speakers and
+// 0.54 to 1.79 s with AirPods, which put the frame 0.79 s into one
+// recording. So the frame is taken from where the engine's own start is
+// over, and the scan starts just before that: it can take a frame from
+// about 0.4 s in, once it has five windows of the tones before it. A click
+// within CLICK_PLACE_MS of where the scan puts the frame is the frame's.
+const LATE_FRAME_MS = [FIRST_ROUTE_MS.firefox, 5000];
+const PHASE_SCAN_FROM_MS = 300;
 const CLICK_PLACE_MS = 5;
 const LATE_FRAME_LABEL = "Firefox's late frame";
 // How long cleaning up after a check that couldn't finish may wait for the
@@ -269,6 +277,8 @@ function defineRegression(browser) {
         reverbTailMs: REVERB_TAIL_MS,
         firstRouteMs: FIRST_ROUTE_MS,
         firstEnableObserveMs: FIRST_ENABLE_OBSERVE_MS,
+        lateFrameMs: LATE_FRAME_MS,
+        phaseScanFromMs: PHASE_SCAN_FROM_MS,
         restoreLimitMs: RESTORE_LIMIT_MS,
         dryLevelTolerance: DRY_LEVEL_TOLERANCE,
         dryResidualRms: DRY_RESIDUAL_RMS,
@@ -533,7 +543,9 @@ function defineRegression(browser) {
       // The slips of the tones' phase, for a span that asks (span.phase):
       // Firefox's late frame is kept as an action of its own, which may
       // click, and any other slip fails.
-      const slips = span.phase ? phaseSlips({ left, right, sampleRate, tones: span.phase.tones, lateFrame: span.phase.lateFrame?.(sampleRate) ?? null }) : [];
+      const slips = span.phase
+        ? phaseSlips({ left, right, sampleRate, tones: span.phase.tones, lateFrame: span.phase.lateFrame?.(sampleRate) ?? null, scanFromMs: PHASE_SCAN_FROM_MS })
+        : [];
       const lateFrame = slips.find((event) => event.lateFrame);
       if (lateFrame) {
         const frameAt = (ms) => span.fromFrame + Math.round((ms / 1000) * sampleRate);
@@ -740,9 +752,9 @@ function defineRegression(browser) {
     // Turning the effect on while the song plays: the engine routes the
     // playing player into a new graph, and the recording starts with that
     // graph, so the whole change is heard. The span goes on until
-    // FIRST_ENABLE_OBSERVE_MS after the effect turned on, through the 2 to
-    // 4 s after it in which Firefox puts a frame of silence into the song
-    // (README.md in this folder), and every frame of it is checked. The
+    // FIRST_ENABLE_OBSERVE_MS after the effect turned on, past the 2 to 4 s
+    // after the routing at which Firefox puts a frame of silence into the
+    // song (README.md in this folder), and every frame of it is checked. The
     // tones' phase is followed too: Firefox's frame, a single slip of one
     // frame of the song, is kept as an action of its own and may click
     // without failing the check; any other slip fails it (`phase-slip`). The
@@ -1220,4 +1232,4 @@ function defineRegression(browser) {
   });
 }
 
-module.exports = { defineRegression, dryExpect, effectExpect, LATE_FRAME_MS, ringingTones, withoutRinging };
+module.exports = { defineRegression, dryExpect, effectExpect, LATE_FRAME_MS, PHASE_SCAN_FROM_MS, ringingTones, withoutRinging };

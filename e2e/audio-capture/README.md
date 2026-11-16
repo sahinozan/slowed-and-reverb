@@ -130,17 +130,31 @@ once all of these hold; until then, run it and listen too:
 
 ## Limits
 
-- **Firefox's late frame.** About 1 to 4 seconds after a playing player is
+- **Firefox's late frame.** About 2 to 4 seconds after a playing player is
   routed into a graph, as the engines do when the effect turns on during a
   song, Firefox puts one frame of silence into the song, often with a click
-  (third difference 0.16 to 0.75). It comes from rounding in Firefox's
+  (third difference 0.05 to 0.79). It comes from rounding in Firefox's
   `CreateSilenceDataIfGapExists` (`dom/media/mediasink/DecodedStream.cpp`).
   No safe extension workaround has been found. In Firefox the suite takes
-  the first slip between 1 and 5 seconds in where every tone moves by one
-  frame of the song (within 0.2 samples), reports it as "Firefox's late
+  the first slip between 0.335 and 5 seconds in where every tone moves by
+  one frame of the song (within 0.2 samples), reports it as "Firefox's late
   frame", and doesn't fail on it or on a click within that slip's stretch
   and 5 ms either side, so an extension click that close passes too. Any
   other slip or click fails. `firefox-capture-click.js` reproduces it.
+
+  The frame is early in a recording when the sound output is slow to
+  start. While the output starts, Firefox runs the graph on a clock of its
+  own and the song goes through it, and the recording begins with the
+  output's first sound, so the frame comes that much sooner in it. On this
+  Mac in Firefox 160.0 (November 16, 2026, 104 checks), the speakers took
+  0.08 to 0.14 seconds and the frame was 2.4 to 3.8 seconds in; AirPods Pro
+  took 1.1 to 1.8 seconds and it was 1.5 to 2.2 seconds in, and once, on
+  November 13, 0.79 seconds in. A check's record has how long its output
+  took: `firstArrivalMs` less `createdAtMs` in `snapshots.start`. The scan
+  starts at 0.3 seconds and takes a frame from about 0.4 seconds in, where
+  it has enough of the tones before it. A frame earlier than that, which an
+  output slower than about 1.7 seconds could give, still fails the check
+  if it clicks or the scan finds its slip.
 - It records the graph's output inside the browser, not what reached a
   speaker; the song before the effect first turns on isn't recorded, and
   the observer's nodes haven't been compared with an uninstrumented

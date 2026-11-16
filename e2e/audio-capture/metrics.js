@@ -910,7 +910,8 @@ function jointPhaseOf(samples, from, length, omegas) {
 }
 
 // Every place the tone's phase moves by `minSamples` or more, as
-// { ms, samples }, from half a second in: the phase of each 20 ms is taken
+// { ms, samples }, from half a second in (phaseTrack's `fromMs`): the phase
+// of each 20 ms is taken
 // every 10 ms (with a Hann window) against the tone's frequency fitted over
 // the whole span, and a
 // move is the median of the 5 windows after a point against the 5 before
@@ -926,16 +927,17 @@ function slipsIn(samples, sampleRate, hz, minSamples = 0.25, { others = [] } = {
   return slipsOnTrack(phaseTrack(samples, sampleRate, hz, others), sampleRate, minSamples);
 }
 
-// The tone's phase every 10 ms from half a second in, as slipsIn reads it:
-// `residual`, each window's phase less the tone's steady drift, in radians,
-// unwrapped, and `omega`, the tone's frequency in radians per sample. Null
-// with fewer than 12 windows of the tone.
-function phaseTrack(samples, sampleRate, hz, others = []) {
+// The tone's phase every 10 ms from `fromMs` in (half a second unless
+// given), as slipsIn reads it: `residual`, each window's phase less the
+// tone's steady drift, in radians, unwrapped, and `omega`, the tone's
+// frequency in radians per sample. Null with fewer than 12 windows of the
+// tone.
+function phaseTrack(samples, sampleRate, hz, others = [], fromMs = 500) {
   const window = Math.round(sampleRate * 0.02);
   const hop = Math.round(sampleRate * 0.01);
   const omega0 = (2 * Math.PI * hz) / sampleRate;
   const points = [];
-  for (let from = Math.round(sampleRate * 0.5); from + window <= samples.length; from += hop) {
+  for (let from = Math.round((sampleRate * fromMs) / 1000); from + window <= samples.length; from += hop) {
     const quarter = Math.floor(window / 4);
     let quiet = false;
     for (let part = 0; part < 4 && !quiet; part++) {
@@ -1000,10 +1002,12 @@ function slipsOnTrack(track, sampleRate, minSamples) {
   }));
 }
 
-// Firefox's late frame (README.md in this folder, "Limits"): usually 2 to 4
-// seconds (on this Mac once as early as 1.13 seconds) after a player that is
-// already playing is routed into a graph, Firefox puts a frame of silence
-// into the song, and the song goes on a frame late.
+// Firefox's late frame (README.md in this folder, "Limits"): 2 to 4 seconds
+// after a player that is already playing is routed into a graph, Firefox
+// puts a frame of silence into the song, and the song goes on a frame late.
+// A recording begins when the graph's output starts, which a slow output
+// device puts up to 1.8 seconds after the routing, so the frame can be
+// anywhere from the recording's start on.
 // In the recording that is one slip of the tones' phase, later by one frame
 // of the song at the player's speed: 1.25 samples at 0.8x, for a 48 kHz song
 // in a 48 kHz context. Each slip has been within LATE_FRAME_TOLERANCE of
@@ -1042,15 +1046,18 @@ function netMove(track, sampleRate, fromMs, toMs) {
 // Firefox's late frame is marked `lateFrame`: every tone of `tones` slipped,
 // each later by about `samples`, both as found and across the whole event
 // (`net`, so two slips found as one don't pass), placed within fromMs to
-// toMs.
-function phaseSlips({ left, right, sampleRate, tones, lateFrame = null }) {
+// toMs. `scanFromMs` is where the scan starts (phaseTrack's `fromMs`): a
+// slip can be found from 50 ms after the tones' first window, and taken as
+// the late frame from about 90 ms after it, where `net` has its five
+// windows before the slip.
+function phaseSlips({ left, right, sampleRate, tones, lateFrame = null, scanFromMs = 500 }) {
   const found = [];
   const tracks = [];
   [left, right].forEach((samples, channel) => {
     const list = tones[channel] ?? [];
     for (const hz of list) {
       const others = list.filter((other) => other !== hz);
-      const track = phaseTrack(samples, sampleRate, hz, others);
+      const track = phaseTrack(samples, sampleRate, hz, others, scanFromMs);
       tracks.push({ channel, hz, track });
       for (const slip of slipsOnTrack(track, sampleRate, 0.25)) found.push({ channel, hz, ...slip });
     }
