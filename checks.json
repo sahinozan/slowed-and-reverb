@@ -38,7 +38,7 @@
     "audio-mac": {
       "by": "hand",
       "run": ["AUDIO_REGRESSION_MUTE=1 npm run test:audio:chromium", "npm run test:audio:firefox"],
-      "about": "The audio suites on this Mac, on the pull request's final commit, one at a time. Firefox plays the tone aloud, so ask first."
+      "about": "The audio suites on this Mac, on the pull request's final commit, one at a time. Firefox plays the tone through the Mac's sound output, so it runs on the Mac's muted speakers with Bluetooth off: ask first."
     },
     "dependency-audit": {
       "by": "workflow",
