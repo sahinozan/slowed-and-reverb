@@ -244,6 +244,43 @@ function installAudioTrialObserver(options) {
     }
   });
 
+  // A context's output latency, and its output timestamp, which reads the
+  // same value in Firefox, are never read here: in Firefox 160.0 on Linux
+  // with PulseAudio the read can stop the page for good (issue 186).
+  // tests/output-latency.test.js keeps both names out of these files, which
+  // is why they are put together here and not written out. What it can't
+  // see is a read that never writes the name, such as a loop over every
+  // property of a context. So both are replaced: a read of the latency, or
+  // a call for the timestamp, is recorded as an error, which fails the
+  // check, and never reaches the browser's own. Each is told once.
+  if (typeof AudioContext === 'function') {
+    const guard = (name, replacement) => {
+      let owner = AudioContext.prototype;
+      while (owner && !Object.hasOwn(owner, name)) owner = Object.getPrototypeOf(owner);
+      if (!owner) return;
+      const { enumerable } = Object.getOwnPropertyDescriptor(owner, name);
+      let told = false;
+      const seen = () => {
+        if (!told) errors.push(`the page asked an audio context for its ${name}, which can stop Firefox for good (issue 186)`);
+        told = true;
+      };
+      Object.defineProperty(owner, name, { configurable: true, enumerable, ...replacement(seen) });
+    };
+    guard(['output', 'Latency'].join(''), (seen) => ({
+      get() {
+        seen();
+        return 0;
+      }
+    }));
+    guard(['getOutput', 'Timestamp'].join(''), (seen) => ({
+      writable: true,
+      value() {
+        seen();
+        return { contextTime: 0, performanceTime: 0 };
+      }
+    }));
+  }
+
   // The player's position, added up while it plays so a loop doesn't wrap it.
   const media = { clock: 0, last: null, samples: 0 };
   window.setInterval(() => {
@@ -298,10 +335,11 @@ function installAudioTrialObserver(options) {
     snapshot(id) {
       const entry = contexts[id];
       const player = document.querySelector(mediaSelector);
-      return {
+      const snapshot = {
         wallMs: performance.now(),
         contextCount: contexts.length,
-        errors: errors.slice(),
+        // Filled in below, once the rest has been read.
+        errors: [],
         context: entry
           ? {
               id: entry.id,
@@ -313,7 +351,8 @@ function installAudioTrialObserver(options) {
               // with PulseAudio, reading it while the context plays can stop
               // the page for good, and with it the sound of every other
               // page, until the page's process ends (issue 186). Nothing the
-              // suites measure used it.
+              // suites measure used it, and a read of it is now recorded as
+              // an error (the guard above).
               destination: entry.destination,
               createdAtMs: entry.createdAtMs
             }
@@ -352,6 +391,9 @@ function installAudioTrialObserver(options) {
           : null,
         startClicks: window.startClicks ? window.startClicks.slice() : []
       };
+      // Last, so that an error recorded while the rest was read is in it.
+      snapshot.errors = errors.slice();
+      return snapshot;
     },
     // Where context `id`'s clock is now, as the page reads it, labelled for
     // the evidence: the context frame, and the recorded frame it maps to.
@@ -386,7 +428,9 @@ function installAudioTrialObserver(options) {
         for (let frame = from; frame < to; frame++) out[frame - from] = ring[frame % entry.retainFrames];
         return base64(out);
       });
-      return { from, to, sampleRate: entry.sampleRate, channels };
+      // With the errors as they stand now: one recorded since the snapshot
+      // before this read, or during it, is in no snapshot yet.
+      return { from, to, sampleRate: entry.sampleRate, channels, errors: errors.slice() };
     },
     // The page's own contexts, for the observer's checks with known signals.
     context: (id) => contexts[id]?.context

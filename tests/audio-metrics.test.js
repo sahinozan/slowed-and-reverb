@@ -125,6 +125,20 @@ describe('audio capture trial measurements', () => {
     assert.deepEqual(problemCodes(parts, { ...STEREO, media: { rate: 1 } }, STEREO_TONES), []);
   });
 
+  test("an error the observer records fails the window, also one recorded after the window's last snapshot", () => {
+    const error = 'the page asked an audio context for something it must not read';
+    const parts = window({ left: sine(440, 0.25), right: sine(660, 0.25) });
+    const atEnd = { ...parts, after: { ...parts.after, errors: [error] } };
+    assert.deepEqual(problemCodes(atEnd, STEREO, STEREO_TONES), ['observer-error']);
+    // The read comes after the last snapshot and carries the errors as they
+    // stand then (capture-observer.js).
+    const afterEnd = { ...parts, read: { ...parts.read, errors: [error] } };
+    assert.deepEqual(problemCodes(afterEnd, STEREO, STEREO_TONES), ['observer-error']);
+    // Told once when both have it.
+    const both = measureWindow(parts.before, atEnd.after, afterEnd.read, { tones: STEREO_TONES });
+    assert.deepEqual(both.errors, [error]);
+  });
+
   test('silence, swapped channels and a muted player are not healthy', () => {
     const silent = window({ left: new Float32Array(RATE), right: new Float32Array(RATE) });
     assert.ok(problemCodes(silent, {}).includes('no-signal'));

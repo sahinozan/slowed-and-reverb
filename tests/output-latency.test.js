@@ -21,14 +21,20 @@
 // wrong. A comment says "output latency" in words. A letter written as an
 // escape is read as the letter. A longer name that only contains one of
 // them, such as a variable for the latency in milliseconds, is left alone.
-// What isn't seen: a name put together while the code runs, or one split
-// over two lines inside a string.
+// What isn't seen: a name put together while the code runs, one split
+// over two lines inside a string, or a read that never writes the name,
+// such as a loop over every property of a context. In the audio suites'
+// pages the observer records such a read as it happens, which fails the
+// check (capture-observer.js, and the last test here). The website's tests
+// and the extension's own have no such guard.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
+const vm = require('node:vm');
 
+const { installAudioTrialObserver } = require('../e2e/audio-capture/capture-observer');
 const { root } = require('./helpers/load-script');
 const { trackedFiles } = require('./helpers/workflow-paths');
 
@@ -117,4 +123,88 @@ test('either name is found in code, in a string, in a comment and with a letter 
     'page.html:1',
     'page.html:2'
   ]);
+});
+
+// A page with the two members where a browser has them, on the prototype of
+// its audio contexts and listed when a context's properties are gone
+// through, and how often the browser's own were reached. With `observed`,
+// the audio suites' observer is installed as the suites install it: as its
+// own text, run in the page.
+function page({ observed }) {
+  const own = { reached: 0 };
+  class BaseAudioContext {}
+  class AudioContext extends BaseAudioContext {}
+  class AudioNode {
+    connect() {}
+    disconnect() {}
+  }
+  const member = (prototype, name, descriptor) => Object.defineProperty(prototype, name, { configurable: true, enumerable: true, ...descriptor });
+  member(BaseAudioContext.prototype, 'destination', { get: () => ({}) });
+  member(AudioContext.prototype, 'baseLatency', { get: () => 0.005 });
+  member(AudioContext.prototype, NAMES[0], {
+    get() {
+      own.reached++;
+      return 0.02;
+    }
+  });
+  member(AudioContext.prototype, NAMES[1], {
+    writable: true,
+    value() {
+      own.reached++;
+      return { contextTime: 1, performanceTime: 1 };
+    }
+  });
+  const window = { BaseAudioContext, AudioContext, AudioNode, document: { querySelector: () => null }, performance: { now: () => 0 }, setInterval() {} };
+  window.window = window;
+  if (observed) vm.runInNewContext(`(${installAudioTrialObserver})({ workletUrl: '' })`, window);
+  // The observer's errors about the latency. Going through a made-up
+  // context's properties also reads its destination, which the observer
+  // can't follow here and says so; that error is not this test's.
+  const errors = () => window.__audioTrial.errors.filter((error) => error.includes('issue 186'));
+  return { window, own, errors, context: new AudioContext() };
+}
+
+// What a report of everything about a context would do.
+function everyProperty(context) {
+  const report = {};
+  for (const name in context) report[name] = context[name];
+  return report;
+}
+
+test("in the audio suites' pages a read that never writes the name is recorded as an error and doesn't reach the browser's own", () => {
+  // The made-up page is one where such a loop does read the latency.
+  const plain = page({ observed: false });
+  assert.equal(everyProperty(plain.context)[NAMES[0]], 0.02);
+  assert.equal(plain.own.reached, 1);
+
+  const { window, own, errors, context } = page({ observed: true });
+  const report = everyProperty(context);
+  assert.equal(report[NAMES[0]], 0);
+  assert.equal(report.baseLatency, 0.005);
+  assert.equal(errors().length, 1);
+  assert.match(errors()[0], new RegExp(`its ${NAMES[0]},`));
+  // Taking the method reads nothing, and a second read isn't told again.
+  assert.equal(typeof report[NAMES[1]], 'function');
+  everyProperty(context);
+  assert.equal(errors().length, 1);
+
+  // A snapshot carries the error, which is how a check comes to fail.
+  const carried = (snapshot) => snapshot.errors.filter((error) => error.includes('issue 186'));
+  assert.deepEqual(carried(window.__audioTrial.snapshot(0)), errors());
+
+  // So does the snapshot a read is made in, as the suites' own read once
+  // was: here the last thing a snapshot reads calls for the timestamp.
+  let timestamp;
+  Object.defineProperty(window, 'startClicks', {
+    get() {
+      timestamp = context[NAMES[1]]();
+      return [];
+    }
+  });
+  const during = carried(window.__audioTrial.snapshot(0));
+  assert.deepEqual({ ...timestamp }, { contextTime: 0, performanceTime: 0 });
+  assert.equal(during.length, 2);
+  assert.match(during[1], new RegExp(`its ${NAMES[1]},`));
+
+  assert.equal(own.reached, 0);
 });
