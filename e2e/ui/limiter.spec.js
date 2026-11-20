@@ -40,7 +40,7 @@
 // The test plays a kick drum just under full scale with a quiet steady tone
 // over it, through the equalizer and the stage, and checks that with Bass
 // turned up the kick takes the tone down by about 1 dB at most, where it
-// takes 0.5 dB with the equalizer flat; that it takes it down by 4 to 9 dB
+// takes 0.5 dB with the equalizer flat; that it takes it down by 2 to 9 dB
 // without the turn-down; and that no setting of the equalizer brings any
 // pitch nearer the limiter than the quarter of the largest boost the
 // turn-down leaves. The audio suite can't hear this either: its tones stay
@@ -447,7 +447,7 @@ for (const file of LIMITER_STAGE_FILES) {
     expect(measured.latePeak, 'the tone is limited').toBeLessThan(1);
   });
 
-  test(`an equalizer boost doesn't set off the limiter in ${file}`, async ({ page }, testInfo) => {
+  test(`an equalizer boost gives the limiter in ${file} hardly more to do`, async ({ page }, testInfo) => {
     const body = limiterStageBody(limiterStage(fs.readFileSync(path.join(root, file), 'utf8'), file));
     await page.goto('about:blank');
 

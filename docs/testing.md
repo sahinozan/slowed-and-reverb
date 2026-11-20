@@ -121,7 +121,7 @@ whole song down at each loud note of that band, so with Bass up the music
 went muffled at every kick drum. The test plays a kick drum just under full
 scale with a quiet steady tone over it and checks, in both browsers, that
 with Bass turned up the kick takes the tone down by about 1 dB at most, where
-it takes 0.5 dB with the equalizer flat; that it takes it down by 4 to 9 dB
+it takes 0.5 dB with the equalizer flat; that it takes it down by 2 to 9 dB
 when the turn-down is left out; and that no setting of the equalizer brings
 any pitch nearer the limiter than the quarter of the boost the turn-down
 leaves.
