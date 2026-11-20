@@ -30,6 +30,21 @@
 // of the browser has answered, as an engine can in its first milliseconds.
 // It is given the filters then, and if the answer is no they have to come
 // out again, or peaks would get past the limiter and clip.
+//
+// A third is for the equalizer. A loud song is already close to the
+// limiter's threshold, so a band turned up crossed it, and the limiter
+// turned the whole song down at each loud note of that band: with Bass up,
+// the music went muffled at every kick drum. The stage turns the sound down
+// by three quarters of the largest boost before the limiter
+// (limiterHeadroom), which is about what a boost adds to a song's peaks.
+// The test plays a kick drum just under full scale with a quiet steady tone
+// over it, through the equalizer and the stage, and checks that with Bass
+// turned up the kick takes the tone down by about 1 dB at most, where it
+// takes 0.5 dB with the equalizer flat; that it takes it down by 2 to 9 dB
+// without the turn-down; and that no setting of the equalizer brings any
+// pitch nearer the limiter than the quarter of the largest boost the
+// turn-down leaves. The audio suite can't hear this either: its tones stay
+// far under the threshold.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -52,6 +67,19 @@ const FIREFOX_159 = {
   44100: { toneDb: -3.41, noiseDb: -7.88, bassDropDb: 1.37 },
   48000: { toneDb: -3.47, noiseDb: -8.29, bassDropDb: 2.03 }
 };
+
+// The engines' equalizer: a low shelf, a peak and a high shelf.
+const EQUALIZER = [
+  { type: 'lowshelf', frequency: 200 },
+  { type: 'peaking', frequency: 1000, q: 1 },
+  { type: 'highshelf', frequency: 4000 }
+];
+// Bass settings the kick drum is played at, in dB. The first is the
+// equalizer flat, which the others are compared with.
+const BASS_BOOSTS = [0, 3, 6, 8, 12];
+// What each of the equalizer's three settings is given, in every
+// combination, to find the loudest any pitch gets.
+const EQUALIZER_STEPS = [-12, -5, 0, 0.5, 6, 12];
 
 // Runs in the page. Renders each test sound through the stage, through the
 // compressor on its own, and through the compressor with Firefox's filters
@@ -233,6 +261,128 @@ async function measureEarlyLimiter({ body, claimsFirefox }) {
   return { waitedForAnswer, filtersFound: stage.limiterFilters.present, largestDifference, earlyPeak, latePeak };
 }
 
+// Runs in the page. Plays a loud kick drum under a quiet steady tone through
+// the equalizer and the stage, at each Bass setting, with the stage's
+// turn-down and without it, and returns how far the kicks took the tone
+// down. Also returns the loudest any pitch reaches the limiter over every
+// combination of the equalizer's settings, against how it came and less the
+// part of the largest boost the turn-down leaves.
+async function measureEqualizerBoost({ body, sampleRate, equalizer, boosts, steps }) {
+  const stage = new Function('window', body)(window);
+  await stage.limiterFilters.known;
+
+  const seconds = 2;
+  const frames = seconds * sampleRate;
+  const decibels = (ratio) => Math.round(2000 * Math.log10(ratio)) / 100;
+  const TONE_HZ = 3000;
+  const TONE_LEVEL = 0.03;
+  const MAKE_UP = 10 ** (1.2 / 20);
+
+  // A kick drum twice a second, from 0 s: a sine falling from 150 to 45 Hz
+  // that peaks at 0.85 of full scale and dies away in a quarter of a second.
+  // With the tone, the sound peaks at -1.1 dB, like a finished song.
+  const samples = new Float32Array(frames);
+  let phase = 0;
+  for (let i = 0; i < frames; i++) {
+    const sinceKick = (i % (sampleRate / 2)) / sampleRate;
+    if (sinceKick === 0) phase = 0;
+    phase += (2 * Math.PI * (45 + 105 * Math.exp(-sinceKick / 0.03))) / sampleRate;
+    const kick = 0.85 * Math.sin(phase) * Math.exp(-sinceKick / 0.12) * Math.min(1, sinceKick / 0.002);
+    samples[i] = kick + TONE_LEVEL * Math.sin((2 * Math.PI * TONE_HZ * i) / sampleRate);
+  }
+
+  function filters(context, settings) {
+    return equalizer.map(({ type, frequency, q }, index) => {
+      const node = context.createBiquadFilter();
+      node.type = type;
+      node.frequency.value = frequency;
+      if (q !== undefined) node.Q.value = q;
+      node.gain.value = settings[index];
+      return node;
+    });
+  }
+
+  // What the equalizer does to the level of each of `pitches`.
+  function response(context, settings, pitches) {
+    const total = new Float32Array(pitches.length).fill(1);
+    for (const node of filters(context, settings)) {
+      const magnitude = new Float32Array(pitches.length);
+      node.getFrequencyResponse(pitches, magnitude, new Float32Array(pitches.length));
+      for (let i = 0; i < pitches.length; i++) total[i] *= magnitude[i];
+    }
+    return total;
+  }
+
+  // The level of the tone in a stretch of samples.
+  function toneLevel(sound, from, to) {
+    let re = 0;
+    let im = 0;
+    for (let i = from; i < to; i++) {
+      const window = 0.5 - 0.5 * Math.cos((2 * Math.PI * (i - from)) / (to - from));
+      re += sound[i] * window * Math.cos((2 * Math.PI * TONE_HZ * i) / sampleRate);
+      im += sound[i] * window * Math.sin((2 * Math.PI * TONE_HZ * i) / sampleRate);
+    }
+    return (4 * Math.hypot(re, im)) / (to - from);
+  }
+
+  // How far the kicks at 1.0 and 1.5 s take the tone down: its lowest level
+  // in any 25 ms from 1 s on, against the level it has when the limiter
+  // leaves it alone.
+  async function toneDrop(bass, headroom) {
+    const settings = [bass, 0, 0];
+    const context = new OfflineAudioContext(2, frames, sampleRate);
+    const buffer = context.createBuffer(2, frames, sampleRate);
+    buffer.copyToChannel(samples, 0);
+    buffer.copyToChannel(samples, 1);
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    const mixed = context.createGain();
+    mixed.gain.value = headroom;
+    filters(context, settings).reduce((from, node) => from.connect(node), source).connect(mixed);
+    stage.connectLimiter(context, mixed).connect(context.destination);
+    source.start();
+    const sound = (await context.startRendering()).getChannelData(0);
+
+    const [atTone] = response(context, settings, new Float32Array([TONE_HZ]));
+    const untouched = TONE_LEVEL * atTone * headroom * MAKE_UP;
+    const block = Math.round(sampleRate / 40);
+    let lowest = Infinity;
+    for (let from = sampleRate; from + block <= frames; from += block) {
+      lowest = Math.min(lowest, toneLevel(sound, from, from + block));
+    }
+    return decibels(untouched / lowest);
+  }
+
+  const kicks = [];
+  for (const bass of boosts) {
+    kicks.push({
+      bass,
+      toneDropDb: await toneDrop(bass, stage.limiterHeadroom({ eqLow: bass, eqMid: 0, eqHigh: 0 })),
+      toneDropWithoutTurnDownDb: await toneDrop(bass, 1)
+    });
+  }
+
+  // 20 Hz to 20 kHz, 24 pitches to the octave.
+  const pitches = Float32Array.from({ length: 240 }, (_, i) => 20 * 2 ** (i / 24)).filter((hz) => hz < sampleRate / 2);
+  const probe = new OfflineAudioContext(2, 128, sampleRate);
+  let loudest = { db: -Infinity };
+  for (const eqLow of steps) {
+    for (const eqMid of steps) {
+      for (const eqHigh of steps) {
+        const headroom = stage.limiterHeadroom({ eqLow, eqMid, eqHigh });
+        // The part of the largest boost the turn-down leaves.
+        const left = (1 - stage.EQUALIZER_TURN_DOWN) * Math.max(0, eqLow, eqMid, eqHigh);
+        const levels = response(probe, [eqLow, eqMid, eqHigh], pitches);
+        for (let i = 0; i < pitches.length; i++) {
+          const db = Math.round(100 * (20 * Math.log10(levels[i] * headroom) - left)) / 100;
+          if (db > loudest.db) loudest = { db, hz: Math.round(pitches[i]), settings: [eqLow, eqMid, eqHigh] };
+        }
+      }
+    }
+  }
+  return { kicks, loudest };
+}
+
 const toneAt = (measured, hz) => measured.tones.find((tone) => tone.hz === hz).gainDb;
 
 for (const file of LIMITER_STAGE_FILES) {
@@ -295,5 +445,44 @@ for (const file of LIMITER_STAGE_FILES) {
     // at 0.916.
     expect(measured.largestDifference, `peaks of ${measured.earlyPeak} and ${measured.latePeak}`).toBeLessThan(1e-6);
     expect(measured.latePeak, 'the tone is limited').toBeLessThan(1);
+  });
+
+  test(`an equalizer boost gives the limiter in ${file} hardly more to do`, async ({ page }, testInfo) => {
+    const body = limiterStageBody(limiterStage(fs.readFileSync(path.join(root, file), 'utf8'), file));
+    await page.goto('about:blank');
+
+    for (const sampleRate of [44100, 48000]) {
+      const measured = await page.evaluate(measureEqualizerBoost, {
+        body, sampleRate, equalizer: EQUALIZER, boosts: BASS_BOOSTS, steps: EQUALIZER_STEPS
+      });
+      await testInfo.attach(`equalizer-${sampleRate}.json`, { body: JSON.stringify(measured, null, 2), contentType: 'application/json' });
+      const at = `at ${sampleRate} Hz`;
+      const [flat, ...boosted] = measured.kicks;
+
+      // The song's own kicks reach the limiter a little, with the equalizer
+      // flat too (0.5 dB). Bass turned up adds little to that: both
+      // browsers measured 0.5, 0.6, 0.7 and 1.1 dB.
+      expect(flat.toneDropDb, `with the equalizer flat ${at}, the kick took the tone down`).toBeLessThan(0.6);
+      for (const { bass, toneDropDb } of boosted) {
+        expect(toneDropDb, `with Bass at +${bass} dB ${at}, the kick took the tone down by ${toneDropDb} dB, and by ${flat.toneDropDb} dB flat`)
+          .toBeLessThan(bass > 8 ? 1.25 : 0.9);
+      }
+
+      // The defect put back: without the turn-down, the more Bass, the
+      // further each kick takes the tone down.
+      const without = Object.fromEntries(measured.kicks.map((kick) => [kick.bass, kick.toneDropWithoutTurnDownDb]));
+      expect(Math.abs(without[0] - flat.toneDropDb), `the turn-down ${at} changes nothing with the equalizer flat`).toBeLessThan(TOLERANCE_DB);
+      // Both browsers measured 2.4, 4.4, 6.0 and 9.3 dB.
+      expect(without[3], `the defect ${at} with Bass at +3 dB`).toBeGreaterThan(2);
+      expect(without[6], `the defect ${at} with Bass at +6 dB`).toBeGreaterThan(4);
+      expect(without[8], `the defect ${at} with Bass at +8 dB`).toBeGreaterThan(5.5);
+      expect(without[12], `the defect ${at} with Bass at +12 dB`).toBeGreaterThan(8.5);
+
+      // Whatever the equalizer is set to, no pitch reaches the limiter
+      // louder than it came by more than the quarter of the largest boost
+      // the turn-down leaves, but for 0.07 dB where three full boosts meet.
+      const { db, hz, settings } = measured.loudest;
+      expect(db, `${hz} Hz ${at} with the equalizer at ${settings.join('/')} dB`).toBeLessThan(0.1);
+    }
   });
 }

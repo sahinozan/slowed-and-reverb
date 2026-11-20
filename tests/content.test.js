@@ -83,6 +83,10 @@ describe('content script audio processing', () => {
     assert.equal(context.gains[3].gain.value, 0.2);
     assert.equal(context.gains[4].gain.value, 0.18);
     assert.equal(context.gains[5].gain.value, 1.5);
+    // The mix on its way to the limiter, turned down by three quarters of
+    // the largest equalizer boost (4 dB here): see the limiter stage.
+    assert.equal(context.gains[6].connections[0].target.type, 'splitter');
+    assert.equal(context.gains[6].gain.value, 10 ** (-3 / 20));
     assert.equal(context.panners[0].pan.value, -0.25);
     assert.equal(context.waveShapers[0].curve.length, 1024);
     assert.deepEqual(

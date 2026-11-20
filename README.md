@@ -52,7 +52,10 @@ Chromium keeps using temporary tab access and does not show this additional prom
 | Saturation | 0 – 100% | Tape/vinyl-style soft clip |
 
 A limiter is always on and has no control. It only engages at extreme settings
-that would otherwise clip.
+that would otherwise clip. Raising Bass, Mid or Treble turns the whole sound
+down first, by three quarters of the largest boost in dB, so that a boost
+gives the limiter hardly more to do. Without that, the limiter turned a loud
+song down at every bass hit.
 
 ### Presets
 

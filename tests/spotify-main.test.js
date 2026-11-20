@@ -180,6 +180,10 @@ describe('Spotify main-world audio engine', () => {
     assert.equal(context.gains[2].gain.value, 0.35);
     assert.equal(context.gains[3].gain.value, 0.2);
     assert.equal(context.gains[4].gain.value, 0.18);
+    // The mix on its way to the limiter, turned down by three quarters of
+    // the largest equalizer boost (4 dB here): see the limiter stage.
+    const mixed = context.gains.find((node) => node.connections[0]?.target.type === 'splitter');
+    assert.equal(mixed.gain.value, 10 ** (-3 / 20));
     assert.equal(context.panners[0].pan.value, -0.25);
     assert.equal(
       harness.statusMessages.filter(({ type }) => type === 'STATUS').at(-1).processingActive,

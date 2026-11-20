@@ -308,6 +308,30 @@
     });
     return output;
   }
+
+  // How far the sound is turned down on its way to the limiter, as a gain,
+  // for the equalizer's settings. A loud song is already close to the
+  // limiter's threshold, so a band turned up crosses it, and a limiter turns
+  // everything down while one part is too loud: with Bass at +8 dB, each
+  // kick drum took the rest of the music down by 5 to 6 dB for a moment,
+  // which sounded muffled (measured in Chromium). So the sound is turned
+  // down first, by three quarters of the largest of the three boosts.
+  //
+  // Three quarters is about what a boost adds to a song's loudest moments:
+  // Bass at +8 dB raised the peaks of the two songs measured by 6.3 and
+  // 6.6 dB, because a band's boost is only whole away from its edge. The
+  // whole boost would keep every pitch from reaching the limiter louder
+  // than it came, but made a song with Bass up 2 to 3 dB quieter than this
+  // for no gain: with three quarters, the hardest kicks take the music down
+  // by 1 dB at Bass +12 dB, and by 0.5 dB with the equalizer flat. With
+  // half, they took it down by 2 to 4 dB again at Bass +8 dB and over, and
+  // a little of the muffling could be heard again; with three quarters it
+  // couldn't (the owner's listening, in Chromium).
+  const EQUALIZER_TURN_DOWN = 0.75;
+
+  function limiterHeadroom({ eqLow, eqMid, eqHigh }) {
+    return 10 ** ((-EQUALIZER_TURN_DOWN * Math.max(0, eqLow, eqMid, eqHigh)) / 20);
+  }
   // ---- End of the limiter stage ----
 
   function resumeAudioContext() {
@@ -635,6 +659,7 @@
         echo,
         saturation,
         width,
+        mixed,
         pan,
         bypass,
         processed,
@@ -716,6 +741,8 @@
     smoothTo(pipeline.eqLow.gain, settings.eqLow);
     smoothTo(pipeline.eqMid.gain, settings.eqMid);
     smoothTo(pipeline.eqHigh.gain, settings.eqHigh);
+    // Room under the limiter for what the equalizer turns up.
+    smoothTo(pipeline.mixed.gain, limiterHeadroom(settings));
 
     const reverbMix = settings.reverb / 100;
     smoothTo(pipeline.wet.gain, reverbMix * REVERB_WET_SCALE);
