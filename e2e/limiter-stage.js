@@ -1,7 +1,9 @@
 'use strict';
 
 // The limiter stage, taken from the files that carry it: the block between
-// the "Limiter stage" comments in both engines and the website's demo.
+// the "Limiter stage" comments in both engines and the website's demo. It is
+// the limiter and how far the sound is turned down before it for an
+// equalizer boost.
 // tests/limiter-stage.test.js runs it with a stand-in for the browser, and
 // e2e/ui/limiter.spec.js in Chromium and Firefox.
 
@@ -10,7 +12,7 @@ const LIMITER_STAGE_FILES = Object.freeze(['extension/youtube-main.js', 'extensi
 const START = '  // ---- Limiter stage ----\n';
 const END = '  // ---- End of the limiter stage ----\n';
 // What the stage defines for the code around it and for the tests.
-const EXPORTS = 'return { LIMITER, connectLimiter, createLimiter, limiterFilter, limiterFilters };';
+const EXPORTS = 'return { EQUALIZER_TURN_DOWN, LIMITER, connectLimiter, createLimiter, limiterFilter, limiterFilters, limiterHeadroom };';
 
 // The stage's text in a file's source, comments included.
 function limiterStage(source, file) {

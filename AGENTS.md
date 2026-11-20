@@ -100,7 +100,8 @@ checklist's "When it applies" items again.
   `@playback` run in Chromium only. It also renders the limiter stage of both
   engines and the website's demo in both browsers, offline and without sound,
   and checks that sound under the limiter's threshold is left alone whatever
-  its pitch, and that the defect is heard when it is put back. A new popup
+  its pitch, that an equalizer boost doesn't set the limiter off, and that
+  each defect is heard when it is put back. A new popup
   state that changes the layout gets an entry in `STATES` in
   `e2e/ui/popup-layout.spec.js`; a layout defect fixed gets a control there.
   In Chromium, `npm run test:e2e` also checks the installed extension's popup
@@ -163,7 +164,10 @@ main checkout up to date with `main`. A new row here needs an entry in
   treble as if it were louder than it is (it has filters Chromium removed);
   in Firefox the stage puts a filter each side of the limiter to cancel them,
   and checks once that the compressor has them, leaving the limiter as it
-  was if not. Change all three together.
+  was if not. The stage also says how far the sound is turned down before
+  the limiter for an equalizer boost (`limiterHeadroom`): by three quarters
+  of the largest of the three, so a boost doesn't set the limiter off.
+  Change all three together.
 - **Privacy:** the extension makes no network requests and has no analytics,
   telemetry or remote code. Don't add permissions; the optional site
   permissions are requested only when the user asks. The website loads

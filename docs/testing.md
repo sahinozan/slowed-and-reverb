@@ -113,6 +113,19 @@ defect is heard when it is put back; that a compressor without the filters is
 left as it was; and that a limiter connected before the stage has checked the
 browser limits a loud tone exactly as one connected after.
 
+The stage also says how far the sound is turned down before the limiter for
+an equalizer boost: by three quarters of the largest of the three, which is
+about what a boost adds to a song's peaks. Without that, a band turned up
+pushed a loud song over the limiter's threshold, and the limiter turned the
+whole song down at each loud note of that band, so with Bass up the music
+went muffled at every kick drum. The test plays a kick drum just under full
+scale with a quiet steady tone over it and checks, in both browsers, that
+with Bass turned up the kick takes the tone down by about 1 dB at most, where
+it takes 0.5 dB with the equalizer flat; that it takes it down by 4 to 9 dB
+when the turn-down is left out; and that no setting of the equalizer brings
+any pitch nearer the limiter than the quarter of the boost the turn-down
+leaves.
+
 ## The audio suites
 
 The tests above can't hear the audio. The audio regression suite

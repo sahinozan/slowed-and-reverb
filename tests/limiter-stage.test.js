@@ -98,7 +98,35 @@ describe('limiter stage', () => {
       const rest = source.replace(stageOf(file), '');
       assert.ok(!/createDynamicsCompressor|createIIRFilter/.test(rest), `${file} makes one outside its limiter stage`);
       assert.equal(source.split('connectLimiter(').length - 1, 2, `${file} connects the limiter once`);
+      assert.equal(source.split('limiterHeadroom(').length - 1, 2, `${file} turns the sound down for the equalizer once`);
     }
+  });
+
+  // An equalizer boost used to reach the limiter, which then turned the
+  // whole song down at every loud note of the band turned up. What that does
+  // to sound is checked in real browsers (e2e/ui/limiter.spec.js).
+  test('turns the sound down by three quarters of the largest equalizer boost, and not at all for a cut', () => {
+    const stage = loadLimiterStage(stageOf(LIMITER_STAGE_FILES[0]), { userAgent: CHROMIUM });
+    assert.equal(stage.EQUALIZER_TURN_DOWN, 0.75);
+    const decibelsFor = (eqLow, eqMid, eqHigh) => 20 * Math.log10(stage.limiterHeadroom({ eqLow, eqMid, eqHigh }));
+    const cases = [
+      [[0, 0, 0], 0],
+      [[8, 0, 0], -6],
+      [[0, 6, 0], -4.5],
+      [[0, 0, 12], -9],
+      [[2, -3, 4], -3],
+      [[12, 12, 12], -9],
+      [[8, -12, -12], -6],
+      [[0.5, 0, 0], -0.375],
+      [[-12, -6, -1], 0],
+      [[-12, 0, -12], 0]
+    ];
+    for (const [settings, expected] of cases) {
+      const actual = decibelsFor(...settings);
+      assert.ok(Math.abs(actual - expected) < 1e-9, `${settings.join('/')} dB: turned down by ${-actual} dB, expected ${-expected}`);
+    }
+    assert.equal(stage.limiterHeadroom({ eqLow: 0, eqMid: 0, eqHigh: 0 }), 1, 'nothing changes with the equalizer flat');
+    assert.equal(stage.limiterHeadroom({ eqLow: -12, eqMid: -12, eqHigh: -12 }), 1, 'a cut is not made up for');
   });
 
   test('leaves the limiter as it was outside Firefox, and checks nothing', async () => {
