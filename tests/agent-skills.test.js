@@ -11,8 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { describe, test } = require('node:test');
-const { readMap } = require('../scripts/classify-ci-changes');
-const { matches } = require('../scripts/agent-hooks/generated-files');
+const { patternRegExp, readMap } = require('../scripts/classify-ci-changes');
 
 const { root } = require('./helpers/load-script');
 
@@ -80,8 +79,8 @@ function problems({ fields, body }, has = (file) => fs.existsSync(path.join(root
       .filter((file) => (file.includes('/') && FOLDERS.has(file.split('/')[0])) || (before.length === 0 && FILE.test(file)));
   });
   for (const given of new Set([...whole, ...inside].filter((file) => !MADE.test(file)))) {
-    const pattern = given.endsWith('/') ? `${given}**` : given;
-    const there = tracked.filter((file) => matches(pattern, file));
+    const matcher = patternRegExp(given.endsWith('/') ? `${given}**` : given);
+    const there = tracked.filter((file) => matcher.test(file));
     if (there.length === 0 || (there.length === 1 && there[0] === given && !has(given))) found.push(`${given} isn't in the repository`);
   }
   for (const [, file, heading] of body.matchAll(/`([\w./-]+\.md)`\s+\("([^"]+)"\)/g)) {

@@ -1,7 +1,7 @@
 'use strict';
 
 // Builds and checks the store upload packages for a release, then records them
-// in dist/packages/<version>/ of the main checkout (AGENTS.md, "Releases"):
+// in dist/packages/<version>/ of the main checkout:
 //
 //   npm run release -- <commit on main> [--out <folder>]
 //
