@@ -14,12 +14,8 @@ are in `AGENTS.md` ("Rules"). These are the steps around a change.
    the builds. The mark in the popup's header, between `<!-- icon:start -->`
    and `<!-- icon:end -->`, is made by `npm run icons` from
    `scripts/render-icons.js`.
-2. **Copy the popup into the website:** `npm run site:popup`. Where the
-   agents' hooks are loaded, one runs it after each edit to the popup's
-   files or to `extension/settings.js` and says which files it changed;
-   `AGENTS.md` ("Generated files") says where that is, which for Claude
-   Code is only a session started at the checkout's root. Run it yourself
-   when no hook said so, or after a change made any other way. Commit
+2. **Copy the popup into the website:** run `npm run site:popup` after
+   changing the popup's files or `extension/settings.js`, and commit
    `site/popup/` with the source. The tests fail while the copy is out of
    date.
 3. **A new setting** goes in `extension/settings.js`; in the copies of the

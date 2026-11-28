@@ -27,31 +27,5 @@
       "Bash(git push origin HEAD:main)",
       "Bash(git push origin HEAD:main *)"
     ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/scripts/agent-hooks/refuse-generated-edit.js"]
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/scripts/agent-hooks/regenerate.js"]
-          }
-        ]
-      }
-    ]
   }
 }

@@ -108,8 +108,9 @@ const ROOT_VERSION = { keys: ['version'], pattern: /^( {2}"version": ")[^"]*(")/
 // The lockfile's entry for the project itself, the first of its packages.
 const LOCK_ROOT_PACKAGE = { keys: ['packages', '', 'version'], pattern: /("packages": \{\s*"": \{[^{}]*?"version": ")[^"]*(")/ };
 
-// A script's own copy of the version. The scripts compare these, not the
-// manifest's (AGENTS.md, "Releases").
+// A script's own copy of the version. The scripts compare these rather than
+// the manifest's, because a store rollback puts earlier code out again with
+// only the manifest's version raised.
 function versionLiteral(file) {
   const pattern = /const VERSION = '([^']*)';/g;
   return {
@@ -186,8 +187,8 @@ const changelogEntry = {
   }
 };
 
-// Everything a version bump touches (AGENTS.md, "Releases"), each with how to
-// check it and how to write it:
+// Everything a version bump touches, each with how to check it and how to
+// write it:
 //
 //   files(pages)                        the files it is in, from the repository
 //                                       root; pages are the website's pages

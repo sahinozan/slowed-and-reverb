@@ -222,7 +222,7 @@ describe('One list of places', () => {
     }
   });
 
-  test('what the list names is what AGENTS.md says a bump touches', () => {
+  test('lists every file a version bump touches', () => {
     assert.deepEqual(
       [...files].sort(),
       [

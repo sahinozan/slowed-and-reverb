@@ -3,7 +3,7 @@
 The checks a person does for a store release, for what the automated tests
 don't check today: the real sites, the browsers' own windows and prompts, and
 real sound from speakers or headphones. `npm run release` runs the release's automated
-checks; `npm run test:ui` and the audio suites run separately (`AGENTS.md`).
+checks; `npm run test:ui` and the audio suites run separately (`docs/testing.md`, `docs/checks.md`).
 Record what you did in the draft's "checked by hand" line in
 `RELEASE-<version>.txt`: the commit, each browser and its version, the
 operating system, the sound output, and each item below as passed, failed or

@@ -106,16 +106,14 @@
       "needs": ["repo", "extension", "ui", "site"]
     },
     {
-      "about": "Repository, editor and coding-agent settings, the agents' hooks and Codex's link to their skills, the unit tests, and the tools that check, render or release, which no browser test loads.",
+      "about": "Repository, editor and coding-agent settings, Codex's link to the skills, the unit tests, and the tools that check, render or release, which no browser test loads.",
       "paths": [
         ".agents/skills",
         ".claude/launch.json",
         ".claude/settings.json",
-        ".codex/hooks.json",
         ".github/**",
         ".gitignore",
         "eslint.config.js",
-        "scripts/agent-hooks/**",
         "scripts/check-whitespace.js",
         "scripts/checks-for.js",
         "scripts/node-test-results.js",

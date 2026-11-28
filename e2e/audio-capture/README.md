@@ -11,7 +11,7 @@ in Chromium and in Firefox:
   signals, controls that must fail, and Chromium's `--mute-audio` check.
 
 Neither is part of `npm test`, CI's required check or releases; when to
-run them is in `AGENTS.md`. Measured results and the investigations behind
+run them is in `docs/checks.md` and `AGENTS.md`. Measured results and the investigations behind
 them are on the owner's Notion page "Slowed & Reverb: audio suite history
 and results", and in this README's longer form at `c61a674`.
 
